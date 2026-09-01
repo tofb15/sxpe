@@ -535,10 +535,9 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                 .arg(max_bytes));
         return false;
     }
-    // Pad to the original blob length so the index size fields stay unchanged.
-    if (static_cast<std::uint32_t>(fitted.size()) < max_bytes) {
-        fitted.append(QByteArray(static_cast<int>(max_bytes) - fitted.size(), '\0'));
-    }
+    // Do not pad zeros after IEND. The game reads file_size bytes as a PNG;
+    // trailing garbage after IEND makes the neighborhood refuse to load.
+    // File-Save writes this exact PNG and updates that one index size.
     const auto fitted_path = QDir::temp().filePath(QStringLiteral("sxpe-snap-fit.bin"));
     QFile out(fitted_path);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) ||

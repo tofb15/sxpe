@@ -69,6 +69,67 @@ bool neighborhood_path(const std::filesystem::path& p) {
     return e == ".nhd" || e == ".world" || e == ".dbc";
 }
 
+/// Neighborhood files stay mapped read-only. A writable map holds GENERIC_WRITE
+/// and FILE_SHARE_READ only, so The Sims 3 cannot open the save — it looks
+/// "corrupt" even when we never wrote a byte. Edits live in RAM until Save.
+bool map_writable(const std::filesystem::path& p, bool session_writable) {
+    return session_writable && !neighborhood_path(p);
+}
+
+struct DiskWrite {
+    std::uint32_t off{0};
+    std::vector<std::byte> data;
+};
+
+VoidResult apply_disk_writes(const std::filesystem::path& path, const std::vector<DiskWrite>& ws) {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        return std::unexpected(
+            err(ErrorCode::io, "file is in use — close The Sims 3 and try again"));
+    }
+    for (const auto& w : ws) {
+        if (w.data.empty()) {
+            continue;
+        }
+        LARGE_INTEGER li{};
+        li.QuadPart = w.off;
+        if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+            CloseHandle(h);
+            return std::unexpected(err(ErrorCode::io, "seek failed"));
+        }
+        DWORD n = 0;
+        const auto want = static_cast<DWORD>(w.data.size());
+        if (!WriteFile(h, w.data.data(), want, &n, nullptr) || n != want) {
+            CloseHandle(h);
+            return std::unexpected(err(ErrorCode::io, "write failed"));
+        }
+    }
+    FlushFileBuffers(h);
+    CloseHandle(h);
+    return ok();
+#else
+    std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!f) {
+        return std::unexpected(err(ErrorCode::io, "reopen for write failed"));
+    }
+    for (const auto& w : ws) {
+        if (w.data.empty()) {
+            continue;
+        }
+        f.seekp(static_cast<std::streamoff>(w.off));
+        f.write(reinterpret_cast<const char*>(w.data.data()),
+                static_cast<std::streamsize>(w.data.size()));
+        if (!f) {
+            return std::unexpected(err(ErrorCode::io, "write failed"));
+        }
+    }
+    f.flush();
+    return ok();
+#endif
+}
+
 VoidResult replace_file(const std::filesystem::path& dest, const std::filesystem::path& tmp) {
 #ifdef _WIN32
     if (std::filesystem::exists(dest)) {
@@ -105,7 +166,7 @@ Result<Package> Package::open(const std::filesystem::path& path, bool writable) 
     Package p;
     p.path_ = path;
     p.writable_ = writable;
-    auto m = core::MappedFile::open(path, writable);
+    auto m = core::MappedFile::open(path, map_writable(path, writable));
     if (!m) {
         return std::unexpected(m.error());
     }
@@ -359,30 +420,34 @@ VoidResult Package::set_uncompressed(std::uint32_t i, std::span<const std::byte>
         if (!c) {
             return std::unexpected(c.error());
         }
-        if (layout_locked() && c->size() > entries_[i].file_size) {
+        if (layout_locked() && c->size() > entries_[i].payload_capacity) {
             return std::unexpected(err(ErrorCode::cap_exceeded,
                                        "resource is " + std::to_string(c->size()) +
                                            " bytes; in-place hole is " +
-                                           std::to_string(entries_[i].file_size)));
+                                           std::to_string(entries_[i].payload_capacity)));
         }
         overrides_[i] = std::move(*c);
         if (!layout_locked()) {
             entries_[i].compressed = 0xFFFF;
             entries_[i].file_size = static_cast<std::uint32_t>(overrides_[i]->size());
             entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
+        } else {
+            entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
         }
     } else {
-        if (layout_locked() && data.size() > entries_[i].file_size) {
+        if (layout_locked() && data.size() > entries_[i].payload_capacity) {
             return std::unexpected(err(ErrorCode::cap_exceeded,
                                        "resource is " + std::to_string(data.size()) +
                                            " bytes; in-place hole is " +
-                                           std::to_string(entries_[i].file_size)));
+                                           std::to_string(entries_[i].payload_capacity)));
         }
         overrides_[i] = std::vector<std::byte>(data.begin(), data.end());
         if (!layout_locked()) {
             entries_[i].compressed = 0;
             entries_[i].file_size = static_cast<std::uint32_t>(data.size());
             entries_[i].mem_size = entries_[i].file_size;
+        } else {
+            entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
         }
     }
     dirty_ = true;
@@ -399,6 +464,13 @@ VoidResult Package::patch_in_place(std::uint32_t i, std::span<const std::byte> u
     }
     if (index_type_ != 0) {
         return std::unexpected(err(ErrorCode::refused, "in-place replace needs indexType 0"));
+    }
+    if (layout_locked()) {
+        auto r = set_uncompressed(i, uncompressed, compress);
+        if (!r) {
+            return r;
+        }
+        return flush_layout();
     }
     if (map_.writable_bytes().empty()) {
         return std::unexpected(err(ErrorCode::refused, "file is not mapped writable"));
@@ -557,10 +629,7 @@ VoidResult Package::flush_layout() {
         return std::unexpected(err(ErrorCode::refused,
                                    "adding resources is not supported when saving a neighborhood file"));
     }
-    auto mut = map_.writable_bytes();
-    if (mut.empty()) {
-        return std::unexpected(err(ErrorCode::refused, "file is not mapped writable"));
-    }
+    std::vector<DiskWrite> writes;
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
         if (deleted(i)) {
             return std::unexpected(
@@ -571,27 +640,55 @@ VoidResult Package::flush_layout() {
         }
         const auto& disk = *overrides_[i];
         auto& e = entries_[i];
-        // Neighborhood files: write into the original blob only. Never grow
-        // into slack or rewrite index size/compression fields — the game
-        // keys SNAP slots by the original length.
-        if (disk.size() > e.file_size) {
+        if (disk.size() > e.payload_capacity) {
             return std::unexpected(err(ErrorCode::cap_exceeded,
                                        "resource is " + std::to_string(disk.size()) +
                                            " bytes; in-place hole is " +
-                                           std::to_string(e.file_size)));
+                                           std::to_string(e.payload_capacity)));
         }
         const auto start = static_cast<std::size_t>(e.chunk_offset);
-        if (start + e.file_size > mut.size()) {
+        if (start + disk.size() > map_.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
         }
-        std::memcpy(mut.data() + start, disk.data(), disk.size());
+        writes.push_back(DiskWrite{e.chunk_offset, disk});
         if (e.file_size > disk.size()) {
-            std::memset(mut.data() + start + disk.size(), 0, e.file_size - disk.size());
+            writes.push_back(DiskWrite{
+                e.chunk_offset + static_cast<std::uint32_t>(disk.size()),
+                std::vector<std::byte>(e.file_size - static_cast<std::uint32_t>(disk.size()),
+                                       std::byte{0})});
         }
-        overrides_[i].reset();
+        const std::uint32_t new_fs = static_cast<std::uint32_t>(disk.size());
+        const std::uint32_t new_ms = e.mem_size != 0 ? e.mem_size : new_fs;
+        const std::size_t rec =
+            static_cast<std::size_t>(index_pos_) + 4 + static_cast<std::size_t>(i) * 32;
+        std::vector<std::byte> idx;
+        wr_u32(idx, new_fs | (e.file_size_high_bit ? 0x80000000u : 0));
+        wr_u32(idx, new_ms);
+        wr_u32(idx, static_cast<std::uint32_t>(e.compressed) |
+                        (static_cast<std::uint32_t>(e.unknown2) << 16));
+        writes.push_back(DiskWrite{static_cast<std::uint32_t>(rec + 20), std::move(idx)});
+    }
+    if (writes.empty()) {
+        dirty_ = false;
+        return ok();
+    }
+    // Drop the mapping so WriteFile can run; a live map blocks the game and
+    // can also block this write.
+    map_.close();
+    auto wr = apply_disk_writes(path_, writes);
+    auto m = core::MappedFile::open(path_, false);
+    if (!m) {
+        return std::unexpected(m.error());
+    }
+    map_ = std::move(*m);
+    auto parsed = parse_mapped();
+    if (!wr) {
+        return wr;
+    }
+    if (!parsed) {
+        return parsed;
     }
     dirty_ = false;
-    map_.flush();
     return ok();
 }
 
@@ -611,7 +708,7 @@ VoidResult Package::save_as(const std::filesystem::path& dest) {
         }
         path_ = dest;
         writable_ = true;
-        auto m = core::MappedFile::open(dest, true);
+        auto m = core::MappedFile::open(dest, map_writable(dest, true));
         if (!m) {
             return std::unexpected(m.error());
         }
@@ -631,7 +728,7 @@ VoidResult Package::save_as(const std::filesystem::path& dest) {
     }
     path_ = dest;
     writable_ = true;
-    auto m = core::MappedFile::open(dest, true);
+    auto m = core::MappedFile::open(dest, map_writable(dest, true));
     if (!m) {
         return std::unexpected(m.error());
     }
@@ -648,7 +745,6 @@ VoidResult Package::save() {
     }
     if (neighborhood_path(path_)) {
         if (!dirty_) {
-            map_.flush();
             return ok();
         }
         return flush_layout();

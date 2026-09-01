@@ -1450,7 +1450,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
         } else if (!parse_community_name(path->filename().string(), t, nm)) {
             return envelope_err(err(ErrorCode::invalid_argument, "need resourceId or S3_ filename"));
         }
-        auto existing = s.pkg.find(t, 0);
+        std::uint32_t ordinal = 0;
+        if (args.contains("resourceId") && args["resourceId"].is_object()) {
+            ordinal = args["resourceId"].value("ordinal", 0u);
+        }
+        auto existing = s.pkg.find(t, ordinal);
         if (existing && !force(args)) {
             return envelope_err(err(ErrorCode::refused, "exists; pass force"));
         }

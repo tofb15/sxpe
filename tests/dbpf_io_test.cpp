@@ -199,6 +199,25 @@ int main() {
     auto nhd = tmp / "layout.nhd";
     std::filesystem::copy_file(out, nhd, std::filesystem::copy_options::overwrite_existing, ec);
     const auto nhd_sz = std::filesystem::file_size(nhd);
+    auto read_all = [](const std::filesystem::path& p) {
+        const auto n = std::filesystem::file_size(p);
+        std::vector<std::byte> b(n);
+        std::ifstream in(p, std::ios::binary);
+        in.read(reinterpret_cast<char*>(b.data()), static_cast<std::streamsize>(n));
+        return b;
+    };
+    const auto nhd_before = read_all(nhd);
+    {
+        auto w = Package::open(nhd, true);
+        CHECK(w.has_value());
+        if (w) {
+            const char hi[] = "Hi";
+            auto payload = std::as_bytes(std::span{hi, sizeof(hi) - 1});
+            CHECK(w->set_uncompressed(0, payload, false).has_value());
+            CHECK(w->dirty() == true);
+        }
+    }
+    CHECK(read_all(nhd) == nhd_before);
     {
         auto w = Package::open(nhd, true);
         CHECK(w.has_value());
@@ -215,12 +234,9 @@ int main() {
     CHECK(nhd_r.has_value());
     if (nhd_r) {
         CHECK(nhd_r->count() == 1);
-        CHECK(nhd_r->entry(0).file_size == 11);
+        CHECK(nhd_r->entry(0).file_size == 2);
         auto body = nhd_r->uncompressed(0);
-        CHECK(body.has_value());
-        if (body && body->size() >= 2) {
-            CHECK((*body)[0] == std::byte{'H'} && (*body)[1] == std::byte{'i'});
-        }
+        CHECK(body.has_value() && as_text(*body) == "Hi");
     }
 
     auto hole_r = Package::open(hole, false);

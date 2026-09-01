@@ -184,7 +184,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
-    act(editors, tr("Replace SNAP PNG (in-place)…"), {}, [this] { replace_snap(); });
+    act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
     act(editors, tr("Export &VID…"), {}, [this] { export_vid(); });
     act(res, tr("Open in &hex editor"), {}, [this] { open_external(true); });
     act(res, tr("Open in te&xt editor"), {}, [this] { open_external(false); });
@@ -1110,8 +1110,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
-    auto* snap = editors->addAction(tr("Replace SNAP PNG (in-place)…"), this,
-                                    [this] { replace_snap(); });
+    auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
     editors->addAction(tr("Export &VID…"), this, [this] { export_vid(); });
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
