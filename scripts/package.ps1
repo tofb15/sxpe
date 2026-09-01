@@ -96,6 +96,11 @@ foreach ($n in $need) {
 
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $OutDir "LICENSE") -Force
 Copy-Item (Join-Path $Root "NOTICE") (Join-Path $OutDir "NOTICE") -Force
+$launchers = Join-Path $PSScriptRoot "portable"
+if (-not (Test-Path (Join-Path $launchers "SXPE.bat"))) {
+    throw "Missing $launchers\SXPE.bat"
+}
+Copy-Item (Join-Path $launchers "*.bat") $OutDir -Force
 
 $vs = Find-VsPath
 $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
@@ -129,17 +134,20 @@ SXPE $ver (Windows x64)
 
 This folder is standalone. Keep the DLLs and plugin subfolders next to the exes.
 
+  SXPE.bat         Windows GUI (double-click; working directory is this folder)
+  sxpe-cli.bat     CLI (double-click for help, or pass arguments)
+  sxpe-mcp.bat     MCP stdio
   sxpe_gui.exe     Windows GUI
   sxpe.exe         CLI (Qt-free)
   sxpe_mcp.exe     MCP stdio (Qt-free)
 
 GUI:
-  sxpe_gui.exe
-  sxpe_gui.exe path\to\file.package
+  SXPE.bat
+  SXPE.bat path\to\file.package
 
 CLI:
-  sxpe.exe --help
-  sxpe.exe package info --package path\to\file.package --format json
+  sxpe-cli.bat --help
+  sxpe-cli.bat package info --package path\to\file.package --format json
 
 License: GPL-3.0-or-later (LICENSE and NOTICE).
 Unofficial The Sims 3 package editor. Not affiliated with Electronic Arts.
