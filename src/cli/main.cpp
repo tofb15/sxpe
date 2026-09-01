@@ -273,7 +273,10 @@ int main(int argc, char** argv) {
     }
 
     auto env = bus.execute(id, args);
-    if (oneshot && env.value("ok", false) && is_mutating(bus, id) && !dry) {
+    // replaceInPlace already wrote through the mmap; a full package.save would
+    // rebuild .nhd/.world and the game rejects that.
+    if (oneshot && env.value("ok", false) && is_mutating(bus, id) && !dry &&
+        id != "resource.replaceInPlace") {
         auto sv = bus.execute("package.save", json{{"sessionId", opened}});
         if (!sv.value("ok", false)) {
             std::cerr << sv.dump() << '\n';
