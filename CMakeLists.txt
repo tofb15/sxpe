@@ -95,6 +95,40 @@ target_include_directories(sxpe_commands_test PRIVATE "${SXPE_VENDOR}")
 add_executable(sxpe_stbl_test tests/stbl_test.cpp)
 target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
 
+set(_sxpe_qt_hint "${CMAKE_CURRENT_SOURCE_DIR}/../qt/6.8.2/msvc2022_64")
+if(EXISTS "${_sxpe_qt_hint}/lib/cmake/Qt6/Qt6Config.cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${_sxpe_qt_hint}")
+endif()
+find_package(Qt6 6.5 COMPONENTS Widgets QUIET)
+if(Qt6_FOUND)
+    qt_standard_project_setup()
+    add_executable(sxpe_gui WIN32
+        src/gui/main.cpp
+        src/gui/main_window.cpp
+        src/gui/package_tab.cpp
+        src/gui/resource_model.cpp
+        src/gui/inspector.cpp
+        src/gui/palette.cpp
+        src/gui/dialogs.cpp
+        src/gui/plugin_host.cpp
+    )
+    target_include_directories(sxpe_gui PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gui"
+        "${SXPE_VENDOR}")
+    target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
+    set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
+    get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+    find_program(SXPE_WINDEPLOYQT windeployqt HINTS "${_qt_prefix}/bin")
+    if(SXPE_WINDEPLOYQT)
+        add_custom_command(TARGET sxpe_gui POST_BUILD
+            COMMAND "${SXPE_WINDEPLOYQT}" --no-translations --no-compiler-runtime
+                    "$<TARGET_FILE:sxpe_gui>"
+            COMMENT "windeployqt sxpe_gui")
+    endif()
+else()
+    message(STATUS "Qt 6 Widgets not found; skipping sxpe_gui (CLI/MCP still build)")
+endif()
+
 enable_testing()
 add_test(NAME game_profile_registry COMMAND sxpe_tests)
 add_test(NAME dbpf_io COMMAND sxpe_dbpf_io_test)
@@ -108,3 +142,11 @@ add_test(NAME cli_list COMMAND sxpe resource list --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin" --format json --limit 10)
 add_test(NAME cli_info COMMAND sxpe package info --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/empty.bin" --format json)
+if(TARGET sxpe_gui)
+    add_test(NAME gui_smoke COMMAND sxpe_gui --smoke
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin")
+    get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+    set_tests_properties(gui_smoke PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_qt_prefix}/plugins"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_prefix}/bin")
+endif()

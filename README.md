@@ -14,7 +14,7 @@ This project is unofficial. The Sims 3 is a trademark of Electronic Arts. SXPE i
 
 ## Status
 
-M3+M4: command bus, Qt-free CLI (`sxpe`) and MCP stdio (`sxpe_mcp`), STBL/NMAP/DDS/S3SA/CLIP editors, import/export. GUI is later.
+M5: Windows Qt 6 GUI (`sxpe_gui`) plus CLI (`sxpe`) and MCP (`sxpe_mcp`). Open/save packages, virtualized resource grid, filter, preview/hex/graph, dialogs. CLI/MCP stay Qt-free.
 
 ```text
 cmake --preset default
@@ -28,7 +28,11 @@ On Windows with Visual Studio 2022/2026 (MSVC):
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-Requires CMake 3.28+ and a C++23 compiler. Qt is **not** required until the GUI target exists.
+Requires CMake 3.28+ and a C++23 compiler. The GUI needs Qt 6 Widgets (`find_package(Qt6)`). If Qt lives next to the repo as `../qt/6.8.2/msvc2022_64`, CMake picks it up. Without Qt, CLI and MCP still build.
+
+```text
+sxpe_gui path\to\file.package
+```
 
 ## Layout
 

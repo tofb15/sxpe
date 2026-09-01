@@ -815,6 +815,33 @@ nlohmann::json Bus::manifest() const {
     return envelope_ok({{"tools", tools}});
 }
 
+Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
+    auto* s = impl_->find(std::string(session_id));
+    if (!s) {
+        return std::unexpected(err(ErrorCode::not_found, "session"));
+    }
+    auto names = load_nmap(s->pkg);
+    std::vector<UiRow> rows;
+    rows.reserve(s->pkg.count());
+    for (std::uint32_t i = 0; i < s->pkg.count(); ++i) {
+        const auto& e = s->pkg.entry(i);
+        UiRow r;
+        r.index = i;
+        r.type = e.tgi.type;
+        r.group = e.tgi.group;
+        r.instance = e.tgi.instance;
+        r.ordinal = e.ordinal;
+        r.file_size = e.file_size;
+        r.mem_size = e.mem_size;
+        r.tag = std::string(sxpe::resources::tag_for(e.tgi.type));
+        r.name = sxpe::resources::lookup_name(names, e.tgi.instance);
+        r.compressed = e.compressed == 0xFFFF;
+        r.deleted = s->pkg.deleted(i);
+        rows.push_back(std::move(r));
+    }
+    return rows;
+}
+
 nlohmann::json Bus::execute(std::string_view id, const nlohmann::json& args) {
     try {
         if (args.contains("game") && args["game"].is_string()) {

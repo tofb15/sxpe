@@ -4,11 +4,26 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace sxpe::commands {
+
+struct UiRow {
+    std::uint32_t index{0};
+    std::uint32_t type{0};
+    std::uint32_t group{0};
+    std::uint64_t instance{0};
+    std::uint32_t ordinal{0};
+    std::uint32_t file_size{0};
+    std::uint32_t mem_size{0};
+    std::string tag;
+    std::string name;
+    bool compressed{false};
+    bool deleted{false};
+};
 
 struct Tool {
     std::string id;
@@ -38,6 +53,8 @@ public:
     [[nodiscard]] std::vector<Tool> tools() const;
     [[nodiscard]] nlohmann::json manifest() const;
     nlohmann::json execute(std::string_view id, const nlohmann::json& args);
+    /// Full metadata snapshot for the GUI grid (no payloads, not an MCP tool).
+    Result<std::vector<UiRow>> ui_index(std::string_view session_id);
 
 private:
     struct Impl;
