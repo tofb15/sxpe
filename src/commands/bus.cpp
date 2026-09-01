@@ -297,6 +297,7 @@ json item_meta(Package& pkg, std::uint32_t i,
     j["tag"] = sxpe::resources::tag_for(e.tgi.type);
     auto it = names.find(e.tgi.instance);
     j["name"] = it == names.end() ? "" : it->second;
+    j["chunkOffset"] = e.chunk_offset;
     j["fileSize"] = e.file_size;
     j["memSize"] = e.mem_size;
     j["compressed"] = e.compressed == 0xFFFF;
@@ -984,6 +985,7 @@ Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
         r.group = e.tgi.group;
         r.instance = e.tgi.instance;
         r.ordinal = e.ordinal;
+        r.chunk_offset = e.chunk_offset;
         r.file_size = e.file_size;
         r.mem_size = e.mem_size;
         r.tag = std::string(sxpe::resources::tag_for(e.tgi.type));

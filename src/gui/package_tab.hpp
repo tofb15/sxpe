@@ -31,11 +31,13 @@ public:
     void copy_preview();
     bool save_preview(const QString& path);
     void select_all();
+    void apply_column_mask(ColumnMask m);
     [[nodiscard]] int visible_count() const { return model_ ? model_->visible_count() : 0; }
 
 signals:
     void status_changed();
     void resource_context_menu(const QPoint& global);
+    void columns_changed();
 
 private:
     sxpe::commands::Bus& bus_;

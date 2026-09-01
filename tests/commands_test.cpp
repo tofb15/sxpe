@@ -106,6 +106,7 @@ int main() {
     CHECK(listed["data"]["items"].size() == 1);
     CHECK(listed["data"]["items"][0].contains("instanceHex"));
     CHECK(listed["data"]["items"][0]["instanceHex"].get<std::string>().rfind("0x", 0) == 0);
+    CHECK(listed["data"]["items"][0].contains("chunkOffset"));
 
     auto tmp = std::filesystem::temp_directory_path() / "sxpe-m3";
     std::filesystem::create_directories(tmp);

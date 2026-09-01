@@ -77,6 +77,8 @@ private:
     void show_licence();
     void show_warranty();
     void show_contents();
+    void rebuild_columns_menu();
+    void apply_columns_all();
     QString current_package_path();
 
     sxpe::commands::Bus bus_;
@@ -86,6 +88,7 @@ private:
     QLabel* status_counts_{};
     QMenu* mru_menu_{};
     QMenu* bookmarks_menu_{};
+    QMenu* columns_menu_{};
     QAction* compressed_act_{};
     QAction* deleted_act_{};
     QAction* preview_dds_act_{};

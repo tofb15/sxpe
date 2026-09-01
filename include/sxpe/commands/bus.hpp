@@ -17,6 +17,7 @@ struct UiRow {
     std::uint32_t group{0};
     std::uint64_t instance{0};
     std::uint32_t ordinal{0};
+    std::uint32_t chunk_offset{0};
     std::uint32_t file_size{0};
     std::uint32_t mem_size{0};
     std::string tag;

@@ -1,7 +1,10 @@
 #include "resource_model.hpp"
 
 #include <QColor>
+#include <QCoreApplication>
 #include <QPainter>
+#include <QSettings>
+#include <QStringList>
 #include <QStyle>
 #include <algorithm>
 
@@ -26,6 +29,7 @@ void ResourceModel::set_rows(std::vector<sxpe::commands::UiRow> rows) {
         d.group = u.group;
         d.instance = u.instance;
         d.ordinal = u.ordinal;
+        d.chunk_offset = u.chunk_offset;
         d.file_size = u.file_size;
         d.mem_size = u.mem_size;
         d.id_s = QString::number(u.index);
@@ -37,6 +41,9 @@ void ResourceModel::set_rows(std::vector<sxpe::commands::UiRow> rows) {
         d.ord_s = QString::number(u.ordinal);
         d.size_s = QString::number(u.mem_size);
         d.cmp_s = u.compressed ? QStringLiteral("Y") : QString();
+        d.offset_h = hex32(u.chunk_offset);
+        d.disk_s = QString::number(u.file_size);
+        d.del_s = u.deleted ? QStringLiteral("Y") : QString();
         d.compressed = u.compressed;
         d.deleted = u.deleted;
         all_.push_back(std::move(d));
@@ -94,6 +101,15 @@ void ResourceModel::apply_sort(QVector<int>& vis) const {
                 break;
             case Compressed:
                 cmp = (a.compressed > b.compressed) - (a.compressed < b.compressed);
+                break;
+            case Offset:
+                cmp = (a.chunk_offset > b.chunk_offset) - (a.chunk_offset < b.chunk_offset);
+                break;
+            case Disk:
+                cmp = (a.file_size > b.file_size) - (a.file_size < b.file_size);
+                break;
+            case Deleted:
+                cmp = (a.deleted > b.deleted) - (a.deleted < b.deleted);
                 break;
             default:
                 break;
@@ -156,6 +172,12 @@ const QString& ResourceModel::cell_text(const DisplayRow& r, int column) {
             return r.size_s;
         case Compressed:
             return r.cmp_s;
+        case Offset:
+            return r.offset_h;
+        case Disk:
+            return r.disk_s;
+        case Deleted:
+            return r.del_s;
         default:
             return kEmpty;
     }
@@ -222,11 +244,101 @@ QSize ResourcePaintDelegate::sizeHint(const QStyleOptionViewItem&, const QModelI
 }
 
 QVariant ResourceModel::headerData(int section, Qt::Orientation o, int role) const {
-    if (o != Qt::Horizontal || role != Qt::DisplayRole) {
+    if (o != Qt::Horizontal) {
         return {};
     }
-    static const char* k[] = {"ID", "Tag", "Name", "Type", "Group", "Instance", "#", "Size", "Cmp"};
-    return section >= 0 && section < Count_ ? QString::fromLatin1(k[section]) : QVariant{};
+    const auto* info = column_info(section);
+    if (!info) {
+        return {};
+    }
+    if (role == Qt::DisplayRole) {
+        return QString::fromLatin1(info->header);
+    }
+    if (role == Qt::ToolTipRole) {
+        return QCoreApplication::translate("sxpe::gui", info->title);
+    }
+    return {};
+}
+
+ColumnMask default_column_mask() {
+    ColumnMask m = 0;
+    for (const auto& c : kColumnInfo) {
+        if (c.default_on) {
+            m |= (1u << static_cast<unsigned>(c.id));
+        }
+    }
+    return m;
+}
+
+int visible_column_count(ColumnMask m) {
+    int n = 0;
+    for (int i = 0; i < ResourceModel::Count_; ++i) {
+        if (m & (1u << static_cast<unsigned>(i))) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+const ColumnInfo* column_info(int col) {
+    if (col < 0 || col >= ResourceModel::Count_) {
+        return nullptr;
+    }
+    for (const auto& c : kColumnInfo) {
+        if (c.id == col) {
+            return &c;
+        }
+    }
+    return nullptr;
+}
+
+ColumnMask load_column_mask() {
+    QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+    const auto keys = st.value(QStringLiteral("table/visibleColumns")).toStringList();
+    if (keys.isEmpty()) {
+        return default_column_mask();
+    }
+    ColumnMask m = 0;
+    for (const auto& c : kColumnInfo) {
+        if (keys.contains(QLatin1String(c.key))) {
+            m |= (1u << static_cast<unsigned>(c.id));
+        }
+    }
+    return m == 0 ? default_column_mask() : m;
+}
+
+void save_column_mask(ColumnMask m) {
+    if (m == 0) {
+        m = default_column_mask();
+    }
+    QStringList keys;
+    keys.reserve(ResourceModel::Count_);
+    for (const auto& c : kColumnInfo) {
+        if (m & (1u << static_cast<unsigned>(c.id))) {
+            keys << QLatin1String(c.key);
+        }
+    }
+    QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+    st.setValue(QStringLiteral("table/visibleColumns"), keys);
+}
+
+bool try_set_column_visible(ColumnMask& m, int col, bool on) {
+    if (col < 0 || col >= ResourceModel::Count_) {
+        return false;
+    }
+    const auto bit = static_cast<ColumnMask>(1u << static_cast<unsigned>(col));
+    if (on) {
+        m |= bit;
+        return true;
+    }
+    if ((m & bit) == 0) {
+        return true;
+    }
+    if (visible_column_count(m) <= 1) {
+        return false;
+    }
+    m &= ~bit;
+    return true;
 }
 
 QVector<int> filter_rows(const std::vector<DisplayRow>& all, const QString& text,

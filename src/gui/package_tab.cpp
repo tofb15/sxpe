@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <QAction>
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
@@ -19,7 +20,9 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QSettings>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QTableView>
 #include <QTimer>
@@ -27,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <thread>
 #include <vector>
 
@@ -52,7 +56,64 @@ public:
         setMinimumWidth(sum + 24);
     }
 
-    void set_defaults(std::array<int, ResourceModel::Count_> defaults) { defaults_ = defaults; }
+    void set_defaults(std::array<int, ResourceModel::Count_> defaults) {
+        defaults_ = defaults;
+        stored_ = defaults;
+        load_stored_widths();
+    }
+
+    void set_column_toggle_handler(std::function<bool(int, bool)> h) { column_toggle_ = std::move(h); }
+    void set_mask_handler(std::function<void(ColumnMask)> h) { set_mask_ = std::move(h); }
+
+    ColumnMask current_mask() const {
+        ColumnMask m = 0;
+        auto* hdr = horizontalHeader();
+        for (int i = 0; i < ResourceModel::Count_; ++i) {
+            if (hdr && !hdr->isSectionHidden(i)) {
+                m |= (1u << static_cast<unsigned>(i));
+            }
+        }
+        return m == 0 ? default_column_mask() : m;
+    }
+
+    void apply_mask(ColumnMask m) {
+        if (m == 0) {
+            m = default_column_mask();
+        }
+        auto* hdr = horizontalHeader();
+        if (!hdr || !model()) {
+            return;
+        }
+        filling_ = true;
+        for (int i = 0; i < ResourceModel::Count_; ++i) {
+            const bool want = (m & (1u << static_cast<unsigned>(i))) != 0;
+            const bool hidden = hdr->isSectionHidden(i);
+            if (want) {
+                if (hidden) {
+                    hdr->showSection(i);
+                }
+                setColumnWidth(i, std::max(min_for(i), stored_[static_cast<size_t>(i)]));
+            } else if (!hidden) {
+                hdr->hideSection(i);
+            }
+        }
+        filling_ = false;
+        update_min_width();
+        old_vw_ = -1;
+        distribute_delta(viewport()->width() - current_sum());
+        old_vw_ = viewport()->width();
+        viewport()->update();
+        save_stored_widths();
+    }
+
+    void save_stored_widths() const {
+        QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+        st.beginGroup(QStringLiteral("table/widths"));
+        for (const auto& c : kColumnInfo) {
+            st.setValue(QLatin1String(c.key), stored_[static_cast<size_t>(c.id)]);
+        }
+        st.endGroup();
+    }
 
     void reset_column(int logical) {
         if (logical < 0 || logical >= ResourceModel::Count_) {
@@ -80,17 +141,24 @@ public:
         const QFontMetrics fm = fontMetrics();
         std::vector<int> w(static_cast<size_t>(n));
         int sum = 0;
+        int vis = 0;
         for (int i = 0; i < n; ++i) {
+            if (section_hidden(i)) {
+                w[static_cast<size_t>(i)] = columnWidth(i);
+                continue;
+            }
             w[static_cast<size_t>(i)] = std::max(min_for(i), m->hint_width(i, fm));
             sum += w[static_cast<size_t>(i)];
+            ++vis;
         }
         const int vw = std::max(1, viewport()->width());
+        vis = std::max(1, vis);
         if (sum > vw) {
             int need = sum - vw;
             while (need > 0) {
                 int flexible = 0;
                 for (int i = 0; i < n; ++i) {
-                    if (w[static_cast<size_t>(i)] > min_for(i)) {
+                    if (!section_hidden(i) && w[static_cast<size_t>(i)] > min_for(i)) {
                         ++flexible;
                     }
                 }
@@ -99,6 +167,9 @@ public:
                 }
                 const int share = std::max(1, need / flexible);
                 for (int i = 0; i < n && need > 0; ++i) {
+                    if (section_hidden(i)) {
+                        continue;
+                    }
                     const int room = w[static_cast<size_t>(i)] - min_for(i);
                     if (room <= 0) {
                         continue;
@@ -110,9 +181,12 @@ public:
             }
         } else if (sum < vw) {
             int extra = vw - sum;
-            const int base = extra / n;
-            int rem = extra % n;
+            const int base = extra / vis;
+            int rem = extra % vis;
             for (int i = 0; i < n; ++i) {
+                if (section_hidden(i)) {
+                    continue;
+                }
                 w[static_cast<size_t>(i)] += base + (rem > 0 ? 1 : 0);
                 if (rem > 0) {
                     --rem;
@@ -120,11 +194,15 @@ public:
             }
         }
         for (int i = 0; i < n; ++i) {
-            setColumnWidth(i, w[static_cast<size_t>(i)]);
+            if (!section_hidden(i)) {
+                setColumnWidth(i, w[static_cast<size_t>(i)]);
+                stored_[static_cast<size_t>(i)] = w[static_cast<size_t>(i)];
+            }
         }
         filling_ = false;
         old_vw_ = viewport()->width();
         viewport()->update();
+        save_stored_widths();
     }
 
     void reset_all() {
@@ -134,13 +212,17 @@ public:
         filling_ = true;
         const int n = model()->columnCount();
         for (int i = 0; i < n; ++i) {
-            setColumnWidth(i, std::max(min_for(i), defaults_[static_cast<size_t>(i)]));
+            stored_[static_cast<size_t>(i)] = std::max(min_for(i), defaults_[static_cast<size_t>(i)]);
+            if (!section_hidden(i)) {
+                setColumnWidth(i, stored_[static_cast<size_t>(i)]);
+            }
         }
         filling_ = false;
         old_vw_ = -1;
         distribute_delta(viewport()->width() - current_sum());
         old_vw_ = viewport()->width();
         viewport()->update();
+        save_stored_widths();
     }
 
 protected:
@@ -170,6 +252,11 @@ protected:
     }
 
 private:
+    bool section_hidden(int col) const {
+        auto* hdr = horizontalHeader();
+        return hdr && hdr->isSectionHidden(col);
+    }
+
     int min_for(int col) const {
         if (col < 0 || col >= ResourceModel::Count_) {
             return 32;
@@ -177,11 +264,46 @@ private:
         return mins_[static_cast<size_t>(col)];
     }
 
+    int visible_section_count() const {
+        int n = 0;
+        const int cols = model() ? model()->columnCount() : 0;
+        for (int i = 0; i < cols; ++i) {
+            if (!section_hidden(i)) {
+                ++n;
+            }
+        }
+        return n;
+    }
+
+    void update_min_width() {
+        int sum = 24;
+        for (int i = 0; i < ResourceModel::Count_; ++i) {
+            if (!section_hidden(i)) {
+                sum += min_for(i);
+            }
+        }
+        setMinimumWidth(sum);
+    }
+
+    void load_stored_widths() {
+        QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+        st.beginGroup(QStringLiteral("table/widths"));
+        for (const auto& c : kColumnInfo) {
+            if (st.contains(QLatin1String(c.key))) {
+                stored_[static_cast<size_t>(c.id)] =
+                    std::max(min_for(c.id), st.value(QLatin1String(c.key)).toInt());
+            }
+        }
+        st.endGroup();
+    }
+
     int current_sum() const {
         int s = 0;
         const int n = model() ? model()->columnCount() : 0;
         for (int i = 0; i < n; ++i) {
-            s += columnWidth(i);
+            if (!section_hidden(i)) {
+                s += columnWidth(i);
+            }
         }
         return s;
     }
@@ -192,16 +314,22 @@ private:
         }
         filling_ = true;
         const int n = model()->columnCount();
+        const int vis = std::max(1, visible_section_count());
         std::vector<int> w(static_cast<size_t>(n));
         std::vector<int> mn(static_cast<size_t>(n));
         for (int i = 0; i < n; ++i) {
             mn[static_cast<size_t>(i)] = min_for(i);
-            w[static_cast<size_t>(i)] = std::max(columnWidth(i), mn[static_cast<size_t>(i)]);
+            w[static_cast<size_t>(i)] = section_hidden(i)
+                                           ? stored_[static_cast<size_t>(i)]
+                                           : std::max(columnWidth(i), mn[static_cast<size_t>(i)]);
         }
         if (delta > 0) {
-            const int base = delta / n;
-            int rem = delta % n;
+            const int base = delta / vis;
+            int rem = delta % vis;
             for (int i = 0; i < n; ++i) {
+                if (section_hidden(i)) {
+                    continue;
+                }
                 w[static_cast<size_t>(i)] += base + (rem > 0 ? 1 : 0);
                 if (rem > 0) {
                     --rem;
@@ -212,7 +340,7 @@ private:
             while (need > 0) {
                 int flexible = 0;
                 for (int i = 0; i < n; ++i) {
-                    if (w[static_cast<size_t>(i)] > mn[static_cast<size_t>(i)]) {
+                    if (!section_hidden(i) && w[static_cast<size_t>(i)] > mn[static_cast<size_t>(i)]) {
                         ++flexible;
                     }
                 }
@@ -221,6 +349,9 @@ private:
                 }
                 const int share = std::max(1, need / flexible);
                 for (int i = 0; i < n && need > 0; ++i) {
+                    if (section_hidden(i)) {
+                        continue;
+                    }
                     const int room = w[static_cast<size_t>(i)] - mn[static_cast<size_t>(i)];
                     if (room <= 0) {
                         continue;
@@ -232,7 +363,10 @@ private:
             }
         }
         for (int i = 0; i < n; ++i) {
-            setColumnWidth(i, w[static_cast<size_t>(i)]);
+            if (!section_hidden(i)) {
+                setColumnWidth(i, w[static_cast<size_t>(i)]);
+                stored_[static_cast<size_t>(i)] = w[static_cast<size_t>(i)];
+            }
         }
         filling_ = false;
     }
@@ -248,8 +382,9 @@ private:
         new_size = std::max(new_size, mn);
         int delta = new_size - old_size;
         setColumnWidth(logical, new_size);
+        stored_[static_cast<size_t>(logical)] = new_size;
         auto steal = [&](int i) {
-            if (delta == 0 || i < 0 || i >= n || i == logical) {
+            if (delta == 0 || i < 0 || i >= n || i == logical || section_hidden(i)) {
                 return;
             }
             if (delta > 0) {
@@ -257,10 +392,12 @@ private:
                 const int take = std::min(room, delta);
                 if (take > 0) {
                     setColumnWidth(i, columnWidth(i) - take);
+                    stored_[static_cast<size_t>(i)] = columnWidth(i);
                     delta -= take;
                 }
             } else {
                 setColumnWidth(i, columnWidth(i) - delta);
+                stored_[static_cast<size_t>(i)] = columnWidth(i);
                 delta = 0;
             }
         };
@@ -274,6 +411,7 @@ private:
             setColumnWidth(logical, columnWidth(logical) - delta);
         }
         filling_ = false;
+        save_stored_widths();
     }
 
     void on_section_resized(int logical, int /*old_size*/, int new_size) {
@@ -283,14 +421,64 @@ private:
         apply_user_width(logical, new_size);
     }
 
+    void add_column_toggles(QMenu& menu) {
+        const auto mask = current_mask();
+        const int vis = visible_column_count(mask);
+        for (const auto& c : kColumnInfo) {
+            auto* a = menu.addAction(tr(c.title));
+            a->setCheckable(true);
+            const bool on = (mask & (1u << static_cast<unsigned>(c.id))) != 0;
+            a->setChecked(on);
+            a->setEnabled(!(on && vis <= 1));
+            connect(a, &QAction::triggered, this, [this, a, id = c.id](bool checked) {
+                bool ok = false;
+                if (column_toggle_) {
+                    ok = column_toggle_(id, checked);
+                } else {
+                    auto m = current_mask();
+                    ok = try_set_column_visible(m, id, checked);
+                    if (ok) {
+                        save_column_mask(m);
+                        apply_mask(m);
+                    }
+                }
+                if (!ok) {
+                    QSignalBlocker block(a);
+                    a->setChecked(!checked);
+                }
+            });
+        }
+        menu.addSeparator();
+        menu.addAction(tr("Show all"), this, [this] {
+            ColumnMask m = (1u << static_cast<unsigned>(ResourceModel::Count_)) - 1u;
+            if (set_mask_) {
+                set_mask_(m);
+            } else {
+                save_column_mask(m);
+                apply_mask(m);
+            }
+        });
+        menu.addAction(tr("Reset to defaults"), this, [this] {
+            const auto m = default_column_mask();
+            if (set_mask_) {
+                set_mask_(m);
+            } else {
+                save_column_mask(m);
+                apply_mask(m);
+            }
+        });
+    }
+
     void on_header_menu(const QPoint& pos) {
         auto* hdr = horizontalHeader();
         const int col = hdr->logicalIndexAt(pos);
         QMenu menu(this);
+        add_column_toggles(menu);
+        menu.addSeparator();
         auto* fit_col = menu.addAction(tr("Autofit column"));
-        fit_col->setEnabled(col >= 0);
+        fit_col->setEnabled(col >= 0 && !section_hidden(col));
         auto* fit_all = menu.addAction(tr("Autofit all"));
-        auto* reset = menu.addAction(tr("Reset"));
+        auto* reset = menu.addAction(tr("Reset widths"));
         auto* chosen = menu.exec(hdr->mapToGlobal(pos));
         if (chosen == fit_col) {
             autofit_column(col);
@@ -303,6 +491,9 @@ private:
 
     std::array<int, ResourceModel::Count_> mins_{};
     std::array<int, ResourceModel::Count_> defaults_{};
+    std::array<int, ResourceModel::Count_> stored_{};
+    std::function<bool(int, bool)> column_toggle_;
+    std::function<void(ColumnMask)> set_mask_;
     int old_vw_{-1};
     bool filling_{false};
 };
@@ -388,6 +579,9 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         mins[ResourceModel::Ordinal] = ord_w;
         mins[ResourceModel::Size] = size_w;
         mins[ResourceModel::Compressed] = cmp_w;
+        mins[ResourceModel::Offset] = hex8;
+        mins[ResourceModel::Disk] = size_w;
+        mins[ResourceModel::Deleted] = cmp_w;
         std::array<int, ResourceModel::Count_> defs = mins;
         defs[ResourceModel::Name] = name_w;
         auto* grid = static_cast<ResourceTableView*>(table_);
@@ -404,8 +598,27 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         table_->setColumnWidth(ResourceModel::Ordinal, ord_w);
         table_->setColumnWidth(ResourceModel::Size, size_w);
         table_->setColumnWidth(ResourceModel::Compressed, cmp_w);
+        table_->setColumnWidth(ResourceModel::Offset, hex8);
+        table_->setColumnWidth(ResourceModel::Disk, size_w);
+        table_->setColumnWidth(ResourceModel::Deleted, cmp_w);
         connect(hdr, &QHeaderView::sectionHandleDoubleClicked, table_,
                 [grid](int logical) { grid->reset_column(logical); });
+        grid->set_column_toggle_handler([this](int col, bool on) {
+            auto m = load_column_mask();
+            if (!try_set_column_visible(m, col, on)) {
+                return false;
+            }
+            save_column_mask(m);
+            apply_column_mask(m);
+            emit columns_changed();
+            return true;
+        });
+        grid->set_mask_handler([this](ColumnMask m) {
+            save_column_mask(m);
+            apply_column_mask(m);
+            emit columns_changed();
+        });
+        grid->apply_mask(load_column_mask());
     }
     table_->setSortingEnabled(true);
     table_->horizontalHeader()->setSortIndicator(-1, Qt::AscendingOrder);
@@ -580,5 +793,11 @@ bool PackageTab::save_preview(const QString& path) {
 }
 
 void PackageTab::select_all() { table_->selectAll(); }
+
+void PackageTab::apply_column_mask(ColumnMask m) {
+    if (auto* grid = static_cast<ResourceTableView*>(table_)) {
+        grid->apply_mask(m);
+    }
+}
 
 }  // namespace sxpe::gui

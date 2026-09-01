@@ -130,6 +130,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     act(edit, tr("Command &palette…"), QKeySequence(Qt::CTRL | Qt::Key_K), [this] { run_palette(); });
 
+    auto* view = menuBar()->addMenu(tr("&View"));
+    columns_menu_ = view->addMenu(tr("&Columns"));
+    connect(columns_menu_, &QMenu::aboutToShow, this, &MainWindow::rebuild_columns_menu);
+
     auto* res = menuBar()->addMenu(tr("&Resource"));
     act(res, tr("&Add…"), QKeySequence(Qt::CTRL | Qt::Key_I), [this] { add_resource(); });
     act(res, tr("&Copy"), QKeySequence::Copy, [this] { copy_resources(); });
@@ -292,6 +296,7 @@ void MainWindow::add_tab(const QString& session_id, const QString& title) {
     auto* tab = new PackageTab(bus_, session_id, tabs_);
     connect(tab, &PackageTab::status_changed, this, &MainWindow::update_status);
     connect(tab, &PackageTab::resource_context_menu, this, &MainWindow::show_resource_context);
+    connect(tab, &PackageTab::columns_changed, this, &MainWindow::apply_columns_all);
     const int i = tabs_->addTab(tab, title);
     tabs_->setCurrentIndex(i);
     refresh_tab_chrome(tab);
@@ -594,6 +599,49 @@ void MainWindow::persist_lists() {
     QSettings st("SXPE", "SXPE");
     st.setValue("mru", mru_);
     st.setValue("bookmarks", bookmarks_);
+}
+
+void MainWindow::apply_columns_all() {
+    const auto m = load_column_mask();
+    for (int i = 0; i < tabs_->count(); ++i) {
+        if (auto* t = qobject_cast<PackageTab*>(tabs_->widget(i))) {
+            t->apply_column_mask(m);
+        }
+    }
+}
+
+void MainWindow::rebuild_columns_menu() {
+    if (!columns_menu_) {
+        return;
+    }
+    columns_menu_->clear();
+    const auto mask = load_column_mask();
+    const int vis = visible_column_count(mask);
+    for (const auto& c : kColumnInfo) {
+        auto* a = columns_menu_->addAction(tr(c.title));
+        a->setCheckable(true);
+        const bool on = (mask & (1u << static_cast<unsigned>(c.id))) != 0;
+        a->setChecked(on);
+        a->setEnabled(!(on && vis <= 1));
+        connect(a, &QAction::triggered, this, [this, id = static_cast<int>(c.id)](bool checked) {
+            auto m = load_column_mask();
+            if (!try_set_column_visible(m, id, checked)) {
+                rebuild_columns_menu();
+                return;
+            }
+            save_column_mask(m);
+            apply_columns_all();
+        });
+    }
+    columns_menu_->addSeparator();
+    columns_menu_->addAction(tr("Show all"), this, [this] {
+        save_column_mask((1u << static_cast<unsigned>(ResourceModel::Count_)) - 1u);
+        apply_columns_all();
+    });
+    columns_menu_->addAction(tr("Reset to defaults"), this, [this] {
+        save_column_mask(default_column_mask());
+        apply_columns_all();
+    });
 }
 
 void MainWindow::rebuild_mru() {
@@ -1176,7 +1224,8 @@ void MainWindow::show_contents() {
            "(STBL, S3SA DLL, CLIP, DDS, VID), hex/text helpers.\n"
            "Tools: FNV-1 / CLIP hash, byte search, validate, compact.\n\n"
            "Right-click the resource list for the same Resource actions. "
-           "Right-click column headers to autofit or reset widths."));
+           "Right-click column headers to show or hide columns, autofit, or reset widths. "
+           "View → Columns is the same list. The last visible column cannot be hidden."));
 }
 
 void MainWindow::show_warranty() {
