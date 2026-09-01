@@ -1,0 +1,18 @@
+SXPE
+Copyright (C) 2026 SXPE contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+SXPE is an unofficial editor for The Sims 3 package files.
+The Sims 3 is a trademark of Electronic Arts.
+SXPE is not affiliated with Electronic Arts.
+SXPE is not Peter L Jones's s3pe and is not "s3pe 2.0".
+
+Prior art / inspiration (capability featureset only; no source copied):
+Peter L Jones, sims3tools / s3pe / s3pi.
+
+Third-party licenses for libraries actually used will be listed here
+as they are added (SPDX in NOTICE and Directory.Packages.props).

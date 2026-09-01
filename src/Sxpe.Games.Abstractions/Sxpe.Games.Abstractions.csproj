@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Sxpe.Games</RootNamespace>
+    <Description>Game-profile interfaces. v1 implements Sims 3 only.</Description>
+  </PropertyGroup>
+</Project>

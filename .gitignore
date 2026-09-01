@@ -1,0 +1,24 @@
+# Build
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+*.userosscache
+
+# IDE
+.vs/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Test / local fixtures (never commit EA or CC packages)
+fixtures/local/
+*.package
+*.dbc
+*.world
+*.nhd

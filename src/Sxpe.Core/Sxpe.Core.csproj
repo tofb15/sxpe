@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Sxpe.Core</RootNamespace>
+    <Description>Sessions, mmap, profile registry.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sxpe.Games.Abstractions\Sxpe.Games.Abstractions.csproj" />
+    <ProjectReference Include="..\Sxpe.Games.Sims3\Sxpe.Games.Sims3.csproj" />
+  </ItemGroup>
+</Project>

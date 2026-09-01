@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Sxpe.Games.Sims3</RootNamespace>
+    <Description>The Sims 3 game profile (v1 only implemented family).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sxpe.Games.Abstractions\Sxpe.Games.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
