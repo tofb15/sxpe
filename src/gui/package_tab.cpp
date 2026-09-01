@@ -30,10 +30,30 @@ class ResourceTableView final : public QTableView {
 public:
     using QTableView::QTableView;
 
+    void fill_width() {
+        if (filling_ || !model()) {
+            return;
+        }
+        filling_ = true;
+        int others = 0;
+        const int cols = model()->columnCount();
+        for (int c = 0; c < cols; ++c) {
+            if (c != ResourceModel::Name) {
+                others += columnWidth(c);
+            }
+        }
+        const int w = viewport()->width() - others;
+        if (w >= 48) {
+            setColumnWidth(ResourceModel::Name, w);
+        }
+        filling_ = false;
+        viewport()->update();
+    }
+
 protected:
     void resizeEvent(QResizeEvent* e) override {
         QTableView::resizeEvent(e);
-        viewport()->update();
+        fill_width();
     }
     void paintEvent(QPaintEvent* e) override {
         QPainter bg(viewport());
@@ -41,6 +61,9 @@ protected:
         bg.end();
         QTableView::paintEvent(e);
     }
+
+private:
+    bool filling_{false};
 };
 
 }  // namespace
@@ -113,7 +136,9 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         table_->setColumnWidth(ResourceModel::Compressed, fm.horizontalAdvance(QStringLiteral("Cmp")) + 16);
         hdr->setSortIndicatorShown(true);
         hdr->setSectionsClickable(true);
-        connect(hdr, &QHeaderView::sectionResized, table_, [this] { table_->viewport()->update(); });
+        connect(hdr, &QHeaderView::sectionResized, table_, [this](int, int, int) {
+            static_cast<ResourceTableView*>(table_)->fill_width();
+        });
     }
     table_->setSortingEnabled(true);
     inspector_ = new Inspector(bus_, this);
