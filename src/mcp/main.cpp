@@ -83,7 +83,7 @@ void write_message(const json& msg) {
 json initialize_result() {
     return {{"protocolVersion", "2026-07-28"},
             {"capabilities", {{"tools", {{"listChanged", false}}}}},
-            {"serverInfo", {{"name", "sxpe"}, {"version", "0.3.0"}}}};
+            {"serverInfo", {{"name", "sxpe"}, {"version", "0.4.0"}}}};
 }
 
 json tools_list(Bus& bus, const json& params) {

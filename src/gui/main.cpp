@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     app.setApplicationName("SXPE");
     app.setOrganizationName("SXPE");
-    app.setApplicationVersion("0.3.0");
+    app.setApplicationVersion("0.4.0");
     apply_theme(app);
 
     sxpe::gui::MainWindow w;
