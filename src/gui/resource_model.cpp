@@ -1,6 +1,8 @@
 #include "resource_model.hpp"
 
 #include <QColor>
+#include <QPainter>
+#include <QStyle>
 #include <algorithm>
 
 namespace sxpe::gui {
@@ -11,10 +13,7 @@ QString hex64(std::uint64_t v) { return QString("%1").arg(v, 16, 16, QLatin1Char
 
 }  // namespace
 
-ResourceModel::ResourceModel(QObject* parent) : QAbstractTableModel(parent) {
-    mono_.setStyleHint(QFont::Monospace);
-    mono_.setFamily(QStringLiteral("Consolas"));
-}
+ResourceModel::ResourceModel(QObject* parent) : QAbstractTableModel(parent) {}
 
 void ResourceModel::set_rows(std::vector<sxpe::commands::UiRow> rows) {
     beginResetModel();
@@ -33,6 +32,9 @@ void ResourceModel::set_rows(std::vector<sxpe::commands::UiRow> rows) {
         d.type_h = hex32(u.type);
         d.group_h = hex32(u.group);
         d.inst_h = hex64(u.instance);
+        d.ord_s = QString::number(u.ordinal);
+        d.size_s = QString::number(u.mem_size);
+        d.cmp_s = u.compressed ? QStringLiteral("Y") : QString();
         d.compressed = u.compressed;
         d.deleted = u.deleted;
         all_.push_back(std::move(d));
@@ -124,44 +126,72 @@ const DisplayRow* ResourceModel::row_at(int view_row) const {
     return &all_[static_cast<size_t>(i)];
 }
 
+const QString& ResourceModel::cell_text(const DisplayRow& r, int column) {
+    static const QString kEmpty;
+    switch (column) {
+        case Tag:
+            return r.tag;
+        case Name:
+            return r.name;
+        case Type:
+            return r.type_h;
+        case Group:
+            return r.group_h;
+        case Instance:
+            return r.inst_h;
+        case Ordinal:
+            return r.ord_s;
+        case Size:
+            return r.size_s;
+        case Compressed:
+            return r.cmp_s;
+        default:
+            return kEmpty;
+    }
+}
+
 QVariant ResourceModel::data(const QModelIndex& index, int role) const {
+    if (role != Qt::DisplayRole && role != Qt::ToolTipRole) {
+        return {};
+    }
     const auto* r = row_at(index.row());
     if (!r) {
         return {};
     }
-    if (role == Qt::ForegroundRole && r->deleted) {
-        return QColor(128, 128, 128);
-    }
-    if (role == Qt::FontRole && (index.column() == Type || index.column() == Group ||
-                                 index.column() == Instance || index.column() == Ordinal)) {
-        return mono_;
-    }
     if (role == Qt::ToolTipRole) {
-        return r->type_h + '-' + r->group_h + '-' + r->inst_h + " #" + QString::number(r->ordinal);
+        return r->type_h + QLatin1Char('-') + r->group_h + QLatin1Char('-') + r->inst_h +
+               QLatin1String(" #") + r->ord_s;
     }
-    if (role != Qt::DisplayRole) {
-        return {};
+    return cell_text(*r, index.column());
+}
+
+void ResourcePaintDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
+                                  const QModelIndex& index) const {
+    const auto* model = static_cast<const ResourceModel*>(index.model());
+    const auto* r = model->row_at(index.row());
+    if (!r) {
+        return;
     }
-    switch (index.column()) {
-        case Tag:
-            return r->tag;
-        case Name:
-            return r->name;
-        case Type:
-            return r->type_h;
-        case Group:
-            return r->group_h;
-        case Instance:
-            return r->inst_h;
-        case Ordinal:
-            return r->ordinal;
-        case Size:
-            return r->mem_size;
-        case Compressed:
-            return r->compressed ? QStringLiteral("Y") : QString();
-        default:
-            return {};
+    const bool sel = option.state.testFlag(QStyle::State_Selected);
+    const QPalette& pal = option.palette;
+    const QColor bg = sel ? pal.color(QPalette::Highlight)
+                          : ((index.row() & 1) ? pal.color(QPalette::AlternateBase)
+                                               : pal.color(QPalette::Base));
+    painter->fillRect(option.rect, bg);
+    if (sel) {
+        painter->setPen(pal.color(QPalette::HighlightedText));
+    } else if (r->deleted) {
+        painter->setPen(QColor(128, 128, 128));
+    } else {
+        painter->setPen(pal.color(QPalette::Text));
     }
+    painter->setFont(option.font);
+    painter->drawText(option.rect.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                      ResourceModel::cell_text(*r, index.column()));
+}
+
+QSize ResourcePaintDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const {
+    return {80, 22};
 }
 
 QVariant ResourceModel::headerData(int section, Qt::Orientation o, int role) const {

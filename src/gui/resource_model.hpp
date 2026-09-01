@@ -2,6 +2,7 @@
 
 #include "sxpe/commands/bus.hpp"
 
+#include <QAbstractItemDelegate>
 #include <QAbstractTableModel>
 #include <QFont>
 #include <QString>
@@ -23,8 +24,19 @@ struct DisplayRow {
     QString type_h;
     QString group_h;
     QString inst_h;
+    QString ord_s;
+    QString size_s;
+    QString cmp_s;
     bool compressed{false};
     bool deleted{false};
+};
+
+class ResourcePaintDelegate final : public QAbstractItemDelegate {
+public:
+    explicit ResourcePaintDelegate(QObject* parent = nullptr) : QAbstractItemDelegate(parent) {}
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override;
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
 };
 
 class ResourceModel final : public QAbstractTableModel {
@@ -44,6 +56,7 @@ public:
     QVariant headerData(int section, Qt::Orientation o, int role) const override;
 
     [[nodiscard]] const DisplayRow* row_at(int view_row) const;
+    [[nodiscard]] static const QString& cell_text(const DisplayRow& r, int column);
     [[nodiscard]] const std::vector<DisplayRow>& all() const { return all_; }
     [[nodiscard]] int visible_count() const { return visible_.size(); }
     [[nodiscard]] int sort_column() const { return sort_col_; }
@@ -56,7 +69,6 @@ private:
     QVector<int> visible_;
     int sort_col_{-1};
     Qt::SortOrder sort_order_{Qt::AscendingOrder};
-    QFont mono_;
 };
 
 QVector<int> filter_rows(const std::vector<DisplayRow>& all, const QString& text,

@@ -9,5 +9,5 @@ $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
 $ninja = Join-Path $vs "Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
 if (-not (Test-Path $ninja)) { throw "Ninja not found under Visual Studio CMake tools." }
 
-cmd.exe /c "call `"$vcvars`" && cd /d `"$Root`" && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug `"-DCMAKE_MAKE_PROGRAM=$ninja`" && cmake --build build && ctest --test-dir build --output-on-failure"
+cmd.exe /c "call `"$vcvars`" && cd /d `"$Root`" && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo `"-DCMAKE_MAKE_PROGRAM=$ninja`" && cmake --build build && ctest --test-dir build --output-on-failure"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
