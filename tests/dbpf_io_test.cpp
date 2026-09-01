@@ -157,6 +157,29 @@ int main() {
             CHECK(w->count() == 1);
         }
     }
+    auto nhd = tmp / "layout.nhd";
+    std::filesystem::copy_file(out, nhd, std::filesystem::copy_options::overwrite_existing, ec);
+    const auto nhd_sz = std::filesystem::file_size(nhd);
+    {
+        auto w = Package::open(nhd, true);
+        CHECK(w.has_value());
+        if (w) {
+            const char hi[] = "Hi";
+            auto payload = std::as_bytes(std::span{hi, sizeof(hi) - 1});
+            CHECK(w->set_uncompressed(0, payload, false).has_value());
+            CHECK(w->save().has_value());
+            CHECK(w->dirty() == false);
+            CHECK(std::filesystem::file_size(nhd) == nhd_sz);
+        }
+    }
+    auto nhd_r = Package::open(nhd, false);
+    CHECK(nhd_r.has_value());
+    if (nhd_r) {
+        CHECK(nhd_r->count() == 1);
+        auto body = nhd_r->uncompressed(0);
+        CHECK(body.has_value() && as_text(*body) == "Hi");
+    }
+
     auto hole_r = Package::open(hole, false);
     CHECK(hole_r.has_value());
     if (hole_r) {

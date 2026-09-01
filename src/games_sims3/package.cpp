@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -59,6 +60,14 @@ void poke_u32(std::span<std::byte> s, std::size_t off, std::uint32_t v) {
 }
 
 int popcnt(std::uint32_t x) { return std::popcount(x); }
+
+bool neighborhood_path(const std::filesystem::path& p) {
+    auto e = p.extension().string();
+    for (char& c : e) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return e == ".nhd" || e == ".world" || e == ".dbc";
+}
 
 VoidResult replace_file(const std::filesystem::path& dest, const std::filesystem::path& tmp) {
 #ifdef _WIN32
@@ -217,6 +226,7 @@ VoidResult Package::parse_mapped() {
         e.payload_capacity = e.file_size;
         entries_.push_back(e);
     }
+    original_count_ = static_cast<std::uint32_t>(entries_.size());
     compute_payload_capacities();
     recompute_ordinals();
     overrides_.assign(entries_.size(), std::nullopt);
@@ -527,7 +537,95 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
     return ok();
 }
 
+bool Package::layout_locked() const { return neighborhood_path(path_); }
+
+VoidResult Package::flush_layout() {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (index_type_ != 0) {
+        return std::unexpected(
+            err(ErrorCode::refused, "this package index cannot be saved without a rebuild"));
+    }
+    if (entries_.size() != original_count_) {
+        return std::unexpected(err(ErrorCode::refused,
+                                   "adding resources is not supported when saving a neighborhood file"));
+    }
+    auto mut = map_.writable_bytes();
+    if (mut.empty()) {
+        return std::unexpected(err(ErrorCode::refused, "file is not mapped writable"));
+    }
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (deleted(i)) {
+            return std::unexpected(
+                err(ErrorCode::refused, "deleting resources is not supported when saving a neighborhood file"));
+        }
+        if (!overrides_[i]) {
+            continue;
+        }
+        const auto& disk = *overrides_[i];
+        auto& e = entries_[i];
+        if (disk.size() > e.payload_capacity) {
+            return std::unexpected(err(ErrorCode::cap_exceeded,
+                                       "resource is " + std::to_string(disk.size()) +
+                                           " bytes; in-place hole is " +
+                                           std::to_string(e.payload_capacity)));
+        }
+        const auto start = static_cast<std::size_t>(e.chunk_offset);
+        if (start + e.payload_capacity > mut.size()) {
+            return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
+        }
+        std::memcpy(mut.data() + start, disk.data(), disk.size());
+        if (e.payload_capacity > disk.size()) {
+            std::memset(mut.data() + start + disk.size(), 0, e.payload_capacity - disk.size());
+        }
+        e.file_size = static_cast<std::uint32_t>(disk.size());
+        overrides_[i].reset();
+    }
+    std::size_t rec = static_cast<std::size_t>(index_pos_) + 4;
+    for (const auto& e : entries_) {
+        if (rec + 32 > mut.size()) {
+            return std::unexpected(err(ErrorCode::corrupt, "index row out of range"));
+        }
+        poke_u32(mut, rec + 0, e.tgi.type);
+        poke_u32(mut, rec + 4, e.tgi.group);
+        poke_u32(mut, rec + 8, static_cast<std::uint32_t>(e.tgi.instance >> 32));
+        poke_u32(mut, rec + 12, static_cast<std::uint32_t>(e.tgi.instance));
+        poke_u32(mut, rec + 16, e.chunk_offset);
+        poke_u32(mut, rec + 20, e.file_size | (e.file_size_high_bit ? 0x80000000u : 0));
+        poke_u32(mut, rec + 24, e.mem_size);
+        poke_u32(mut, rec + 28, static_cast<std::uint32_t>(e.compressed) |
+                                    (static_cast<std::uint32_t>(e.unknown2) << 16));
+        rec += 32;
+    }
+    dirty_ = false;
+    map_.flush();
+    return ok();
+}
+
 VoidResult Package::save_as(const std::filesystem::path& dest) {
+    if (neighborhood_path(path_) || neighborhood_path(dest)) {
+        if (auto r = flush_layout(); !r) {
+            return r;
+        }
+        if (dest == path_) {
+            return ok();
+        }
+        map_.close();
+        std::error_code ec;
+        std::filesystem::copy_file(path_, dest, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            return std::unexpected(err(ErrorCode::io, ec.message()));
+        }
+        path_ = dest;
+        writable_ = true;
+        auto m = core::MappedFile::open(dest, true);
+        if (!m) {
+            return std::unexpected(m.error());
+        }
+        map_ = std::move(*m);
+        return parse_mapped();
+    }
     auto tmp = dest;
     tmp += ".tmp";
     if (auto r = write_file(tmp); !r) {
@@ -555,6 +653,9 @@ VoidResult Package::save() {
     }
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (neighborhood_path(path_)) {
+        return flush_layout();
     }
     return save_as(path_);
 }
@@ -662,9 +763,20 @@ VoidResult Package::rekey(std::uint32_t i, Tgi tgi) {
     return ok();
 }
 
-VoidResult Package::save_copy_as(const std::filesystem::path& dest) const {
+VoidResult Package::save_copy_as(const std::filesystem::path& dest) {
     if (dest.empty()) {
         return std::unexpected(err(ErrorCode::invalid_argument, "empty dest"));
+    }
+    if (neighborhood_path(path_) || neighborhood_path(dest)) {
+        if (auto r = flush_layout(); !r) {
+            return r;
+        }
+        std::error_code ec;
+        std::filesystem::copy_file(path_, dest, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            return std::unexpected(err(ErrorCode::io, ec.message()));
+        }
+        return ok();
     }
     auto tmp = dest;
     tmp += ".tmp";

@@ -385,10 +385,9 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
         return false;
     }
     QMessageBox::information(
-        parent, QObject::tr("SNAP replaced in place"),
-        QObject::tr("The PNG was written into the existing hole. Do not File → Save this "
-                    ".nhd — that rewrites the whole neighborhood and can break the save.\n"
-                    "Close SXPE and load the copied save in the game."));
+        parent, QObject::tr("SNAP replaced"),
+        QObject::tr("The PNG was written into the existing hole. File → Save on a "
+                    ".nhd now keeps the original layout (it does not rebuild the file)."));
     return true;
 }
 

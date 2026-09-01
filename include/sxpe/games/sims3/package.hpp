@@ -62,7 +62,7 @@ public:
 
     VoidResult save();
     VoidResult save_as(const std::filesystem::path& dest);
-    VoidResult save_copy_as(const std::filesystem::path& dest) const;
+    VoidResult save_copy_as(const std::filesystem::path& dest);
 
     [[nodiscard]] bool dirty() const { return dirty_; }
     void set_dirty(bool d) { dirty_ = d; }
@@ -80,6 +80,8 @@ private:
     VoidResult write_file(const std::filesystem::path& dest) const;
     Result<std::vector<std::byte>> payload_on_disk(std::uint32_t i) const;
     void compute_payload_capacities();
+    VoidResult flush_layout();
+    [[nodiscard]] bool layout_locked() const;
 
     std::filesystem::path path_;
     bool writable_{false};
@@ -87,6 +89,7 @@ private:
     std::array<std::byte, 96> header_{};
     std::uint32_t index_type_{0};
     std::uint32_t index_pos_{0};
+    std::uint32_t original_count_{0};
     std::vector<IndexEntry> entries_;
     std::vector<std::optional<std::vector<std::byte>>> overrides_;
     std::vector<char> deleted_;

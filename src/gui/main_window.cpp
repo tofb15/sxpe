@@ -327,18 +327,6 @@ bool MainWindow::save(bool as_copy, bool save_as) {
             return false;
         }
     }
-    const QString check = dest.isEmpty() ? current_package_path() : dest;
-    const auto ext = QFileInfo(check).suffix().toLower();
-    if (ext == QLatin1String("nhd") || ext == QLatin1String("world") || ext == QLatin1String("dbc")) {
-        QMessageBox::warning(
-            this, tr("Cannot save neighborhood file"),
-            tr("File → Save rebuilds the whole .nhd and the game rejects it.\n"
-               "For portraits use Resource → Editors → Replace SNAP PNG (in-place) "
-               "and then close SXPE without saving.\n"
-               "The PNG must be 8-bit RGBA at the original pixel size, and no larger "
-               "than the original file (Paint often writes a bigger PNG)."));
-        return false;
-    }
     nlohmann::json args{{"sessionId", t->session_id().toStdString()}, {"force", true}};
     const char* cmd = "package.save";
     if (as_copy) {
