@@ -372,12 +372,14 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         hdr->setHighlightSections(false);
         hdr->setSortIndicatorShown(true);
         hdr->setSectionsClickable(true);
+        const int id_w = fm.horizontalAdvance(QStringLiteral("00000")) + 20;
         const int tag_w = fm.horizontalAdvance(QStringLiteral("_IMG")) + 28;
         const int name_w = 180;
         const int ord_w = fm.horizontalAdvance(QStringLiteral("000")) + 20;
         const int size_w = fm.horizontalAdvance(QStringLiteral("00000000")) + 20;
         const int cmp_w = fm.horizontalAdvance(QStringLiteral("Cmp")) + 20;
         std::array<int, ResourceModel::Count_> mins{};
+        mins[ResourceModel::Id] = id_w;
         mins[ResourceModel::Tag] = tag_w;
         mins[ResourceModel::Name] = 72;
         mins[ResourceModel::Type] = hex8;
@@ -392,6 +394,8 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         grid->set_mins(mins);
         grid->set_defaults(defs);
         hdr->setMinimumSectionSize(32);
+        hdr->setSortIndicator(-1, Qt::AscendingOrder);
+        table_->setColumnWidth(ResourceModel::Id, id_w);
         table_->setColumnWidth(ResourceModel::Tag, tag_w);
         table_->setColumnWidth(ResourceModel::Name, name_w);
         table_->setColumnWidth(ResourceModel::Type, hex8);
@@ -404,6 +408,7 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
                 [grid](int logical) { grid->reset_column(logical); });
     }
     table_->setSortingEnabled(true);
+    table_->horizontalHeader()->setSortIndicator(-1, Qt::AscendingOrder);
     table_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(table_, &QWidget::customContextMenuRequested, this, [this](const QPoint& p) {
         emit resource_context_menu(table_->viewport()->mapToGlobal(p));

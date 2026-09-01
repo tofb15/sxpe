@@ -659,7 +659,7 @@ void MainWindow::replace_resource() {
     }
     if (sxpe::resources::is_png_image(r->type)) {
         if (show_replace_snap_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance,
-                                     r->ordinal, r->mem_size)) {
+                                     r->ordinal, r->file_size ? r->file_size : r->mem_size)) {
             t->reload();
         }
         return;
@@ -968,7 +968,7 @@ void MainWindow::replace_snap() {
         return;
     }
     if (show_replace_snap_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance,
-                                 r->ordinal, r->mem_size)) {
+                                 r->ordinal, r->file_size ? r->file_size : r->mem_size)) {
         t->reload();
     }
 }

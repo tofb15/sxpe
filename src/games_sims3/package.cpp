@@ -359,15 +359,31 @@ VoidResult Package::set_uncompressed(std::uint32_t i, std::span<const std::byte>
         if (!c) {
             return std::unexpected(c.error());
         }
+        if (layout_locked() && c->size() > entries_[i].file_size) {
+            return std::unexpected(err(ErrorCode::cap_exceeded,
+                                       "resource is " + std::to_string(c->size()) +
+                                           " bytes; in-place hole is " +
+                                           std::to_string(entries_[i].file_size)));
+        }
         overrides_[i] = std::move(*c);
-        entries_[i].compressed = 0xFFFF;
-        entries_[i].file_size = static_cast<std::uint32_t>(overrides_[i]->size());
-        entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
+        if (!layout_locked()) {
+            entries_[i].compressed = 0xFFFF;
+            entries_[i].file_size = static_cast<std::uint32_t>(overrides_[i]->size());
+            entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
+        }
     } else {
+        if (layout_locked() && data.size() > entries_[i].file_size) {
+            return std::unexpected(err(ErrorCode::cap_exceeded,
+                                       "resource is " + std::to_string(data.size()) +
+                                           " bytes; in-place hole is " +
+                                           std::to_string(entries_[i].file_size)));
+        }
         overrides_[i] = std::vector<std::byte>(data.begin(), data.end());
-        entries_[i].compressed = 0;
-        entries_[i].file_size = static_cast<std::uint32_t>(data.size());
-        entries_[i].mem_size = entries_[i].file_size;
+        if (!layout_locked()) {
+            entries_[i].compressed = 0;
+            entries_[i].file_size = static_cast<std::uint32_t>(data.size());
+            entries_[i].mem_size = entries_[i].file_size;
+        }
     }
     dirty_ = true;
     return ok();
@@ -555,31 +571,23 @@ VoidResult Package::flush_layout() {
         }
         const auto& disk = *overrides_[i];
         auto& e = entries_[i];
-        if (disk.size() > e.payload_capacity) {
+        // Neighborhood files: write into the original blob only. Never grow
+        // into slack or rewrite index size/compression fields — the game
+        // keys SNAP slots by the original length.
+        if (disk.size() > e.file_size) {
             return std::unexpected(err(ErrorCode::cap_exceeded,
                                        "resource is " + std::to_string(disk.size()) +
                                            " bytes; in-place hole is " +
-                                           std::to_string(e.payload_capacity)));
+                                           std::to_string(e.file_size)));
         }
         const auto start = static_cast<std::size_t>(e.chunk_offset);
-        if (start + e.payload_capacity > mut.size()) {
+        if (start + e.file_size > mut.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
         }
-        const std::uint32_t old_size = e.file_size;
         std::memcpy(mut.data() + start, disk.data(), disk.size());
-        if (old_size > disk.size()) {
-            std::memset(mut.data() + start + disk.size(), 0, old_size - disk.size());
+        if (e.file_size > disk.size()) {
+            std::memset(mut.data() + start + disk.size(), 0, e.file_size - disk.size());
         }
-        e.file_size = static_cast<std::uint32_t>(disk.size());
-        const std::size_t rec =
-            static_cast<std::size_t>(index_pos_) + 4 + static_cast<std::size_t>(i) * 32;
-        if (rec + 32 > mut.size()) {
-            return std::unexpected(err(ErrorCode::corrupt, "index row out of range"));
-        }
-        poke_u32(mut, rec + 20, e.file_size | (e.file_size_high_bit ? 0x80000000u : 0));
-        poke_u32(mut, rec + 24, e.mem_size);
-        poke_u32(mut, rec + 28, static_cast<std::uint32_t>(e.compressed) |
-                                    (static_cast<std::uint32_t>(e.unknown2) << 16));
         overrides_[i].reset();
     }
     dirty_ = false;

@@ -1,6 +1,7 @@
 #include "check.hpp"
 #include "sxpe/core/caps.hpp"
 #include "sxpe/games/sims3/package.hpp"
+#include "sxpe/resources/png.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -49,6 +50,44 @@ std::string as_text(std::span<const std::byte> b) {
 }  // namespace
 
 int main() {
+    {
+        std::vector<unsigned char> png{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        auto be32 = [](std::vector<unsigned char>& o, std::uint32_t v) {
+            o.push_back(static_cast<unsigned char>(v >> 24));
+            o.push_back(static_cast<unsigned char>(v >> 16));
+            o.push_back(static_cast<unsigned char>(v >> 8));
+            o.push_back(static_cast<unsigned char>(v));
+        };
+        auto chunk = [&](const char* t, std::initializer_list<unsigned char> d) {
+            be32(png, static_cast<std::uint32_t>(d.size()));
+            png.insert(png.end(), t, t + 4);
+            png.insert(png.end(), d.begin(), d.end());
+            be32(png, 0);
+        };
+        chunk("IHDR", {0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0});
+        chunk("IDAT", {0});
+        chunk("IEND", {});
+        auto g = std::as_bytes(std::span{png.data(), png.size()});
+        CHECK(sxpe::resources::parse_png_ihdr(g).has_value());
+        CHECK(sxpe::resources::png_is_game_snap(g));
+        png.insert(png.end(), 4, 0);  // trailing zeros after IEND are ok
+        g = std::as_bytes(std::span{png.data(), png.size()});
+        CHECK(sxpe::resources::png_is_game_snap(g));
+        std::vector<unsigned char> qt{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        auto chunk_qt = [&](const char* t, std::initializer_list<unsigned char> d) {
+            be32(qt, static_cast<std::uint32_t>(d.size()));
+            qt.insert(qt.end(), t, t + 4);
+            qt.insert(qt.end(), d.begin(), d.end());
+            be32(qt, 0);
+        };
+        chunk_qt("IHDR", {0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0});
+        chunk_qt("iCCP", {0});
+        chunk_qt("IDAT", {0});
+        chunk_qt("IEND", {});
+        auto b = std::as_bytes(std::span{qt.data(), qt.size()});
+        CHECK(!sxpe::resources::png_is_game_snap(b));
+    }
+
     auto empty = Package::open(kSynth / "empty.bin", false);
     CHECK(empty.has_value());
     if (empty) {
@@ -176,8 +215,12 @@ int main() {
     CHECK(nhd_r.has_value());
     if (nhd_r) {
         CHECK(nhd_r->count() == 1);
+        CHECK(nhd_r->entry(0).file_size == 11);
         auto body = nhd_r->uncompressed(0);
-        CHECK(body.has_value() && as_text(*body) == "Hi");
+        CHECK(body.has_value());
+        if (body && body->size() >= 2) {
+            CHECK((*body)[0] == std::byte{'H'} && (*body)[1] == std::byte{'i'});
+        }
     }
 
     auto hole_r = Package::open(hole, false);

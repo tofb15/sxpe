@@ -3,7 +3,6 @@
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/types.hpp"
 
-#include <QBuffer>
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -387,13 +386,71 @@ void posterize_rgb(QImage* im, int shift) {
     }
 }
 
-QByteArray encode_rgba_png(const QImage& im) {
-    QByteArray buf;
-    QBuffer b(&buf);
-    b.open(QIODevice::WriteOnly);
-    QImage rgba = im.convertToFormat(QImage::Format_RGBA8888);
-    rgba.save(&b, "PNG");
-    return buf;
+quint32 png_crc(const QByteArray& data) {
+    static quint32 table[256];
+    static bool ready = false;
+    if (!ready) {
+        for (quint32 n = 0; n < 256; ++n) {
+            quint32 c = n;
+            for (int k = 0; k < 8; ++k) {
+                c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            }
+            table[n] = c;
+        }
+        ready = true;
+    }
+    quint32 c = 0xFFFFFFFFu;
+    for (unsigned char b : data) {
+        c = table[(c ^ b) & 0xFFu] ^ (c >> 8);
+    }
+    return c ^ 0xFFFFFFFFu;
+}
+
+void png_be32(QByteArray* a, quint32 v) {
+    a->append(static_cast<char>((v >> 24) & 0xFF));
+    a->append(static_cast<char>((v >> 16) & 0xFF));
+    a->append(static_cast<char>((v >> 8) & 0xFF));
+    a->append(static_cast<char>(v & 0xFF));
+}
+
+void png_chunk(QByteArray* png, const char type[4], const QByteArray& data) {
+    png_be32(png, static_cast<quint32>(data.size()));
+    QByteArray td;
+    td.append(type, 4);
+    td += data;
+    *png += td;
+    png_be32(png, png_crc(td));
+}
+
+QByteArray encode_game_png(const QImage& im) {
+    const QImage rgba = im.convertToFormat(QImage::Format_RGBA8888);
+    const int w = rgba.width();
+    const int h = rgba.height();
+    QByteArray raw;
+    raw.reserve((w * 4 + 1) * h);
+    for (int y = 0; y < h; ++y) {
+        raw.append('\0');
+        raw.append(reinterpret_cast<const char*>(rgba.constScanLine(y)), w * 4);
+    }
+    QByteArray z = qCompress(raw, 9);
+    if (z.size() < 6) {
+        return {};
+    }
+    z = z.mid(4);
+    QByteArray png;
+    png.append("\x89PNG\r\n\x1a\n", 8);
+    QByteArray ihdr;
+    png_be32(&ihdr, static_cast<quint32>(w));
+    png_be32(&ihdr, static_cast<quint32>(h));
+    ihdr.append('\x08');
+    ihdr.append('\x06');
+    ihdr.append('\0');
+    ihdr.append('\0');
+    ihdr.append('\0');
+    png_chunk(&png, "IHDR", ihdr);
+    png_chunk(&png, "IDAT", z);
+    png_chunk(&png, "IEND", {});
+    return png;
 }
 
 }  // namespace
@@ -436,26 +493,38 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
         im = im.scaled(tw, th, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
     QByteArray fitted;
-    for (int shift = 0; shift <= 5; ++shift) {
-        QImage q = im;
-        posterize_rgb(&q, shift);
-        fitted = encode_rgba_png(q);
-        if (!fitted.isEmpty() && static_cast<std::uint32_t>(fitted.size()) <= max_bytes) {
-            break;
-        }
-        fitted.clear();
-    }
     QFile srcf(path);
     if (srcf.open(QIODevice::ReadOnly)) {
         const QByteArray raw = srcf.readAll();
         srcf.close();
         const auto sp = std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw.constData()),
                                                    static_cast<std::size_t>(raw.size()));
-        if (auto ih = sxpe::resources::parse_png_ihdr(sp);
-            ih && ih->width == static_cast<std::uint32_t>(tw) &&
-            ih->height == static_cast<std::uint32_t>(th) && ih->bit_depth == 8 &&
-            ih->color_type == 6 && static_cast<std::uint32_t>(raw.size()) <= max_bytes) {
-            fitted = raw;
+        if (sxpe::resources::png_is_game_snap(sp)) {
+            if (auto ih = sxpe::resources::parse_png_ihdr(sp);
+                ih && ih->width == static_cast<std::uint32_t>(tw) &&
+                ih->height == static_cast<std::uint32_t>(th) && ih->bit_depth == 8 &&
+                ih->color_type == 6 && static_cast<std::uint32_t>(raw.size()) <= max_bytes) {
+                fitted = raw;
+            }
+        }
+    }
+    if (fitted.isEmpty()) {
+        for (int shift = 0; shift <= 5; ++shift) {
+            QImage q = im;
+            posterize_rgb(&q, shift);
+            fitted = encode_game_png(q);
+            const auto sp =
+                std::span<const std::byte>(reinterpret_cast<const std::byte*>(fitted.constData()),
+                                           static_cast<std::size_t>(fitted.size()));
+            if (!fitted.isEmpty() && sxpe::resources::png_is_game_snap(sp) &&
+                static_cast<std::uint32_t>(fitted.size()) <= max_bytes) {
+                QImage check;
+                if (check.loadFromData(fitted, "PNG") && check.width() == tw &&
+                    check.height() == th) {
+                    break;
+                }
+            }
+            fitted.clear();
         }
     }
     if (fitted.isEmpty()) {

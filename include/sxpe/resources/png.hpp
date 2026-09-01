@@ -41,4 +41,52 @@ inline std::optional<PngIhdr> parse_png_ihdr(std::span<const std::byte> b) {
     return i;
 }
 
+/// True when the blob is a PNG the game SNAP decoder accepts: signature,
+/// IHDR, one or more IDAT, IEND, and optional trailing zeros. Ancillary
+/// chunks (iCCP, pHYs, tEXt, zTXt, iTXt, …) make TS3 refuse the save.
+inline bool png_is_game_snap(std::span<const std::byte> b) {
+    if (!parse_png_ihdr(b)) {
+        return false;
+    }
+    constexpr std::uint32_t kIhdr = 0x49484452u;
+    constexpr std::uint32_t kIdat = 0x49444154u;
+    constexpr std::uint32_t kIend = 0x49454E44u;
+    std::size_t off = 8;
+    bool saw_ihdr = false;
+    bool saw_idat = false;
+    while (off + 12 <= b.size()) {
+        const std::uint32_t len = png_be32(b, off);
+        if (len > b.size() - (off + 12)) {
+            return false;
+        }
+        const std::uint32_t type = png_be32(b, off + 4);
+        if (type == kIhdr) {
+            if (saw_ihdr || saw_idat || len != 13) {
+                return false;
+            }
+            saw_ihdr = true;
+        } else if (type == kIdat) {
+            if (!saw_ihdr) {
+                return false;
+            }
+            saw_idat = true;
+        } else if (type == kIend) {
+            if (!saw_ihdr || !saw_idat || len != 0) {
+                return false;
+            }
+            off += 12;
+            for (; off < b.size(); ++off) {
+                if (b[off] != std::byte{0}) {
+                    return false;
+                }
+            }
+            return true;
+        } else {
+            return false;
+        }
+        off += 12 + static_cast<std::size_t>(len);
+    }
+    return false;
+}
+
 }  // namespace sxpe::resources

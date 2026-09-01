@@ -18,7 +18,9 @@ struct DisplayRow {
     std::uint32_t group{0};
     std::uint64_t instance{0};
     std::uint32_t ordinal{0};
+    std::uint32_t file_size{0};
     std::uint32_t mem_size{0};
+    QString id_s;
     QString tag;
     QString name;
     QString type_h;
@@ -42,7 +44,7 @@ public:
 class ResourceModel final : public QAbstractTableModel {
     Q_OBJECT
 public:
-    enum Col { Tag, Name, Type, Group, Instance, Ordinal, Size, Compressed, Count_ };
+    enum Col { Id, Tag, Name, Type, Group, Instance, Ordinal, Size, Compressed, Count_ };
 
     explicit ResourceModel(QObject* parent = nullptr);
 

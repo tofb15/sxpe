@@ -26,7 +26,9 @@ void ResourceModel::set_rows(std::vector<sxpe::commands::UiRow> rows) {
         d.group = u.group;
         d.instance = u.instance;
         d.ordinal = u.ordinal;
+        d.file_size = u.file_size;
         d.mem_size = u.mem_size;
+        d.id_s = QString::number(u.index);
         d.tag = QString::fromStdString(u.tag);
         d.name = QString::fromStdString(u.name);
         d.type_h = hex32(u.type);
@@ -66,6 +68,9 @@ void ResourceModel::apply_sort(QVector<int>& vis) const {
         const auto& b = all_[static_cast<size_t>(ib)];
         int cmp = 0;
         switch (col) {
+            case Id:
+                cmp = (a.index > b.index) - (a.index < b.index);
+                break;
             case Tag:
                 cmp = QString::compare(a.tag, b.tag, Qt::CaseInsensitive);
                 break;
@@ -101,10 +106,14 @@ void ResourceModel::apply_sort(QVector<int>& vis) const {
 }
 
 void ResourceModel::sort(int column, Qt::SortOrder order) {
-    sort_col_ = column;
+    sort_col_ = (column >= 0 && column < Count_) ? column : -1;
     sort_order_ = order;
     emit layoutAboutToBeChanged();
-    apply_sort(visible_);
+    if (sort_col_ >= 0) {
+        apply_sort(visible_);
+    } else {
+        std::sort(visible_.begin(), visible_.end());
+    }
     emit layoutChanged();
 }
 
@@ -129,6 +138,8 @@ const DisplayRow* ResourceModel::row_at(int view_row) const {
 const QString& ResourceModel::cell_text(const DisplayRow& r, int column) {
     static const QString kEmpty;
     switch (column) {
+        case Id:
+            return r.id_s;
         case Tag:
             return r.tag;
         case Name:
@@ -214,7 +225,7 @@ QVariant ResourceModel::headerData(int section, Qt::Orientation o, int role) con
     if (o != Qt::Horizontal || role != Qt::DisplayRole) {
         return {};
     }
-    static const char* k[] = {"Tag", "Name", "Type", "Group", "Instance", "#", "Size", "Cmp"};
+    static const char* k[] = {"ID", "Tag", "Name", "Type", "Group", "Instance", "#", "Size", "Cmp"};
     return section >= 0 && section < Count_ ? QString::fromLatin1(k[section]) : QVariant{};
 }
 
@@ -237,7 +248,8 @@ QVector<int> filter_rows(const std::vector<DisplayRow>& all, const QString& text
             if (!r.name.contains(needle, Qt::CaseInsensitive) &&
                 !r.type_h.contains(needle, Qt::CaseInsensitive) &&
                 !r.tag.contains(needle, Qt::CaseInsensitive) &&
-                !r.inst_h.contains(needle, Qt::CaseInsensitive)) {
+                !r.inst_h.contains(needle, Qt::CaseInsensitive) &&
+                !r.id_s.contains(needle, Qt::CaseInsensitive)) {
                 continue;
             }
         }
