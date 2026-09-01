@@ -326,6 +326,20 @@ bool MainWindow::save(bool as_copy, bool save_as) {
             return false;
         }
     }
+    const QString check = dest.isEmpty() ? current_package_path() : dest;
+    const auto ext = QFileInfo(check).suffix().toLower();
+    if (ext == QLatin1String("nhd") || ext == QLatin1String("world") || ext == QLatin1String("dbc")) {
+        const auto ans = QMessageBox::warning(
+            this, tr("Rewrite neighborhood file"),
+            tr("SXPE rewrites the entire file on save (not an in-place SNAP patch).\n"
+               "The game often refuses .nhd / .world / .dbc after that — missing "
+               "household snapshots are a common crash.\n\n"
+               "Keep a copy of the original folder first. Continue?"),
+            QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (ans != QMessageBox::Ok) {
+            return false;
+        }
+    }
     nlohmann::json args{{"sessionId", t->session_id().toStdString()}, {"force", true}};
     const char* cmd = "package.save";
     if (as_copy) {
