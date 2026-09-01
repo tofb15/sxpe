@@ -9,5 +9,8 @@ inline constexpr std::uint32_t kMaxIndexEntries = 500'000;
 inline constexpr std::uint32_t kMaxResourceBytes = 256u << 20;
 inline constexpr std::uint32_t kMaxCompressRatio = 1024;
 inline constexpr std::uint32_t kHeaderSize = 96;
+inline constexpr std::uint32_t kMaxTableEntries = 500'000;
+inline constexpr std::uint32_t kMaxNameBytes = 64u << 10;
+inline constexpr std::uint32_t kMaxDdsEdge = 8192;
 
 }  // namespace sxpe::core::caps

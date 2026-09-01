@@ -1,5 +1,7 @@
 #include "sxpe/resources/stbl.hpp"
 
+#include "sxpe/core/caps.hpp"
+
 #include <cstring>
 
 namespace sxpe::resources {
@@ -103,6 +105,11 @@ Result<Stbl> parse_stbl(std::span<const std::byte> bytes) {
     Stbl t;
     t.version = static_cast<std::uint8_t>(bytes[4]);
     const auto count = ru32(bytes, 7);
+    const auto remain = bytes.size() - 17;
+    const auto max_by_size = remain / 12;
+    if (count > sxpe::core::caps::kMaxTableEntries || count > max_by_size) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "stbl count"));
+    }
     std::size_t o = 17;
     t.entries.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -113,8 +120,9 @@ Result<Stbl> parse_stbl(std::span<const std::byte> bytes) {
         e.id = ru64(bytes, o);
         const auto n = ru32(bytes, o + 8);
         o += 12;
-        if (o + n * 2 > bytes.size()) {
-            return std::unexpected(err(ErrorCode::corrupt, "stbl text"));
+        if (n > sxpe::core::caps::kMaxNameBytes ||
+            static_cast<std::uint64_t>(n) * 2 > bytes.size() - o) {
+            return std::unexpected(err(ErrorCode::cap_exceeded, "stbl text"));
         }
         std::vector<char16_t> u(n);
         std::memcpy(u.data(), bytes.data() + o, n * 2);

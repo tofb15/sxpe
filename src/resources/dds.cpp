@@ -88,6 +88,10 @@ Result<DdsInfo> parse_dds(std::span<const std::byte> bytes) {
     DdsInfo inf;
     inf.height = ru32(bytes, 12);
     inf.width = ru32(bytes, 16);
+    if (inf.width == 0 || inf.height == 0 || inf.width > sxpe::core::caps::kMaxDdsEdge ||
+        inf.height > sxpe::core::caps::kMaxDdsEdge) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "dds dimensions"));
+    }
     inf.pitch_or_linear = ru32(bytes, 20);
     const auto flags = ru32(bytes, 80);
     const auto fourcc = ru32(bytes, 84);
@@ -108,8 +112,9 @@ Result<std::vector<std::byte>> decode_dds_rgba(std::span<const std::byte> bytes)
     if (!inf) {
         return std::unexpected(inf.error());
     }
-    const auto pixels = static_cast<std::uint64_t>(inf->width) * inf->height * 4;
-    if (pixels > sxpe::core::caps::kMaxResourceBytes) {
+    const auto pixels = static_cast<std::uint64_t>(inf->width) * inf->height * 4ull;
+    if (inf->width > sxpe::core::caps::kMaxDdsEdge || inf->height > sxpe::core::caps::kMaxDdsEdge ||
+        pixels > sxpe::core::caps::kMaxResourceBytes || pixels / 4 != static_cast<std::uint64_t>(inf->width) * inf->height) {
         return std::unexpected(err(ErrorCode::cap_exceeded, "dds pixels"));
     }
     std::vector<std::byte> out(static_cast<std::size_t>(pixels));

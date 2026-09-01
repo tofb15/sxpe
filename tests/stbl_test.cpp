@@ -1,4 +1,5 @@
 #include "check.hpp"
+#include "sxpe/error.hpp"
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/stbl.hpp"
@@ -52,6 +53,18 @@ int main() {
             CHECK(rgba->size() == 4);
             CHECK((*rgba)[0] == std::byte{255});
         }
+    }
+
+    // Fixture-style bogus NMAP: ASCII "NMAP\0fak..." is not a count. Must not reserve billions.
+    const char fake[] = "NMAP\0fake-name-map";
+    std::vector<std::byte> bomb(sizeof(fake) - 1);
+    for (std::size_t i = 0; i < bomb.size(); ++i) {
+        bomb[i] = static_cast<std::byte>(static_cast<unsigned char>(fake[i]));
+    }
+    auto boom = parse_nmap(bomb);
+    CHECK(!boom);
+    if (!boom) {
+        CHECK(boom.error().code == sxpe::ErrorCode::cap_exceeded);
     }
 
     if (g_failed != 0) {

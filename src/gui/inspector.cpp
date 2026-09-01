@@ -81,7 +81,13 @@ void Inspector::show_resource(const sxpe::commands::UiRow& row) {
         return;
     }
     const auto rid = rid_json(row);
-    load_preview(rid);
+    if (row.type == sxpe::resources::kImg || row.type == sxpe::resources::kImgAlt) {
+        load_preview(rid);
+    } else {
+        preview_->setPixmap({});
+        const auto tag = QString::fromStdString(row.tag);
+        preview_->setText(tag.isEmpty() ? tr("No image preview") : tag);
+    }
     load_hex(rid);
     load_graph(rid);
     load_text(rid);

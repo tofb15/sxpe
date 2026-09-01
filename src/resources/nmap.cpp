@@ -1,5 +1,7 @@
 #include "sxpe/resources/nmap.hpp"
 
+#include "sxpe/core/caps.hpp"
+
 #include <cstring>
 
 namespace sxpe::resources {
@@ -33,6 +35,11 @@ Result<Nmap> parse_nmap(std::span<const std::byte> bytes) {
     Nmap n;
     n.version = ru32(bytes, 0);
     const auto count = ru32(bytes, 4);
+    const auto remain = bytes.size() - 8;
+    const auto max_by_size = remain / 12;
+    if (count > sxpe::core::caps::kMaxTableEntries || count > max_by_size) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "nmap count"));
+    }
     std::size_t o = 8;
     n.entries.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -43,8 +50,8 @@ Result<Nmap> parse_nmap(std::span<const std::byte> bytes) {
         e.instance = ru64(bytes, o);
         const auto len = ru32(bytes, o + 8);
         o += 12;
-        if (o + len > bytes.size()) {
-            return std::unexpected(err(ErrorCode::corrupt, "nmap name"));
+        if (len > sxpe::core::caps::kMaxNameBytes || len > bytes.size() - o) {
+            return std::unexpected(err(ErrorCode::cap_exceeded, "nmap name"));
         }
         e.name.assign(reinterpret_cast<const char*>(bytes.data() + o), len);
         o += len;
