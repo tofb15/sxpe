@@ -5,6 +5,7 @@
       "name": "default",
       "displayName": "Default",
       "binaryDir": "${sourceDir}/build",
+      "generator": "Ninja",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }

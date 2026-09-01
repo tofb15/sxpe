@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "note": "v0: types SXPE handles or filters in v1. Not an ExtList dump.",
+  "types": [
+    { "id": "0x220557DA", "tag": "STBL", "name": "String table" },
+    { "id": "0x0166038C", "tag": "NMAP", "name": "Name map" },
+    { "id": "0x00B2D882", "tag": "_IMG", "name": "DDS image" },
+    { "id": "0x8FFB80F6", "tag": "_IMG", "name": "DDS image (alt)" },
+    { "id": "0x01D10F34", "tag": "MLOD", "name": "Mesh LOD" },
+    { "id": "0x01661233", "tag": "MODL", "name": "Model" },
+    { "id": "0x02DC343F", "tag": "OBJK", "name": "Object key" },
+    { "id": "0x736884F1", "tag": "VPXY", "name": "Visual proxy" },
+    { "id": "0x6B20C4F3", "tag": "CLIP", "name": "Animation clip" },
+    { "id": "0x073FAA07", "tag": "S3SA", "name": "Script assembly" },
+    { "id": "0xE86B1EEF", "tag": "DIR", "name": "Compression directory" },
+    { "id": "0x034AEECB", "tag": "CASP", "name": "CAS part" }
+  ]
+}

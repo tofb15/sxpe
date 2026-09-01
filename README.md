@@ -22,7 +22,13 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-Requires CMake 3.28+ and a C++23 compiler (MSVC 2022 17.8+ or equivalent). Qt is **not** required until the GUI target exists.
+On Windows with Visual Studio 2022/2026 (MSVC):
+
+```text
+powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+```
+
+Requires CMake 3.28+ and a C++23 compiler. Qt is **not** required until the GUI target exists.
 
 ## Layout
 

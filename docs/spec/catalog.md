@@ -1,0 +1,38 @@
+# Command catalog (M1 sketch)
+
+Source of truth for GUI, CLI, and MCP. Full agent rules: workspace `AGENTIC-PRACTICES.md` and DESIGN Agentic section.
+
+CLI: `sxpe <noun> <verb>` · MCP: `noun_verb` · ids: dotted `noun.verb`.
+
+## Envelope
+
+```json
+{ "schemaVersion": 1, "ok": true, "data": {} }
+```
+
+Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retryable", "side_effects" } }`
+
+## P0 tools (implement with schemas in M3+)
+
+| id | readOnly | destructive | notes |
+| --- | --- | --- | --- |
+| `package.new` | n | n | TS3 empty package |
+| `package.open` | y | n | sniff; refuse unknown |
+| `package.close` | n | n | |
+| `package.save` | n | y | unmap then ReplaceFile |
+| `package.saveAs` | n | y | |
+| `package.info` | y | n | |
+| `package.validate` | y | n | |
+| `resource.list` | y | n | `limit` default 100, `cursor` |
+| `resource.read` | y | n | metadata default; `maxBytes` |
+| `resource.export` | y | n | write path; openWorld |
+| `resource.importFiles` | n | y | `--force` / dryRun |
+| `resource.delete` | n | y | |
+| `stbl.get` / `stbl.set` | | | |
+| `s3sa.exportDll` | y | n | ManifestModule filename |
+| `hash.fnv` | y | n | |
+| `manifest` | y | n | tools/list |
+
+GUI-only (no MCP): `preview.float`, `ui.selectAll`, `ui.palette`.
+
+List never includes payloads. `resourceId`: `{ "type", "group", "instance", "ordinal" }`.
