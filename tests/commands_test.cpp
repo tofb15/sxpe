@@ -1,12 +1,15 @@
 #include "check.hpp"
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 int main() {
     using nlohmann::json;
@@ -94,6 +97,34 @@ int main() {
     auto listed = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 10}});
     CHECK(listed["ok"] == true);
     CHECK(listed["data"]["items"].size() == 1);
+    CHECK(listed["data"]["items"][0].contains("instanceHex"));
+    CHECK(listed["data"]["items"][0]["instanceHex"].get<std::string>().rfind("0x", 0) == 0);
+
+    auto tmp = std::filesystem::temp_directory_path() / "sxpe-m3";
+    std::filesystem::create_directories(tmp);
+
+    std::vector<std::byte> px(4 * 4 * 4, std::byte{128});
+    auto dds = sxpe::resources::encode_dds_bgra(4, 4, px);
+    CHECK(dds.has_value());
+    auto img_rid = json{{"type", sxpe::resources::kImg}, {"group", 0}, {"instance", 7}};
+    auto img_add = bus.execute(
+        "resource.add", json{{"sessionId", sid}, {"resourceId", img_rid}, {"payloadB64", b64(*dds)}});
+    CHECK(img_add["ok"] == true);
+    auto dinfo = bus.execute("dds.info", json{{"sessionId", sid}, {"resourceId", img_rid}});
+    CHECK(dinfo["ok"] == true);
+    CHECK(dinfo["data"].value("width", 0) == 4);
+    auto ddec = bus.execute("dds.decode", json{{"sessionId", sid}, {"resourceId", img_rid}});
+    CHECK(ddec["ok"] == true);
+    auto dds_out = (tmp / "out.dds").string();
+    auto dexp = bus.execute("dds.export", json{{"sessionId", sid},
+                                               {"resourceId", img_rid},
+                                               {"path", dds_out},
+                                               {"force", true}});
+    CHECK(dexp["ok"] == true);
+    std::ifstream df(dds_out, std::ios::binary);
+    char mag[4]{};
+    df.read(mag, 4);
+    CHECK(df.gcount() == 4 && mag[0] == 'D' && mag[1] == 'D' && mag[2] == 'S');
 
     auto got = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
     CHECK(got["ok"] == true);
@@ -115,8 +146,6 @@ int main() {
     auto got3 = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
     CHECK(got3["data"]["entries"][0]["text"] == "Bye");
 
-    auto tmp = std::filesystem::temp_directory_path() / "sxpe-m3";
-    std::filesystem::create_directories(tmp);
     auto outp = (tmp / "hi.bin").string();
     auto exp = bus.execute("resource.export",
                            json{{"sessionId", sid}, {"resourceId", rid}, {"path", outp}, {"force", true}});

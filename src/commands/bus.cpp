@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -154,16 +155,40 @@ std::uint64_t as_u64(const json& j) {
     return std::stoull(s, nullptr, base);
 }
 
+std::string hex32(std::uint32_t v) {
+    char b[11];
+    std::snprintf(b, sizeof(b), "0x%08X", v);
+    return b;
+}
+
+std::string hex64(std::uint64_t v) {
+    char b[19];
+    std::snprintf(b, sizeof(b), "0x%016llX", static_cast<unsigned long long>(v));
+    return b;
+}
+
+json u64_field(const json& j, const char* num, const char* hex) {
+    if (j.contains(num)) {
+        return j.at(num);
+    }
+    return j.at(hex);
+}
+
 Tgi tgi_from(const json& j) {
     Tgi t;
-    t.type = static_cast<std::uint32_t>(as_u64(j.at("type")));
-    t.group = static_cast<std::uint32_t>(as_u64(j.at("group")));
-    t.instance = as_u64(j.at("instance"));
+    t.type = static_cast<std::uint32_t>(as_u64(u64_field(j, "type", "typeHex")));
+    t.group = static_cast<std::uint32_t>(as_u64(u64_field(j, "group", "groupHex")));
+    t.instance = as_u64(u64_field(j, "instance", "instanceHex"));
     return t;
 }
 
 json tgi_json(Tgi t) {
-    return {{"type", t.type}, {"group", t.group}, {"instance", t.instance}};
+    return {{"type", t.type},
+            {"group", t.group},
+            {"instance", t.instance},
+            {"typeHex", hex32(t.type)},
+            {"groupHex", hex32(t.group)},
+            {"instanceHex", hex64(t.instance)}};
 }
 
 json rid_json(Tgi t, std::uint32_t ord) {
