@@ -35,7 +35,15 @@ private:
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);
+    bool save_tab(PackageTab* tab, bool as_copy, bool save_as);
     bool close_tab(int index);
+    void close_other_tabs(int keep);
+    void close_tabs_right(int index);
+    void close_tabs_left(int index);
+    void show_tab_context(const QPoint& local);
+    [[nodiscard]] bool is_bookmarked(const QString& path) const;
+    void bookmark_path(const QString& path);
+    [[nodiscard]] QString package_path(PackageTab* tab);
     void update_status();
     void refresh_tab_chrome(PackageTab* tab);
     int tab_index_for_session(const QString& session_id) const;

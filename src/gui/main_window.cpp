@@ -32,6 +32,7 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QStyleHints>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -75,6 +76,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setCentralWidget(tabs_);
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::close_tab);
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { update_status(); });
+    tabs_->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabs_->tabBar(), &QWidget::customContextMenuRequested, this,
+            &MainWindow::show_tab_context);
 
     auto act = [&](QMenu* m, const QString& name, const QKeySequence& ks, auto slot) {
         auto* a = m->addAction(name);
@@ -388,15 +392,15 @@ void MainWindow::open_readonly_dialog() {
     }
 }
 
-bool MainWindow::save(bool as_copy, bool save_as) {
-    auto* t = current_tab();
+bool MainWindow::save(bool as_copy, bool save_as) { return save_tab(current_tab(), as_copy, save_as); }
+
+bool MainWindow::save_tab(PackageTab* t, bool as_copy, bool save_as) {
     if (!t) {
         return false;
     }
     QString dest;
     if (save_as || as_copy) {
-        dest = QFileDialog::getSaveFileName(this, tr("Save package"), current_package_path(),
-                                            filters());
+        dest = QFileDialog::getSaveFileName(this, tr("Save package"), package_path(t), filters());
         if (dest.isEmpty()) {
             return false;
         }
@@ -464,6 +468,93 @@ bool MainWindow::close_tab(int index) {
     }
     update_status();
     return true;
+}
+
+void MainWindow::close_other_tabs(int keep) {
+    for (int i = tabs_->count() - 1; i >= 0; --i) {
+        if (i == keep) {
+            continue;
+        }
+        if (!close_tab(i)) {
+            return;
+        }
+    }
+}
+
+void MainWindow::close_tabs_right(int index) {
+    for (int i = tabs_->count() - 1; i > index; --i) {
+        if (!close_tab(i)) {
+            return;
+        }
+    }
+}
+
+void MainWindow::close_tabs_left(int index) {
+    for (int i = index - 1; i >= 0; --i) {
+        if (!close_tab(i)) {
+            return;
+        }
+    }
+}
+
+void MainWindow::show_tab_context(const QPoint& local) {
+    auto* bar = tabs_->tabBar();
+    if (!bar) {
+        return;
+    }
+    const int index = bar->tabAt(local);
+    auto* t = (index >= 0) ? qobject_cast<PackageTab*>(tabs_->widget(index)) : nullptr;
+    if (!t) {
+        return;
+    }
+    auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
+    const bool dirty = info.value("ok", false) && info["data"].value("dirty", false);
+    const bool writable = info.value("ok", false) && info["data"].value("readWrite", true);
+    const auto path = QString::fromStdString(info.value("ok", false)
+                                                 ? info["data"].value("path", std::string())
+                                                 : std::string());
+    QMenu m(this);
+    if (dirty && writable) {
+        m.addAction(tr("&Save"), this, [this, t, path] {
+            const int i = tabs_->indexOf(t);
+            if (i >= 0) {
+                tabs_->setCurrentIndex(i);
+            }
+            save_tab(t, false, path.isEmpty());
+        });
+    }
+    m.addAction(tr("&Close"), this, [this, t] {
+        const int i = tabs_->indexOf(t);
+        if (i >= 0) {
+            close_tab(i);
+        }
+    });
+    auto* others = m.addAction(tr("Close &Others"), this, [this, t] {
+        const int i = tabs_->indexOf(t);
+        if (i >= 0) {
+            close_other_tabs(i);
+        }
+    });
+    others->setEnabled(tabs_->count() > 1);
+    auto* right = m.addAction(tr("Close tabs to the &right"), this, [this, t] {
+        const int i = tabs_->indexOf(t);
+        if (i >= 0) {
+            close_tabs_right(i);
+        }
+    });
+    right->setEnabled(index < tabs_->count() - 1);
+    auto* left = m.addAction(tr("Close tabs to the &left"), this, [this, t] {
+        const int i = tabs_->indexOf(t);
+        if (i >= 0) {
+            close_tabs_left(i);
+        }
+    });
+    left->setEnabled(index > 0);
+    if (!path.isEmpty() && !is_bookmarked(path)) {
+        m.addSeparator();
+        m.addAction(tr("&Bookmark"), this, [this, path] { bookmark_path(path); });
+    }
+    m.exec(bar->mapToGlobal(local));
 }
 
 PackageTab* MainWindow::current_tab() const {
@@ -1106,6 +1197,13 @@ void MainWindow::bookmark_current() {
                                  tr("Save the package first, then bookmark it."));
         return;
     }
+    bookmark_path(path);
+}
+
+void MainWindow::bookmark_path(const QString& path) {
+    if (path.isEmpty() || is_bookmarked(path)) {
+        return;
+    }
     bookmarks_.removeAll(path);
     bookmarks_.prepend(path);
     while (bookmarks_.size() > 16) {
@@ -1115,14 +1213,31 @@ void MainWindow::bookmark_current() {
     rebuild_bookmarks();
 }
 
+bool MainWindow::is_bookmarked(const QString& path) const {
+    if (path.isEmpty()) {
+        return false;
+    }
+    const QFileInfo want(path);
+    const auto key = want.canonicalFilePath().isEmpty() ? want.absoluteFilePath()
+                                                        : want.canonicalFilePath();
+    for (const auto& p : bookmarks_) {
+        const QFileInfo have(p);
+        const auto hk = have.canonicalFilePath().isEmpty() ? have.absoluteFilePath()
+                                                           : have.canonicalFilePath();
+        if (QString::compare(key, hk, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void MainWindow::organise_bookmarks() {
     show_bookmarks_dialog(this, &bookmarks_);
     persist_lists();
     rebuild_bookmarks();
 }
 
-QString MainWindow::current_package_path() {
-    auto* t = current_tab();
+QString MainWindow::package_path(PackageTab* t) {
     if (!t) {
         return {};
     }
@@ -1132,6 +1247,8 @@ QString MainWindow::current_package_path() {
     }
     return QString::fromStdString(info["data"].value("path", std::string()));
 }
+
+QString MainWindow::current_package_path() { return package_path(current_tab()); }
 
 void MainWindow::sync_flag_actions() {
     auto* t = current_tab();
@@ -1224,6 +1341,7 @@ void MainWindow::show_contents() {
            "(STBL, S3SA DLL, CLIP, DDS, VID), hex/text helpers.\n"
            "Tools: FNV-1 / CLIP hash, byte search, validate, compact.\n\n"
            "Right-click the resource list for the same Resource actions. "
+           "Right-click a package tab to save, close (this / others / left / right), or bookmark. "
            "Right-click column headers to show or hide columns, autofit, or reset widths. "
            "View → Columns is the same list. The last visible column cannot be hidden."));
 }
