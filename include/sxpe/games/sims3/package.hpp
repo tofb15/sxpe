@@ -46,9 +46,26 @@ public:
     Result<std::vector<std::byte>> uncompressed(std::uint32_t i) const;
     VoidResult set_uncompressed(std::uint32_t i, std::span<const std::byte> data, bool compress);
     Result<std::uint32_t> add(Tgi tgi, std::span<const std::byte> data, bool compress);
+    VoidResult remove(std::uint32_t i);
+    Result<std::uint32_t> duplicate(std::uint32_t i);
+    VoidResult rekey(std::uint32_t i, Tgi tgi);
+    VoidResult set_deleted(std::uint32_t i, bool deleted);
+    [[nodiscard]] bool deleted(std::uint32_t i) const;
+    [[nodiscard]] std::optional<std::uint32_t> find(Tgi tgi, std::uint32_t ordinal) const;
 
     VoidResult save();
     VoidResult save_as(const std::filesystem::path& dest);
+    VoidResult save_copy_as(const std::filesystem::path& dest) const;
+
+    [[nodiscard]] bool dirty() const { return dirty_; }
+    void set_dirty(bool d) { dirty_ = d; }
+    [[nodiscard]] std::uint32_t major() const;
+    [[nodiscard]] std::uint32_t minor() const;
+    [[nodiscard]] std::uint32_t index_version() const;
+    [[nodiscard]] std::uint32_t compressed_count() const;
+    [[nodiscard]] std::uint32_t deleted_count() const;
+    [[nodiscard]] bool dir_present() const;
+    [[nodiscard]] std::uint64_t mapped_bytes() const { return map_.size(); }
 
 private:
     Package() = default;
@@ -63,6 +80,10 @@ private:
     std::uint32_t index_type_{0};
     std::vector<IndexEntry> entries_;
     std::vector<std::optional<std::vector<std::byte>>> overrides_;
+    std::vector<char> deleted_;
+    bool dirty_{false};
+
+    void recompute_ordinals();
 };
 
 }  // namespace sxpe::games::sims3

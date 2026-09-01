@@ -101,6 +101,7 @@ Result<Package> Package::open(const std::filesystem::path& path, bool writable) 
 Package Package::create_new() {
     Package p;
     p.writable_ = true;
+    p.dirty_ = true;
     p.header_.fill(std::byte{0});
     p.header_[0] = std::byte{'D'};
     p.header_[1] = std::byte{'B'};
@@ -205,6 +206,14 @@ VoidResult Package::parse_mapped() {
         }
         entries_.push_back(e);
     }
+    recompute_ordinals();
+    overrides_.assign(entries_.size(), std::nullopt);
+    deleted_.assign(entries_.size(), 0);
+    dirty_ = false;
+    return ok();
+}
+
+void Package::recompute_ordinals() {
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         std::uint32_t ord = 0;
         for (std::size_t j = 0; j < i; ++j) {
@@ -214,8 +223,6 @@ VoidResult Package::parse_mapped() {
         }
         entries_[i].ordinal = ord;
     }
-    overrides_.assign(entries_.size(), std::nullopt);
-    return ok();
 }
 
 Result<std::span<const std::byte>> Package::raw(std::uint32_t i) const {
@@ -282,6 +289,7 @@ VoidResult Package::set_uncompressed(std::uint32_t i, std::span<const std::byte>
         entries_[i].file_size = static_cast<std::uint32_t>(data.size());
         entries_[i].mem_size = entries_[i].file_size;
     }
+    dirty_ = true;
     return ok();
 }
 
@@ -302,20 +310,26 @@ Result<std::uint32_t> Package::add(Tgi tgi, std::span<const std::byte> data, boo
     }
     entries_.push_back(e);
     overrides_.push_back(std::nullopt);
+    deleted_.push_back(0);
     const auto idx = static_cast<std::uint32_t>(entries_.size() - 1);
     if (auto r = set_uncompressed(idx, data, compress); !r) {
         entries_.pop_back();
         overrides_.pop_back();
+        deleted_.pop_back();
         return std::unexpected(r.error());
     }
+    dirty_ = true;
     return idx;
 }
 
 VoidResult Package::write_file(const std::filesystem::path& dest) const {
     std::vector<std::byte> payloads;
-    std::vector<IndexEntry> out_e = entries_;
+    std::vector<IndexEntry> out_e;
     std::uint32_t off = kHeaderSize;
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (deleted(i)) {
+            continue;
+        }
         auto disk = payload_on_disk(i);
         if (!disk) {
             return std::unexpected(disk.error());
@@ -323,10 +337,12 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
         if (disk->size() > kMaxResourceBytes) {
             return std::unexpected(err(ErrorCode::cap_exceeded, "payload"));
         }
-        out_e[i].chunk_offset = off;
-        out_e[i].file_size = static_cast<std::uint32_t>(disk->size());
+        auto e = entries_[i];
+        e.chunk_offset = off;
+        e.file_size = static_cast<std::uint32_t>(disk->size());
         payloads.insert(payloads.end(), disk->begin(), disk->end());
-        off += out_e[i].file_size;
+        off += e.file_size;
+        out_e.push_back(e);
     }
     std::vector<std::byte> index;
     wr_u32(index, 0);  // indexType = 0
@@ -396,6 +412,126 @@ VoidResult Package::save() {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
     return save_as(path_);
+}
+
+std::uint32_t Package::major() const {
+    return rd_u32(std::span<const std::byte>(header_), 0x04);
+}
+std::uint32_t Package::minor() const {
+    return rd_u32(std::span<const std::byte>(header_), 0x08);
+}
+std::uint32_t Package::index_version() const {
+    return rd_u32(std::span<const std::byte>(header_), 0x3C);
+}
+
+std::uint32_t Package::compressed_count() const {
+    std::uint32_t n = 0;
+    for (const auto& e : entries_) {
+        if (e.compressed == 0xFFFF) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+std::uint32_t Package::deleted_count() const {
+    std::uint32_t n = 0;
+    for (char d : deleted_) {
+        if (d) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+bool Package::dir_present() const {
+    constexpr std::uint32_t kDir = 0xE86B1EEF;
+    for (const auto& e : entries_) {
+        if (e.tgi.type == kDir) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::uint32_t> Package::find(Tgi tgi, std::uint32_t ordinal) const {
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tgi == tgi && entries_[i].ordinal == ordinal) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+bool Package::deleted(std::uint32_t i) const {
+    return i < deleted_.size() && deleted_[i] != 0;
+}
+
+VoidResult Package::set_deleted(std::uint32_t i, bool del) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    deleted_[i] = del ? 1 : 0;
+    dirty_ = true;
+    return ok();
+}
+
+VoidResult Package::remove(std::uint32_t i) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(i));
+    overrides_.erase(overrides_.begin() + static_cast<std::ptrdiff_t>(i));
+    deleted_.erase(deleted_.begin() + static_cast<std::ptrdiff_t>(i));
+    recompute_ordinals();
+    dirty_ = true;
+    return ok();
+}
+
+Result<std::uint32_t> Package::duplicate(std::uint32_t i) {
+    auto body = uncompressed(i);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    const auto tgi = entries_[i].tgi;
+    const bool compress = entries_[i].compressed == 0xFFFF;
+    return add(tgi, *body, compress);
+}
+
+VoidResult Package::rekey(std::uint32_t i, Tgi tgi) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    entries_[i].tgi = tgi;
+    recompute_ordinals();
+    dirty_ = true;
+    return ok();
+}
+
+VoidResult Package::save_copy_as(const std::filesystem::path& dest) const {
+    if (dest.empty()) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "empty dest"));
+    }
+    auto tmp = dest;
+    tmp += ".tmp";
+    if (auto r = write_file(tmp); !r) {
+        std::filesystem::remove(tmp);
+        return r;
+    }
+    if (auto r = replace_file(dest, tmp); !r) {
+        std::filesystem::remove(tmp);
+        return r;
+    }
+    return ok();
 }
 
 }  // namespace sxpe::games::sims3

@@ -16,6 +16,7 @@ enum class ErrorCode {
     refpack,
     not_found,
     refused,
+    invalid_argument,
 };
 
 struct Error {
