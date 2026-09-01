@@ -489,8 +489,11 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "newId"})),
          env_out, false, true, false, false});
-    add({"resource.copy", "Copy", "Clipboard JSON of the resource (cap 32 MiB).",
-         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+    add({"resource.copy", "Copy",
+         "Clipboard JSON of the resource (cap 32 MiB). append keeps prior copies in the session clipboard.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"append", {{"type", "boolean"}, {"default", false}}}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, false, false});
     add({"resource.paste", "Paste", "Insert clipboard items.",
@@ -1297,8 +1300,12 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json item = rid_json(s.pkg.entry(*i).tgi, 0);
         item["payloadB64"] = b64_encode(*body);
         item["compressed"] = s.pkg.entry(*i).compressed == 0xFFFF;
-        s.clipboard = json::array({item});
-        return envelope_ok({{"copied", 1}});
+        if (args.value("append", false) && s.clipboard.is_array()) {
+            s.clipboard.push_back(item);
+        } else {
+            s.clipboard = json::array({item});
+        }
+        return envelope_ok({{"copied", s.clipboard.size()}});
     }
     if (cmd == "resource.paste") {
         if (dry(args)) {

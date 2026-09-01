@@ -1,11 +1,13 @@
 #include "package_tab.hpp"
 
+#include "sxpe/games/sims3/tgi.hpp"
 #include "sxpe/resources/types.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <QComboBox>
 #include <QDialog>
+#include <QDir>
 #include <QFont>
 #include <QFontMetrics>
 #include <QHeaderView>
@@ -402,9 +404,14 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
                 [grid](int logical) { grid->reset_column(logical); });
     }
     table_->setSortingEnabled(true);
+    table_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(table_, &QWidget::customContextMenuRequested, this, [this](const QPoint& p) {
+        emit resource_context_menu(table_->viewport()->mapToGlobal(p));
+    });
     inspector_ = new Inspector(bus_, this);
     inspector_->setMinimumWidth(220);
     inspector_->set_session(session_);
+    connect(inspector_, &Inspector::mutated, this, &PackageTab::status_changed);
     split->addWidget(table_);
     split->addWidget(inspector_);
     split->setStretchFactor(0, 3);
@@ -464,6 +471,35 @@ const DisplayRow* PackageTab::current() const {
     return model_->row_at(table_->currentIndex().row());
 }
 
+QVector<const DisplayRow*> PackageTab::selected() const {
+    QVector<const DisplayRow*> out;
+    if (!table_->selectionModel()) {
+        return out;
+    }
+    for (const auto& idx : table_->selectionModel()->selectedRows()) {
+        if (const auto* r = model_->row_at(idx.row())) {
+            out.push_back(r);
+        }
+    }
+    if (out.isEmpty()) {
+        if (const auto* r = current()) {
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+nlohmann::json PackageTab::current_rid() const {
+    const auto* r = current();
+    if (!r) {
+        return nlohmann::json();
+    }
+    return {{"type", r->type},
+            {"group", r->group},
+            {"instance", r->instance},
+            {"ordinal", r->ordinal}};
+}
+
 bool PackageTab::export_selected(const QString& path, bool raw) {
     const auto* r = current();
     if (!r) {
@@ -479,6 +515,29 @@ bool PackageTab::export_selected(const QString& path, bool raw) {
                                                 {"raw", raw},
                                                 {"force", true}});
     return env.value("ok", false);
+}
+
+int PackageTab::export_selected_to_dir(const QString& dir) {
+    int n = 0;
+    for (const auto* r : selected()) {
+        sxpe::games::sims3::Tgi tgi{r->type, r->group, r->instance};
+        const auto ext = r->tag.isEmpty() ? "bin" : r->tag.toStdString();
+        const auto name = r->name.isEmpty() ? "resource" : r->name.toStdString();
+        const auto fn = QString::fromStdString(sxpe::games::sims3::community_filename(tgi, name, ext));
+        const auto path = QDir(dir).filePath(fn);
+        nlohmann::json rid{{"type", r->type},
+                           {"group", r->group},
+                           {"instance", r->instance},
+                           {"ordinal", r->ordinal}};
+        auto env = bus_.execute("resource.export", {{"sessionId", session_.toStdString()},
+                                                    {"resourceId", rid},
+                                                    {"path", path.toStdString()},
+                                                    {"force", true}});
+        if (env.value("ok", false)) {
+            ++n;
+        }
+    }
+    return n;
 }
 
 void PackageTab::float_preview() {
@@ -501,6 +560,16 @@ void PackageTab::float_preview() {
     lay->addWidget(ins);
     dlg->resize(420, 360);
     dlg->show();
+}
+
+void PackageTab::copy_preview() {
+    if (inspector_) {
+        inspector_->copy_visible();
+    }
+}
+
+bool PackageTab::save_preview(const QString& path) {
+    return inspector_ ? inspector_->save_visible(path) : false;
 }
 
 void PackageTab::select_all() { table_->selectAll(); }

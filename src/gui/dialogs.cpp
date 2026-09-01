@@ -6,6 +6,8 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -13,7 +15,10 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QTableWidget>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace sxpe::gui {
 
@@ -183,6 +188,215 @@ void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus, PluginHost&
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     lay->addWidget(box);
+    dlg.exec();
+}
+
+bool show_add_resource_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                              bool replace, std::uint32_t type, std::uint32_t group,
+                              std::uint64_t instance, std::uint32_t ordinal,
+                              const QString& file_filter) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(replace ? QObject::tr("Replace resource") : QObject::tr("Add resource"));
+    auto* form = new QFormLayout(&dlg);
+    auto* path = new QLineEdit;
+    auto* browse = new QPushButton(QObject::tr("Browse…"));
+    auto* path_row = new QWidget;
+    auto* hl = new QHBoxLayout(path_row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->addWidget(path, 1);
+    hl->addWidget(browse);
+    auto* type_e = new QLineEdit(QString("%1").arg(type, 8, 16, QLatin1Char('0')).toUpper());
+    auto* group_e = new QLineEdit(QString("%1").arg(group, 8, 16, QLatin1Char('0')).toUpper());
+    auto* inst_e = new QLineEdit(QString("%1").arg(instance, 16, 16, QLatin1Char('0')).toUpper());
+    if (replace) {
+        type_e->setReadOnly(true);
+        group_e->setReadOnly(true);
+        inst_e->setReadOnly(true);
+    }
+    auto* compress = new QCheckBox(QObject::tr("Compress (RefPack)"));
+    form->addRow(QObject::tr("File"), path_row);
+    form->addRow(QObject::tr("Type"), type_e);
+    form->addRow(QObject::tr("Group"), group_e);
+    form->addRow(QObject::tr("Instance"), inst_e);
+    form->addRow(compress);
+    QObject::connect(browse, &QPushButton::clicked, &dlg, [&] {
+        const auto p = QFileDialog::getOpenFileName(
+            &dlg, QObject::tr("Resource file"), {},
+            file_filter.isEmpty() ? QObject::tr("All files (*.*)") : file_filter);
+        if (!p.isEmpty()) {
+            path->setText(p);
+        }
+    });
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        if (path->text().isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Choose a file."));
+            return;
+        }
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"path", path->text().toStdString()},
+                            {"force", true},
+                            {"compress", compress->isChecked()}};
+        args["resourceId"] = {{"type", type_e->text().toUInt(nullptr, 16)},
+                              {"group", group_e->text().toUInt(nullptr, 16)},
+                              {"instance", inst_e->text().toULongLong(nullptr, 16)},
+                              {"ordinal", ordinal}};
+        auto env = bus.execute("resource.importFiles", args);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", env.dump())));
+            return;
+        }
+        dlg.accept();
+    });
+    return dlg.exec() == QDialog::Accepted;
+}
+
+bool show_stbl_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("stbl.get", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This resource is not a string table (STBL)."));
+        return false;
+    }
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("String table"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* table = new QTableWidget(0, 2);
+    table->setHorizontalHeaderLabels({QObject::tr("Id (hex)"), QObject::tr("Text")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    for (const auto& e : got["data"]["entries"]) {
+        const int row = table->rowCount();
+        table->insertRow(row);
+        table->setItem(row, 0,
+                       new QTableWidgetItem(QString("%1").arg(e.value("id", 0ull), 16, 16,
+                                                              QLatin1Char('0')).toUpper()));
+        table->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(e.value("text", ""))));
+    }
+    auto* btns = new QHBoxLayout;
+    auto* add = new QPushButton(QObject::tr("Add"));
+    auto* del = new QPushButton(QObject::tr("Delete"));
+    btns->addWidget(add);
+    btns->addWidget(del);
+    btns->addStretch();
+    QObject::connect(add, &QPushButton::clicked, &dlg, [table] {
+        const int row = table->rowCount();
+        table->insertRow(row);
+        table->setItem(row, 0, new QTableWidgetItem(QStringLiteral("0000000000000000")));
+        table->setItem(row, 1, new QTableWidgetItem());
+    });
+    QObject::connect(del, &QPushButton::clicked, &dlg, [table] {
+        table->removeRow(table->currentRow());
+    });
+    lay->addLayout(btns);
+    lay->addWidget(table, 1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        std::vector<std::uint64_t> keep;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            const auto id_s = table->item(row, 0) ? table->item(row, 0)->text() : QString();
+            const auto text = table->item(row, 1) ? table->item(row, 1)->text() : QString();
+            const auto id = id_s.toULongLong(nullptr, 16);
+            keep.push_back(id);
+            auto env = bus.execute("stbl.set", {{"sessionId", session.toStdString()},
+                                                {"resourceId", rid},
+                                                {"id", id},
+                                                {"text", text.toStdString()}});
+            if (!env.value("ok", false)) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                     QString::fromStdString(env["error"].value("message", "")));
+                return;
+            }
+        }
+        for (const auto& e : got["data"]["entries"]) {
+            const auto id = e.value("id", 0ull);
+            if (std::find(keep.begin(), keep.end(), id) == keep.end()) {
+                bus.execute("stbl.delete", {{"sessionId", session.toStdString()},
+                                            {"resourceId", rid},
+                                            {"id", id}});
+            }
+        }
+        dlg.accept();
+    });
+    dlg.resize(640, 420);
+    return dlg.exec() == QDialog::Accepted;
+}
+
+bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                             std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("CLIP export as new name"));
+    auto* form = new QFormLayout(&dlg);
+    auto* name = new QLineEdit;
+    form->addRow(QObject::tr("New clip name"), name);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        if (name->text().trimmed().isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Enter a clip name."));
+            return;
+        }
+        nlohmann::json rid{{"type", type},
+                           {"group", group},
+                           {"instance", instance},
+                           {"ordinal", ordinal}};
+        auto env = bus.execute("clip.exportAs", {{"sessionId", session.toStdString()},
+                                                 {"resourceId", rid},
+                                                 {"name", name->text().toStdString()}});
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    return dlg.exec() == QDialog::Accepted;
+}
+
+void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Bookmarks"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* list = new QListWidget;
+    list->addItems(*bookmarks);
+    auto* btns = new QHBoxLayout;
+    auto* add = new QPushButton(QObject::tr("Add…"));
+    auto* del = new QPushButton(QObject::tr("Remove"));
+    btns->addWidget(add);
+    btns->addWidget(del);
+    btns->addStretch();
+    QObject::connect(add, &QPushButton::clicked, &dlg, [list, &dlg] {
+        const auto p = QFileDialog::getOpenFileName(
+            &dlg, QObject::tr("Bookmark package"), {},
+            QObject::tr("Sims 3 packages (*.package *.world *.dbc *.nhd);;All files (*.*)"));
+        if (!p.isEmpty()) {
+            list->addItem(p);
+        }
+    });
+    QObject::connect(del, &QPushButton::clicked, &dlg, [list] {
+        delete list->takeItem(list->currentRow());
+    });
+    lay->addWidget(list, 1);
+    lay->addLayout(btns);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        bookmarks->clear();
+        for (int i = 0; i < list->count(); ++i) {
+            bookmarks->push_back(list->item(i)->text());
+        }
+        dlg.accept();
+    });
     dlg.exec();
 }
 

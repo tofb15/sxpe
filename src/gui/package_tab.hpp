@@ -4,6 +4,8 @@
 #include "resource_model.hpp"
 #include "sxpe/commands/bus.hpp"
 
+#include <QPoint>
+#include <QVector>
 #include <QWidget>
 #include <atomic>
 
@@ -21,13 +23,19 @@ public:
     void reload();
     void apply_filter();
     bool export_selected(const QString& path, bool raw);
+    int export_selected_to_dir(const QString& dir);
     const DisplayRow* current() const;
+    QVector<const DisplayRow*> selected() const;
+    nlohmann::json current_rid() const;
     void float_preview();
+    void copy_preview();
+    bool save_preview(const QString& path);
     void select_all();
     [[nodiscard]] int visible_count() const { return model_ ? model_->visible_count() : 0; }
 
 signals:
     void status_changed();
+    void resource_context_menu(const QPoint& global);
 
 private:
     sxpe::commands::Bus& bus_;

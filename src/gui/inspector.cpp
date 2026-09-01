@@ -4,14 +4,20 @@
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/types.hpp"
 
+#include <QAbstractItemView>
+#include <QApplication>
+#include <QClipboard>
 #include <QDir>
+#include <QFile>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QImage>
 #include <QLabel>
+#include <QMenu>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QScrollArea>
+#include <QSettings>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryFile>
@@ -43,9 +49,29 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     graph_->setHeaderLabels({tr("Field"), tr("Value")});
     graph_->header()->setStretchLastSection(true);
     stbl_ = new QTableWidget(0, 2);
-    stbl_->setHorizontalHeaderLabels({tr("Id"), tr("Text")});
+    stbl_->setHorizontalHeaderLabels({tr("Id (hex)"), tr("Text")});
     stbl_->horizontalHeader()->setStretchLastSection(true);
+    stbl_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed |
+                           QAbstractItemView::SelectedClicked);
     stbl_->setVisible(false);
+    connect(stbl_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        if (stbl_loading_ || !item || item->column() != 1 || session_.isEmpty() ||
+            pending_rid_.is_null()) {
+            return;
+        }
+        auto* id_it = stbl_->item(item->row(), 0);
+        if (!id_it) {
+            return;
+        }
+        const auto id = id_it->text().toULongLong(nullptr, 16);
+        auto env = bus_.execute("stbl.set", {{"sessionId", session_.toStdString()},
+                                             {"resourceId", pending_rid_},
+                                             {"id", id},
+                                             {"text", item->text().toStdString()}});
+        if (env.value("ok", false)) {
+            emit mutated();
+        }
+    });
     text_ = new QPlainTextEdit;
     text_->setReadOnly(true);
     auto* text_wrap = new QWidget;
@@ -58,6 +84,12 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     tabs_->addTab(graph_, tr("Graph"));
     tabs_->addTab(text_wrap, tr("Text"));
     lay->addWidget(tabs_);
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &QWidget::customContextMenuRequested, this, [this](const QPoint& p) {
+        QMenu m(this);
+        m.addAction(tr("Copy preview"), this, [this] { copy_visible(); });
+        m.exec(mapToGlobal(p));
+    });
     debounce_ = new QTimer(this);
     debounce_->setSingleShot(true);
     debounce_->setInterval(50);
@@ -92,6 +124,22 @@ void Inspector::load_visible() {
     }
     const int pane = tabs_->currentIndex();
     const auto& rid = pending_rid_;
+    QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+    if (pane == 0 && !st.value("preview/dds", true).toBool()) {
+        preview_->setPixmap({});
+        preview_->setText(tr("DDS preview is off (Settings)."));
+        return;
+    }
+    if (pane == 1 && !st.value("preview/hex", true).toBool()) {
+        hex_->setPlainText(tr("Hex preview is off (Settings)."));
+        return;
+    }
+    if (pane == 3 && !st.value("preview/text", true).toBool()) {
+        stbl_->setVisible(false);
+        text_->setVisible(true);
+        text_->setPlainText(tr("Text preview is off (Settings)."));
+        return;
+    }
     if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
         const auto msg = tr("Resource is %1 MB — live preview skipped.")
                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1);
@@ -222,16 +270,22 @@ void Inspector::load_text(const nlohmann::json& rid) {
     text_->clear();
     auto st = bus_.execute("stbl.get", {{"sessionId", session_.toStdString()}, {"resourceId", rid}});
     if (st.value("ok", false) && st["data"].contains("entries")) {
+        stbl_loading_ = true;
         stbl_->setVisible(true);
         text_->setVisible(false);
         const auto& ents = st["data"]["entries"];
         stbl_->setRowCount(static_cast<int>(ents.size()));
         int row = 0;
         for (const auto& e : ents) {
-            stbl_->setItem(row, 0, new QTableWidgetItem(QString::number(e.value("id", 0ull))));
+            auto* id_it = new QTableWidgetItem(QString("%1")
+                                                   .arg(e.value("id", 0ull), 16, 16, QLatin1Char('0'))
+                                                   .toUpper());
+            id_it->setFlags(id_it->flags() & ~Qt::ItemIsEditable);
+            stbl_->setItem(row, 0, id_it);
             stbl_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(e.value("text", ""))));
             ++row;
         }
+        stbl_loading_ = false;
         return;
     }
     stbl_->setVisible(false);
@@ -242,6 +296,83 @@ void Inspector::load_text(const nlohmann::json& rid) {
     if (env.value("ok", false)) {
         text_->setPlainText(QString::fromStdString(env["data"].value("text", "")));
     }
+}
+
+void Inspector::copy_visible() {
+    auto* cb = QApplication::clipboard();
+    if (!cb) {
+        return;
+    }
+    const int pane = tabs_->currentIndex();
+    if (pane == 0) {
+        const QPixmap pm = preview_->pixmap();
+        if (!pm.isNull()) {
+            cb->setPixmap(pm);
+            return;
+        }
+        cb->setText(preview_->text());
+        return;
+    }
+    if (pane == 1) {
+        cb->setText(hex_->toPlainText());
+        return;
+    }
+    if (pane == 2) {
+        auto* it = graph_->currentItem();
+        cb->setText(it ? (it->text(0) + '\t' + it->text(1)) : QString());
+        return;
+    }
+    if (stbl_->isVisible()) {
+        QString tsv;
+        for (int row = 0; row < stbl_->rowCount(); ++row) {
+            const auto* a = stbl_->item(row, 0);
+            const auto* b = stbl_->item(row, 1);
+            tsv += (a ? a->text() : QString()) + '\t' + (b ? b->text() : QString()) + '\n';
+        }
+        cb->setText(tsv);
+        return;
+    }
+    cb->setText(text_->toPlainText());
+}
+
+bool Inspector::save_visible(const QString& path) {
+    if (path.isEmpty()) {
+        return false;
+    }
+    const int pane = tabs_->currentIndex();
+    if (pane == 0) {
+        const QPixmap pm = preview_->pixmap();
+        if (!pm.isNull()) {
+            return pm.save(path);
+        }
+    }
+    QString body;
+    if (pane == 1) {
+        body = hex_->toPlainText();
+    } else if (pane == 2) {
+        for (int i = 0; i < graph_->topLevelItemCount(); ++i) {
+            auto* it = graph_->topLevelItem(i);
+            body += it->text(0) + '\t' + it->text(1) + '\n';
+            for (int c = 0; c < it->childCount(); ++c) {
+                auto* ch = it->child(c);
+                body += ch->text(0) + '\t' + ch->text(1) + '\n';
+            }
+        }
+    } else if (stbl_->isVisible()) {
+        for (int row = 0; row < stbl_->rowCount(); ++row) {
+            const auto* a = stbl_->item(row, 0);
+            const auto* b = stbl_->item(row, 1);
+            body += (a ? a->text() : QString()) + '\t' + (b ? b->text() : QString()) + '\n';
+        }
+    } else {
+        body = text_->toPlainText();
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+    f.write(body.toUtf8());
+    return true;
 }
 
 QWidget* Inspector::clone_preview() const { return nullptr; }

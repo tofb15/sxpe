@@ -21,8 +21,13 @@ public:
     void set_session(QString session_id);
     void show_resource(std::uint32_t type, std::uint32_t mem_size, nlohmann::json rid);
     void clear();
+    void copy_visible();
+    bool save_visible(const QString& path);
 
     QWidget* clone_preview() const;
+
+signals:
+    void mutated();
 
 private:
     void flush();
@@ -45,6 +50,7 @@ private:
     std::uint32_t pending_type_{0};
     std::uint32_t pending_mem_{0};
     int load_gen_{0};
+    bool stbl_loading_{false};
 };
 
 }  // namespace sxpe::gui
