@@ -28,6 +28,14 @@ On Windows with Visual Studio 2022/2026 (MSVC):
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
+Portable folder (GUI + CLI + MCP, Qt plugins, MSVC runtime) in `dist/sxpe`, plus a zip:
+
+```text
+powershell -ExecutionPolicy Bypass -File scripts/package.ps1
+```
+
+Use `-SkipBuild` to package the current `build/` output. Keep the DLL and plugin subfolders next to the exes when you share the folder.
+
 Requires CMake 3.28+ and a C++23 compiler. The GUI needs Qt 6 Widgets (`find_package(Qt6)`). If Qt lives next to the repo as `../qt/6.8.2/msvc2022_64`, CMake picks it up. Without Qt, CLI and MCP still build.
 
 ```text
