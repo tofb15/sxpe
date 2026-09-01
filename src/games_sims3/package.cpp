@@ -252,7 +252,7 @@ void Package::compute_payload_capacities() {
             (k + 1 < hits.size()) ? hits[k + 1].off : idx_end;
         auto& e = entries_[hits[k].i];
         if (next > e.chunk_offset) {
-            e.payload_capacity = std::max(e.file_size, next - e.chunk_offset);
+            e.payload_capacity = next - e.chunk_offset;
         } else {
             e.payload_capacity = e.file_size;
         }
@@ -413,10 +413,10 @@ VoidResult Package::patch_in_place(std::uint32_t i, std::span<const std::byte> u
     if (start + e.payload_capacity > mut.size()) {
         return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
     }
+    const std::uint32_t old_size = e.file_size;
     std::memcpy(mut.data() + start, disk.data(), disk.size());
-    if (e.payload_capacity > disk.size()) {
-        std::memset(mut.data() + start + disk.size(), 0,
-                    e.payload_capacity - disk.size());
+    if (old_size > disk.size()) {
+        std::memset(mut.data() + start + disk.size(), 0, old_size - disk.size());
     }
     e.file_size = static_cast<std::uint32_t>(disk.size());
     e.mem_size = static_cast<std::uint32_t>(uncompressed.size());
@@ -478,6 +478,7 @@ Result<std::uint32_t> Package::add(Tgi tgi, std::span<const std::byte> data, boo
 }
 
 VoidResult Package::write_file(const std::filesystem::path& dest) const {
+    // Keep package-index order. Do not sort by TGI, offset, or name.
     std::vector<std::byte> payloads;
     std::vector<IndexEntry> out_e;
     std::uint32_t off = kHeaderSize;
@@ -575,28 +576,22 @@ VoidResult Package::flush_layout() {
         if (start + e.payload_capacity > mut.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
         }
+        const std::uint32_t old_size = e.file_size;
         std::memcpy(mut.data() + start, disk.data(), disk.size());
-        if (e.payload_capacity > disk.size()) {
-            std::memset(mut.data() + start + disk.size(), 0, e.payload_capacity - disk.size());
+        if (old_size > disk.size()) {
+            std::memset(mut.data() + start + disk.size(), 0, old_size - disk.size());
         }
         e.file_size = static_cast<std::uint32_t>(disk.size());
-        overrides_[i].reset();
-    }
-    std::size_t rec = static_cast<std::size_t>(index_pos_) + 4;
-    for (const auto& e : entries_) {
+        const std::size_t rec =
+            static_cast<std::size_t>(index_pos_) + 4 + static_cast<std::size_t>(i) * 32;
         if (rec + 32 > mut.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "index row out of range"));
         }
-        poke_u32(mut, rec + 0, e.tgi.type);
-        poke_u32(mut, rec + 4, e.tgi.group);
-        poke_u32(mut, rec + 8, static_cast<std::uint32_t>(e.tgi.instance >> 32));
-        poke_u32(mut, rec + 12, static_cast<std::uint32_t>(e.tgi.instance));
-        poke_u32(mut, rec + 16, e.chunk_offset);
         poke_u32(mut, rec + 20, e.file_size | (e.file_size_high_bit ? 0x80000000u : 0));
         poke_u32(mut, rec + 24, e.mem_size);
         poke_u32(mut, rec + 28, static_cast<std::uint32_t>(e.compressed) |
                                     (static_cast<std::uint32_t>(e.unknown2) << 16));
-        rec += 32;
+        overrides_[i].reset();
     }
     dirty_ = false;
     map_.flush();

@@ -1,10 +1,16 @@
 #include "dialogs.hpp"
 
+#include "sxpe/resources/png.hpp"
 #include "sxpe/resources/types.hpp"
 
+#include <QBuffer>
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QColor>
+#include <QImage>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -362,9 +368,38 @@ bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QS
     return dlg.exec() == QDialog::Accepted;
 }
 
+namespace {
+
+void posterize_rgb(QImage* im, int shift) {
+    if (!im || shift <= 0) {
+        return;
+    }
+    im->detach();
+    for (int y = 0; y < im->height(); ++y) {
+        auto* p = reinterpret_cast<QRgb*>(im->scanLine(y));
+        for (int x = 0; x < im->width(); ++x) {
+            const int r = (qRed(p[x]) >> shift) << shift;
+            const int g = (qGreen(p[x]) >> shift) << shift;
+            const int b = (qBlue(p[x]) >> shift) << shift;
+            p[x] = qRgba(r, g, b, qAlpha(p[x]));
+        }
+    }
+}
+
+QByteArray encode_rgba_png(const QImage& im) {
+    QByteArray buf;
+    QBuffer b(&buf);
+    b.open(QIODevice::WriteOnly);
+    QImage rgba = im.convertToFormat(QImage::Format_RGBA8888);
+    rgba.save(&b, "PNG");
+    return buf;
+}
+
+}  // namespace
+
 bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                               std::uint32_t type, std::uint32_t group, std::uint64_t instance,
-                              std::uint32_t ordinal) {
+                              std::uint32_t ordinal, std::uint32_t max_bytes) {
     nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
     const auto path = QFileDialog::getOpenFileName(
         parent, QObject::tr("Replace SNAP with PNG"), {},
@@ -372,10 +407,64 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
     if (path.isEmpty()) {
         return false;
     }
+    int tw = 128;
+    int th = 128;
+    const auto cur = QDir::temp().filePath(QStringLiteral("sxpe-snap-cur.png"));
+    auto exp = bus.execute("resource.export", {{"sessionId", session.toStdString()},
+                                               {"resourceId", rid},
+                                               {"path", cur.toStdString()},
+                                               {"force", true}});
+    if (exp.value("ok", false)) {
+        QImage orig(cur);
+        if (!orig.isNull() && orig.width() > 0 && orig.height() > 0) {
+            tw = orig.width();
+            th = orig.height();
+        }
+        QFile::remove(cur);
+    }
+    if (max_bytes < 256) {
+        max_bytes = 256;
+    }
+    QImage im(path);
+    if (im.isNull()) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"), QObject::tr("Could not read that image."));
+        return false;
+    }
+    im = im.convertToFormat(QImage::Format_RGBA8888);
+    if (im.width() != tw || im.height() != th) {
+        im = im.scaled(tw, th, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    QByteArray fitted;
+    for (int shift = 0; shift <= 5; ++shift) {
+        QImage q = im;
+        posterize_rgb(&q, shift);
+        fitted = encode_rgba_png(q);
+        if (!fitted.isEmpty() && static_cast<std::uint32_t>(fitted.size()) <= max_bytes) {
+            break;
+        }
+        fitted.clear();
+    }
+    if (fitted.isEmpty()) {
+        QMessageBox::warning(
+            parent, QObject::tr("SXPE"),
+            QObject::tr("Could not compress the image to %1 bytes (the original SNAP size). "
+                        "Use a simpler 128×128 PNG.")
+                .arg(max_bytes));
+        return false;
+    }
+    const auto fitted_path = QDir::temp().filePath(QStringLiteral("sxpe-snap-fit.png"));
+    QFile out(fitted_path);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        out.write(fitted) != fitted.size()) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"), QObject::tr("Could not write a temp PNG."));
+        return false;
+    }
+    out.close();
     auto env = bus.execute("resource.replaceInPlace",
                            {{"sessionId", session.toStdString()},
                             {"resourceId", rid},
-                            {"path", path.toStdString()}});
+                            {"path", fitted_path.toStdString()}});
+    QFile::remove(fitted_path);
     if (!env.value("ok", false)) {
         QString msg = QObject::tr("Could not patch SNAP.");
         if (env.contains("error") && env["error"].contains("message")) {
@@ -384,10 +473,6 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
         QMessageBox::warning(parent, QObject::tr("SXPE"), msg);
         return false;
     }
-    QMessageBox::information(
-        parent, QObject::tr("SNAP replaced"),
-        QObject::tr("The PNG was written into the existing hole. File → Save on a "
-                    ".nhd now keeps the original layout (it does not rebuild the file)."));
     return true;
 }
 

@@ -48,11 +48,17 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
     MappedFile m;
     m.writable_ = writable;
     DWORD access = GENERIC_READ | (writable ? GENERIC_WRITE : 0);
-    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    // Writable: share read only so the game cannot write the same .nhd at the same time.
+    DWORD share = FILE_SHARE_READ;
+    if (!writable) {
+        share |= FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    }
     m.file_ = CreateFileW(path.c_str(), access, share, nullptr, OPEN_EXISTING,
                           FILE_ATTRIBUTE_NORMAL, nullptr);
     if (as_handle(m.file_) == INVALID_HANDLE_VALUE) {
-        return std::unexpected(err(ErrorCode::io, "CreateFile failed"));
+        return std::unexpected(
+            err(ErrorCode::io, writable ? "file is in use — close The Sims 3 and try again"
+                                        : "CreateFile failed"));
     }
     LARGE_INTEGER sz{};
     if (!GetFileSizeEx(as_handle(m.file_), &sz)) {
