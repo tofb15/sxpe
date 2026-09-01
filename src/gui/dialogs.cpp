@@ -362,6 +362,36 @@ bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QS
     return dlg.exec() == QDialog::Accepted;
 }
 
+bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                              std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    const auto path = QFileDialog::getOpenFileName(
+        parent, QObject::tr("Replace SNAP with PNG"), {},
+        QObject::tr("PNG (*.png);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return false;
+    }
+    auto env = bus.execute("resource.replaceInPlace",
+                           {{"sessionId", session.toStdString()},
+                            {"resourceId", rid},
+                            {"path", path.toStdString()}});
+    if (!env.value("ok", false)) {
+        QString msg = QObject::tr("Could not patch SNAP.");
+        if (env.contains("error") && env["error"].contains("message")) {
+            msg = QString::fromStdString(env["error"]["message"].get<std::string>());
+        }
+        QMessageBox::warning(parent, QObject::tr("SXPE"), msg);
+        return false;
+    }
+    QMessageBox::information(
+        parent, QObject::tr("SNAP replaced in place"),
+        QObject::tr("The PNG was written into the existing hole. Do not File → Save this "
+                    ".nhd — that rewrites the whole neighborhood and can break the save.\n"
+                    "Close SXPE and load the copied save in the game."));
+    return true;
+}
+
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Bookmarks"));

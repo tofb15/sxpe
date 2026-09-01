@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstring>
 #include <fstream>
+#include <string>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -48,6 +49,13 @@ void wr_u32_at(std::array<std::byte, 96>& h, std::size_t off, std::uint32_t v) {
         v = std::byteswap(v);
     }
     std::memcpy(h.data() + off, &v, 4);
+}
+
+void poke_u32(std::span<std::byte> s, std::size_t off, std::uint32_t v) {
+    if constexpr (std::endian::native != std::endian::little) {
+        v = std::byteswap(v);
+    }
+    std::memcpy(s.data() + off, &v, 4);
 }
 
 int popcnt(std::uint32_t x) { return std::popcount(x); }
@@ -140,6 +148,7 @@ VoidResult Package::parse_mapped() {
     const auto index_size = rd_u32(b, 0x2C);
     const auto index_ver = rd_u32(b, 0x3C);
     const auto index_pos = rd_u32(b, 0x40);
+    index_pos_ = index_pos;
     if (index_ver != 3) {
         return std::unexpected(err(ErrorCode::unsupported_game_or_format, "index version"));
     }
@@ -205,13 +214,39 @@ VoidResult Package::parse_mapped() {
         if (static_cast<std::uint64_t>(e.chunk_offset) + e.file_size > map_.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "payload out of range"));
         }
+        e.payload_capacity = e.file_size;
         entries_.push_back(e);
     }
+    compute_payload_capacities();
     recompute_ordinals();
     overrides_.assign(entries_.size(), std::nullopt);
     deleted_.assign(entries_.size(), 0);
     dirty_ = false;
     return ok();
+}
+
+void Package::compute_payload_capacities() {
+    struct Hit {
+        std::uint32_t off;
+        std::uint32_t i;
+    };
+    std::vector<Hit> hits;
+    hits.reserve(entries_.size());
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        hits.push_back({entries_[i].chunk_offset, i});
+    }
+    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.off < b.off; });
+    const std::uint32_t idx_end = index_pos_ ? index_pos_ : static_cast<std::uint32_t>(map_.size());
+    for (std::size_t k = 0; k < hits.size(); ++k) {
+        const std::uint32_t next =
+            (k + 1 < hits.size()) ? hits[k + 1].off : idx_end;
+        auto& e = entries_[hits[k].i];
+        if (next > e.chunk_offset) {
+            e.payload_capacity = std::max(e.file_size, next - e.chunk_offset);
+        } else {
+            e.payload_capacity = e.file_size;
+        }
+    }
 }
 
 void Package::recompute_ordinals() {
@@ -325,6 +360,81 @@ VoidResult Package::set_uncompressed(std::uint32_t i, std::span<const std::byte>
         entries_[i].mem_size = entries_[i].file_size;
     }
     dirty_ = true;
+    return ok();
+}
+
+VoidResult Package::patch_in_place(std::uint32_t i, std::span<const std::byte> uncompressed,
+                                   bool compress) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    if (index_type_ != 0) {
+        return std::unexpected(err(ErrorCode::refused, "in-place replace needs indexType 0"));
+    }
+    if (map_.writable_bytes().empty()) {
+        return std::unexpected(err(ErrorCode::refused, "file is not mapped writable"));
+    }
+    if (uncompressed.size() > kMaxResourceBytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "resource size"));
+    }
+    std::vector<std::byte> disk;
+    if (compress) {
+        auto c = refpack_compress(uncompressed);
+        if (!c) {
+            return std::unexpected(c.error());
+        }
+        disk = std::move(*c);
+    } else {
+        disk.assign(uncompressed.begin(), uncompressed.end());
+    }
+    auto& e = entries_[i];
+    if (disk.size() > e.payload_capacity) {
+        return std::unexpected(err(ErrorCode::cap_exceeded,
+                                   "new resource is " + std::to_string(disk.size()) +
+                                       " bytes; in-place hole is " +
+                                       std::to_string(e.payload_capacity) +
+                                       " bytes. Export a smaller PNG (same pixels, higher PNG compression)."));
+    }
+    auto mut = map_.writable_bytes();
+    const auto start = static_cast<std::size_t>(e.chunk_offset);
+    if (start + e.payload_capacity > mut.size()) {
+        return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
+    }
+    std::memcpy(mut.data() + start, disk.data(), disk.size());
+    if (e.payload_capacity > disk.size()) {
+        std::memset(mut.data() + start + disk.size(), 0,
+                    e.payload_capacity - disk.size());
+    }
+    e.file_size = static_cast<std::uint32_t>(disk.size());
+    e.mem_size = static_cast<std::uint32_t>(uncompressed.size());
+    e.compressed = compress ? 0xFFFF : 0;
+    const std::size_t rec = static_cast<std::size_t>(index_pos_) + 4 + static_cast<std::size_t>(i) * 32;
+    if (rec + 32 > mut.size()) {
+        return std::unexpected(err(ErrorCode::corrupt, "index row out of range"));
+    }
+    poke_u32(mut, rec + 20, e.file_size | (e.file_size_high_bit ? 0x80000000u : 0));
+    poke_u32(mut, rec + 24, e.mem_size);
+    poke_u32(mut, rec + 28, static_cast<std::uint32_t>(e.compressed) |
+                                (static_cast<std::uint32_t>(e.unknown2) << 16));
+    overrides_[i].reset();
+    bool still = false;
+    for (const auto& o : overrides_) {
+        if (o) {
+            still = true;
+            break;
+        }
+    }
+    for (char d : deleted_) {
+        if (d) {
+            still = true;
+            break;
+        }
+    }
+    dirty_ = still;
+    map_.flush();
     return ok();
 }
 

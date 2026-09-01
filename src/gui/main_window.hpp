@@ -61,6 +61,7 @@ private:
     void export_s3sa();
     void clip_export();
     void replace_dds();
+    void replace_snap();
     void export_vid();
     void copy_preview();
     void save_preview();

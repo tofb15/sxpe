@@ -26,6 +26,13 @@ public:
     [[nodiscard]] std::span<const std::byte> bytes() const {
         return {static_cast<const std::byte*>(view_), static_cast<std::size_t>(size_)};
     }
+    [[nodiscard]] std::span<std::byte> writable_bytes() {
+        if (!writable_ || !view_) {
+            return {};
+        }
+        return {static_cast<std::byte*>(view_), static_cast<std::size_t>(size_)};
+    }
+    void flush();
 
     /// Unmap view and close mapping + file (required before ReplaceFile on Windows).
     void close();

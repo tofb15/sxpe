@@ -165,6 +165,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
+    act(editors, tr("Replace SNAP PNG (in-place)…"), {}, [this] { replace_snap(); });
     act(editors, tr("Export &VID…"), {}, [this] { export_vid(); });
     act(res, tr("Open in &hex editor"), {}, [this] { open_external(true); });
     act(res, tr("Open in te&xt editor"), {}, [this] { open_external(false); });
@@ -847,6 +848,18 @@ void MainWindow::replace_dds() {
     }
 }
 
+void MainWindow::replace_snap() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_replace_snap_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance,
+                                 r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::export_vid() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -984,12 +997,15 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
+    auto* snap = editors->addAction(tr("Replace SNAP PNG (in-place)…"), this,
+                                    [this] { replace_snap(); });
     editors->addAction(tr("Export &VID…"), this, [this] { export_vid(); });
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
+        snap->setEnabled(sxpe::resources::is_png_image(r->type));
     }
     m.addAction(tr("Open in &hex editor"), this, [this] { open_external(true); });
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });

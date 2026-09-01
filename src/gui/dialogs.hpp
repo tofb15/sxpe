@@ -30,6 +30,9 @@ bool show_stbl_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal);
+bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                              std::uint32_t ordinal);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
 
 }  // namespace sxpe::gui

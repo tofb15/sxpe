@@ -22,6 +22,7 @@ struct IndexEntry {
     std::uint16_t compressed{0};
     std::uint16_t unknown2{0};
     std::uint32_t ordinal{0};
+    std::uint32_t payload_capacity{0};
 };
 
 class Package {
@@ -47,6 +48,10 @@ public:
     /// First max_bytes of uncompressed payload. Uncompressed resources are a mmap slice copy.
     Result<std::vector<std::byte>> peek(std::uint32_t i, std::uint32_t max_bytes) const;
     VoidResult set_uncompressed(std::uint32_t i, std::span<const std::byte> data, bool compress);
+    /// Overwrite the on-disk hole for entry i. Does not rebuild the package.
+    /// New on-disk bytes must fit in payload_capacity (space until the next chunk).
+    VoidResult patch_in_place(std::uint32_t i, std::span<const std::byte> uncompressed,
+                              bool compress);
     Result<std::uint32_t> add(Tgi tgi, std::span<const std::byte> data, bool compress);
     VoidResult remove(std::uint32_t i);
     Result<std::uint32_t> duplicate(std::uint32_t i);
@@ -74,12 +79,14 @@ private:
     VoidResult parse_mapped();
     VoidResult write_file(const std::filesystem::path& dest) const;
     Result<std::vector<std::byte>> payload_on_disk(std::uint32_t i) const;
+    void compute_payload_capacities();
 
     std::filesystem::path path_;
     bool writable_{false};
     core::MappedFile map_;
     std::array<std::byte, 96> header_{};
     std::uint32_t index_type_{0};
+    std::uint32_t index_pos_{0};
     std::vector<IndexEntry> entries_;
     std::vector<std::optional<std::vector<std::byte>>> overrides_;
     std::vector<char> deleted_;

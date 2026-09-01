@@ -82,6 +82,15 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
     return m;
 }
 
+void MappedFile::flush() {
+    if (view_) {
+        FlushViewOfFile(view_, 0);
+    }
+    if (file_ != kInvalid) {
+        FlushFileBuffers(as_handle(file_));
+    }
+}
+
 void MappedFile::close() {
     if (view_) {
         UnmapViewOfFile(view_);
@@ -133,6 +142,12 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
         return std::unexpected(err(ErrorCode::io, "mmap failed"));
     }
     return m;
+}
+
+void MappedFile::flush() {
+    if (view_ && view_ != MAP_FAILED) {
+        msync(view_, static_cast<size_t>(size_), MS_SYNC);
+    }
 }
 
 void MappedFile::close() {

@@ -144,6 +144,35 @@ int main() {
         CHECK(body.has_value() && as_text(*body) == "Hello SXPE\n");
     }
 
+    auto hole = tmp / "hole.bin";
+    std::filesystem::copy_file(out, hole, std::filesystem::copy_options::overwrite_existing, ec);
+    {
+        auto w = Package::open(hole, true);
+        CHECK(w.has_value());
+        if (w) {
+            const char hi[] = "Hi";
+            auto payload = std::as_bytes(std::span{hi, sizeof(hi) - 1});
+            CHECK(w->patch_in_place(0, payload, false).has_value());
+            CHECK(w->dirty() == false);
+            CHECK(w->count() == 1);
+        }
+    }
+    auto hole_r = Package::open(hole, false);
+    CHECK(hole_r.has_value());
+    if (hole_r) {
+        CHECK(hole_r->count() == 1);
+        auto body = hole_r->uncompressed(0);
+        CHECK(body.has_value() && as_text(*body) == "Hi");
+        const char too[] = "Hello SXPE!! extra";
+        auto big = std::as_bytes(std::span{too, sizeof(too) - 1});
+        auto w2 = Package::open(hole, true);
+        CHECK(w2.has_value());
+        if (w2) {
+            auto refused_big = w2->patch_in_place(0, big, false);
+            CHECK(!refused_big);
+        }
+    }
+
     auto cpath = tmp / "compressed.bin";
     std::vector<std::byte> copied;
     {

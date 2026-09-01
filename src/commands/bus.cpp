@@ -7,6 +7,7 @@
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/s3sa.hpp"
+#include "sxpe/resources/png.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
 
@@ -441,6 +442,16 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "payloadB64"})),
          env_out, false, true, false, false});
+    add({"resource.replaceInPlace", "Replace in place",
+         "Patch one resource into its existing on-disk hole. Does not rewrite the package. "
+         "For SNAP/PNG: keep width/height and 8-bit RGBA; new bytes must fit the hole. "
+         "Do not File-Save an .nhd after this.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"path", {{"type", "string"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "path"})),
+         env_out, false, true, false, true});
     add({"resource.importFiles", "Import files",
          "Import one filesystem path. Community S3_TYPE_GROUP_INSTANCE_name%%+ext names set TGI. Requires --force to overwrite.",
          obj_schema({{"sessionId", sess_prop()},
@@ -1236,6 +1247,61 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return envelope_ok({{"bytes", raw->size()}});
     }
+    if (cmd == "resource.replaceInPlace") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        auto path = check_path(args.at("path").get<std::string>());
+        if (!path) {
+            return envelope_err(path.error());
+        }
+        auto bytes = read_file(*path);
+        if (!bytes) {
+            return envelope_err(bytes.error());
+        }
+        const auto neu = sxpe::resources::parse_png_ihdr(*bytes);
+        if (!neu) {
+            return envelope_err(err(ErrorCode::invalid_argument, "not a PNG (need 8-bit RGBA)"));
+        }
+        if (neu->bit_depth != 8 || neu->color_type != 6) {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "PNG must be 8-bit RGBA (color type 6), same as game SNAPs"));
+        }
+        auto cur = s.pkg.uncompressed(*i);
+        if (!cur) {
+            return envelope_err(cur.error());
+        }
+        if (const auto old = sxpe::resources::parse_png_ihdr(*cur)) {
+            if (old->width != neu->width || old->height != neu->height) {
+                return envelope_err(err(ErrorCode::invalid_argument,
+                                        "PNG size must stay " + std::to_string(old->width) + "x" +
+                                            std::to_string(old->height)));
+            }
+        }
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"bytes", bytes->size()},
+                                {"width", neu->width},
+                                {"height", neu->height},
+                                {"hole", s.pkg.entry(*i).payload_capacity},
+                                {"compress", compress}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        s.undo.back().kind = "inplace";
+        auto r = s.pkg.patch_in_place(*i, *bytes, compress);
+        if (!r) {
+            s.undo.pop_back();
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"bytes", bytes->size()},
+                            {"width", neu->width},
+                            {"height", neu->height},
+                            {"inPlace", true}});
+    }
     if (cmd == "resource.setFlags") {
         auto i = need_idx();
         if (!i) {
@@ -1778,6 +1844,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
         s.undo.pop_back();
         if (u.kind == "remove") {
             s.pkg.remove(u.index);
+        } else if (u.kind == "inplace") {
+            auto r = s.pkg.patch_in_place(u.index, u.payload, u.compressed == 0xFFFF);
+            if (!r) {
+                return envelope_err(r.error());
+            }
         } else if (u.kind == "insert" || u.kind == "restore") {
             if (u.kind == "insert") {
                 auto r = s.pkg.add(u.tgi, u.payload, u.compressed == 0xFFFF);
