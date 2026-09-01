@@ -34,6 +34,10 @@ CI uses **synthetic** fixtures. Optional local tests against a user-owned game d
 
 Non-UI features ship on the command bus, CLI, and MCP in the **same** change.
 
+## Libraries
+
+Do not reimplement JSON, CLI parsing, unit-test harnesses, DDS/BCn, XML, or TLS HTTP. Use the pins in `vcpkg.json` and DESIGN.md (nlohmann/json, CLI11, Catch2, spdlog, pugixml; Qt 6 and DirectXTex when those targets exist).
+
 ## Safety
 
 Untrusted package bytes: use `std::span` and size caps. Do not `memcpy` from the index without checking. Fuzz codecs when they exist.

@@ -1,5 +1,11 @@
 {
   "name": "sxpe",
   "version-string": "0.1.0",
-  "dependencies": []
+  "dependencies": [
+    "nlohmann-json",
+    "cli11",
+    "catch2",
+    "spdlog",
+    "pugixml"
+  ]
 }
