@@ -1,0 +1,13 @@
+#pragma once
+
+#include <cstdint>
+
+namespace sxpe::core::caps {
+
+inline constexpr std::uint64_t kMaxMapBytes = 4ull << 30;
+inline constexpr std::uint32_t kMaxIndexEntries = 500'000;
+inline constexpr std::uint32_t kMaxResourceBytes = 256u << 20;
+inline constexpr std::uint32_t kMaxCompressRatio = 1024;
+inline constexpr std::uint32_t kHeaderSize = 96;
+
+}  // namespace sxpe::core::caps

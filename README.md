@@ -14,7 +14,7 @@ This project is unofficial. The Sims 3 is a trademark of Electronic Arts. SXPE i
 
 ## Status
 
-Foundation only: game-profile interfaces and a Sims 3 stub. Package I/O, CLI, MCP, and GUI land in later work.
+M2: mmap DBPF open/list/extract, RefPack, save-in-place (`ReplaceFile` after unmap), TGI/FNV. CLI, MCP, and GUI land later.
 
 ```text
 cmake --preset default
@@ -34,8 +34,9 @@ Requires CMake 3.28+ and a C++23 compiler. Qt is **not** required until the GUI 
 
 - `include/sxpe/games` — game-profile interfaces
 - `include/sxpe/games/sims3` — Sims 3 profile (v1)
-- `include/sxpe/core` — registry
+- `include/sxpe/core` — registry, mmap, caps
 - `src/` — implementations
 - `tests/` — unit tests (synthetic fixtures only)
+- `fixtures/synthetic/` — invented DBPF/RefPack bytes (not game files)
 
 Do not commit game packages, custom-content, or other copyrighted binaries.

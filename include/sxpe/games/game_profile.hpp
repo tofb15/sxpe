@@ -20,7 +20,7 @@ public:
     virtual const PackageCodec& package_codec() const = 0;
     virtual const CompressionCodec& compression() const = 0;
 
-    /// Until the DBPF reader lands, Sims 3 returns false.
+    /// Sims 3: ASCII DBPF and major 2. Other magics return false.
     virtual bool try_sniff(std::span<const std::byte> header, float& confidence) const = 0;
 };
 

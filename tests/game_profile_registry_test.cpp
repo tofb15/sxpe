@@ -1,26 +1,10 @@
+#include "check.hpp"
 #include "sxpe/core/default_registry.hpp"
 #include "sxpe/games/game_id.hpp"
 
 #include <cstdint>
 #include <iostream>
 #include <span>
-#include <string_view>
-
-
-namespace {
-
-int g_failed = 0;
-
-void check(bool cond, const char* expr) {
-    if (!cond) {
-        std::cerr << "FAIL: " << expr << '\n';
-        ++g_failed;
-    }
-}
-
-}  // namespace
-
-#define CHECK(x) check((x), #x)
 
 int main() {
     using sxpe::games::GameId;
@@ -47,7 +31,14 @@ int main() {
 
     const std::byte header[] = {std::byte{'D'}, std::byte{'B'}, std::byte{'P'},
                                 std::byte{'F'}};
-    CHECK(registry.sniff(std::span<const std::byte>(header)) == nullptr);
+    CHECK(registry.sniff(std::span<const std::byte>(header)) != nullptr);
+
+    const std::byte ts3[] = {std::byte{'D'}, std::byte{'B'}, std::byte{'P'}, std::byte{'F'},
+                             std::byte{2},  std::byte{0},   std::byte{0},   std::byte{0}};
+    CHECK(registry.sniff(std::span<const std::byte>(ts3)) != nullptr);
+
+    const std::byte other[] = {std::byte{'D'}, std::byte{'B'}, std::byte{'P'}, std::byte{'P'}};
+    CHECK(registry.sniff(std::span<const std::byte>(other)) == nullptr);
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";

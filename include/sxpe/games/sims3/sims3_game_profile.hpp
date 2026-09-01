@@ -11,17 +11,11 @@ namespace sxpe::games::sims3 {
 
 class Sims3Compression final : public CompressionCodec {
 public:
-    std::string_view name() const override { return "RefPack"; }
-    bool try_decompress(std::span<const std::byte>, std::span<std::byte>,
-                        std::size_t& bytes_written) const override {
-        bytes_written = 0;
-        return false;
-    }
-    bool try_compress(std::span<const std::byte>, std::span<std::byte>,
-                      std::size_t& bytes_written) const override {
-        bytes_written = 0;
-        return false;
-    }
+    std::string_view name() const override;
+    bool try_decompress(std::span<const std::byte> input, std::span<std::byte> output,
+                        std::size_t& bytes_written) const override;
+    bool try_compress(std::span<const std::byte> input, std::span<std::byte> output,
+                      std::size_t& bytes_written) const override;
 };
 
 class Sims3GameProfile;
