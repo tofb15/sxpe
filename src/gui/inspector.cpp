@@ -1,5 +1,6 @@
 #include "inspector.hpp"
 
+#include "sxpe/core/caps.hpp"
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/types.hpp"
 
@@ -14,6 +15,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryFile>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <fstream>
@@ -21,13 +23,6 @@
 
 namespace sxpe::gui {
 namespace {
-
-nlohmann::json rid_json(const sxpe::commands::UiRow& r) {
-    return {{"type", r.type},
-            {"group", r.group},
-            {"instance", r.instance},
-            {"ordinal", r.ordinal}};
-}
 
 }  // namespace
 
@@ -63,6 +58,11 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     tabs_->addTab(graph_, tr("Graph"));
     tabs_->addTab(text_wrap, tr("Text"));
     lay->addWidget(tabs_);
+    debounce_ = new QTimer(this);
+    debounce_->setSingleShot(true);
+    debounce_->setInterval(50);
+    connect(debounce_, &QTimer::timeout, this, &Inspector::flush);
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { load_visible(); });
 }
 
 void Inspector::set_session(QString session_id) { session_ = std::move(session_id); }
@@ -76,21 +76,53 @@ void Inspector::clear() {
     text_->clear();
 }
 
-void Inspector::show_resource(const sxpe::commands::UiRow& row) {
-    if (session_.isEmpty()) {
+void Inspector::show_resource(std::uint32_t type, std::uint32_t mem_size, nlohmann::json rid) {
+    pending_type_ = type;
+    pending_mem_ = mem_size;
+    pending_rid_ = std::move(rid);
+    preview_->setText(tr("…"));
+    debounce_->start();
+}
+
+void Inspector::flush() { load_visible(); }
+
+void Inspector::load_visible() {
+    if (session_.isEmpty() || pending_rid_.is_null()) {
         return;
     }
-    const auto rid = rid_json(row);
-    if (row.type == sxpe::resources::kImg || row.type == sxpe::resources::kImgAlt) {
-        load_preview(rid);
-    } else {
-        preview_->setPixmap({});
-        const auto tag = QString::fromStdString(row.tag);
-        preview_->setText(tag.isEmpty() ? tr("No image preview") : tag);
+    const int pane = tabs_->currentIndex();
+    const auto& rid = pending_rid_;
+    if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
+        const auto msg = tr("Resource is %1 MB — live preview skipped.")
+                             .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1);
+        if (pane == 0) {
+            preview_->setPixmap({});
+            preview_->setText(msg);
+        } else if (pane == 1) {
+            hex_->setPlainText(msg);
+        } else if (pane == 2) {
+            graph_->clear();
+        } else {
+            text_->setPlainText(msg);
+            stbl_->setVisible(false);
+            text_->setVisible(true);
+        }
+        return;
     }
-    load_hex(rid);
-    load_graph(rid);
-    load_text(rid);
+    if (pane == 0) {
+        if (pending_type_ == sxpe::resources::kImg || pending_type_ == sxpe::resources::kImgAlt) {
+            load_preview(rid);
+        } else {
+            preview_->setPixmap({});
+            preview_->setText(tr("No image preview"));
+        }
+    } else if (pane == 1) {
+        load_hex(rid);
+    } else if (pane == 2) {
+        load_graph(rid);
+    } else {
+        load_text(rid);
+    }
 }
 
 void Inspector::load_preview(const nlohmann::json& rid) {

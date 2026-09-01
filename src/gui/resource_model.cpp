@@ -1,7 +1,7 @@
 #include "resource_model.hpp"
 
 #include <QColor>
-#include <QFont>
+#include <algorithm>
 
 namespace sxpe::gui {
 namespace {
@@ -11,20 +11,99 @@ QString hex64(std::uint64_t v) { return QString("%1").arg(v, 16, 16, QLatin1Char
 
 }  // namespace
 
+ResourceModel::ResourceModel(QObject* parent) : QAbstractTableModel(parent) {
+    mono_.setStyleHint(QFont::Monospace);
+    mono_.setFamily(QStringLiteral("Consolas"));
+}
+
 void ResourceModel::set_rows(std::vector<sxpe::commands::UiRow> rows) {
     beginResetModel();
-    all_ = std::move(rows);
+    all_.clear();
+    all_.reserve(rows.size());
+    for (auto& u : rows) {
+        DisplayRow d;
+        d.index = u.index;
+        d.type = u.type;
+        d.group = u.group;
+        d.instance = u.instance;
+        d.ordinal = u.ordinal;
+        d.mem_size = u.mem_size;
+        d.tag = QString::fromStdString(u.tag);
+        d.name = QString::fromStdString(u.name);
+        d.type_h = hex32(u.type);
+        d.group_h = hex32(u.group);
+        d.inst_h = hex64(u.instance);
+        d.compressed = u.compressed;
+        d.deleted = u.deleted;
+        all_.push_back(std::move(d));
+    }
     visible_.resize(static_cast<int>(all_.size()));
     for (int i = 0; i < visible_.size(); ++i) {
         visible_[i] = i;
+    }
+    if (sort_col_ >= 0) {
+        apply_sort(visible_);
     }
     endResetModel();
 }
 
 void ResourceModel::set_visible(QVector<int> visible) {
-    beginResetModel();
+    if (sort_col_ >= 0) {
+        apply_sort(visible);
+    }
+    emit layoutAboutToBeChanged();
     visible_ = std::move(visible);
-    endResetModel();
+    emit layoutChanged();
+}
+
+void ResourceModel::apply_sort(QVector<int>& vis) const {
+    const int col = sort_col_;
+    const bool asc = sort_order_ == Qt::AscendingOrder;
+    std::sort(vis.begin(), vis.end(), [&](int ia, int ib) {
+        const auto& a = all_[static_cast<size_t>(ia)];
+        const auto& b = all_[static_cast<size_t>(ib)];
+        int cmp = 0;
+        switch (col) {
+            case Tag:
+                cmp = QString::compare(a.tag, b.tag, Qt::CaseInsensitive);
+                break;
+            case Name:
+                cmp = QString::compare(a.name, b.name, Qt::CaseInsensitive);
+                break;
+            case Type:
+                cmp = (a.type > b.type) - (a.type < b.type);
+                break;
+            case Group:
+                cmp = (a.group > b.group) - (a.group < b.group);
+                break;
+            case Instance:
+                cmp = (a.instance > b.instance) - (a.instance < b.instance);
+                break;
+            case Ordinal:
+                cmp = (a.ordinal > b.ordinal) - (a.ordinal < b.ordinal);
+                break;
+            case Size:
+                cmp = (a.mem_size > b.mem_size) - (a.mem_size < b.mem_size);
+                break;
+            case Compressed:
+                cmp = (a.compressed > b.compressed) - (a.compressed < b.compressed);
+                break;
+            default:
+                break;
+        }
+        if (cmp == 0) {
+            cmp = (a.index > b.index) - (a.index < b.index);
+        }
+        return asc ? cmp < 0 : cmp > 0;
+    });
+}
+
+void ResourceModel::sort(int column, Qt::SortOrder order) {
+    sort_col_ = column;
+    sort_order_ = order;
+    emit layoutAboutToBeChanged();
+    apply_sort(visible_);
+    emit layoutChanged();
 }
 
 int ResourceModel::rowCount(const QModelIndex& parent) const {
@@ -34,7 +113,7 @@ int ResourceModel::columnCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : Count_;
 }
 
-const sxpe::commands::UiRow* ResourceModel::row_at(int view_row) const {
+const DisplayRow* ResourceModel::row_at(int view_row) const {
     if (view_row < 0 || view_row >= visible_.size()) {
         return nullptr;
     }
@@ -55,34 +134,29 @@ QVariant ResourceModel::data(const QModelIndex& index, int role) const {
     }
     if (role == Qt::FontRole && (index.column() == Type || index.column() == Group ||
                                  index.column() == Instance || index.column() == Ordinal)) {
-        QFont f;
-        f.setStyleHint(QFont::Monospace);
-        f.setFamily(QStringLiteral("Consolas"));
-        return f;
+        return mono_;
     }
     if (role == Qt::ToolTipRole) {
-        return QString("%1-%2-%3 #%4")
-            .arg(hex32(r->type), hex32(r->group), hex64(r->instance))
-            .arg(r->ordinal);
+        return r->type_h + '-' + r->group_h + '-' + r->inst_h + " #" + QString::number(r->ordinal);
     }
     if (role != Qt::DisplayRole) {
         return {};
     }
     switch (index.column()) {
         case Tag:
-            return QString::fromStdString(r->tag);
+            return r->tag;
         case Name:
-            return QString::fromStdString(r->name);
+            return r->name;
         case Type:
-            return hex32(r->type);
+            return r->type_h;
         case Group:
-            return hex32(r->group);
+            return r->group_h;
         case Instance:
-            return hex64(r->instance);
+            return r->inst_h;
         case Ordinal:
-            return QString::number(r->ordinal);
+            return r->ordinal;
         case Size:
-            return QString::number(r->mem_size);
+            return r->mem_size;
         case Compressed:
             return r->compressed ? QStringLiteral("Y") : QString();
         default:
@@ -98,7 +172,7 @@ QVariant ResourceModel::headerData(int section, Qt::Orientation o, int role) con
     return section >= 0 && section < Count_ ? QString::fromLatin1(k[section]) : QVariant{};
 }
 
-QVector<int> filter_rows(const std::vector<sxpe::commands::UiRow>& all, const QString& text,
+QVector<int> filter_rows(const std::vector<DisplayRow>& all, const QString& text,
                          const QString& tag) {
     QVector<int> out;
     out.reserve(static_cast<int>(all.size()));
@@ -108,18 +182,16 @@ QVector<int> filter_rows(const std::vector<sxpe::commands::UiRow>& all, const QS
     for (int i = 0; i < static_cast<int>(all.size()); ++i) {
         const auto& r = all[static_cast<size_t>(i)];
         if (!any_tag) {
-            const auto t = QString::fromStdString(r.tag);
-            if (t.compare(want, Qt::CaseInsensitive) != 0 &&
-                !(want == QLatin1String("IMG") && t == QLatin1String("_IMG"))) {
+            if (r.tag.compare(want, Qt::CaseInsensitive) != 0 &&
+                !(want == QLatin1String("IMG") && r.tag == QLatin1String("_IMG"))) {
                 continue;
             }
         }
         if (!needle.isEmpty()) {
-            const auto name = QString::fromStdString(r.name);
-            const auto type = QString("%1").arg(r.type, 8, 16, QLatin1Char('0'));
-            if (!name.contains(needle, Qt::CaseInsensitive) &&
-                !type.contains(needle, Qt::CaseInsensitive) &&
-                !QString::fromStdString(r.tag).contains(needle, Qt::CaseInsensitive)) {
+            if (!r.name.contains(needle, Qt::CaseInsensitive) &&
+                !r.type_h.contains(needle, Qt::CaseInsensitive) &&
+                !r.tag.contains(needle, Qt::CaseInsensitive) &&
+                !r.inst_h.contains(needle, Qt::CaseInsensitive)) {
                 continue;
             }
         }

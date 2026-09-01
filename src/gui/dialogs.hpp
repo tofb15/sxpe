@@ -12,7 +12,9 @@ namespace sxpe::gui {
 
 void show_fnv_dialog(QWidget* parent, sxpe::commands::Bus& bus);
 void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
-                         const sxpe::commands::UiRow& row);
+                         std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                         std::uint32_t ordinal, const QString& name, bool compressed,
+                         bool deleted);
 void show_search_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session);
 void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                         bool dbc);

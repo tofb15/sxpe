@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstring>
 #include <fstream>
+#include <unordered_map>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -214,14 +215,19 @@ VoidResult Package::parse_mapped() {
 }
 
 void Package::recompute_ordinals() {
-    for (std::size_t i = 0; i < entries_.size(); ++i) {
-        std::uint32_t ord = 0;
-        for (std::size_t j = 0; j < i; ++j) {
-            if (entries_[j].tgi == entries_[i].tgi) {
-                ++ord;
-            }
+    struct TgiHash {
+        std::size_t operator()(const Tgi& t) const noexcept {
+            std::size_t h = static_cast<std::size_t>(t.type);
+            h ^= static_cast<std::size_t>(t.group) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= static_cast<std::size_t>(t.instance) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= static_cast<std::size_t>(t.instance >> 32) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
         }
-        entries_[i].ordinal = ord;
+    };
+    std::unordered_map<Tgi, std::uint32_t, TgiHash> seen;
+    seen.reserve(entries_.size() * 2 + 1);
+    for (auto& e : entries_) {
+        e.ordinal = seen[e.tgi]++;
     }
 }
 
@@ -234,6 +240,35 @@ Result<std::span<const std::byte>> Package::raw(std::uint32_t i) const {
     }
     const auto& e = entries_[i];
     return map_.bytes().subspan(e.chunk_offset, e.file_size);
+}
+
+Result<std::vector<std::byte>> Package::peek(std::uint32_t i, std::uint32_t max_bytes) const {
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    if (max_bytes == 0) {
+        return std::vector<std::byte>{};
+    }
+    const auto& e = entries_[i];
+    if (e.compressed == 0) {
+        auto s = raw(i);
+        if (!s) {
+            return std::unexpected(s.error());
+        }
+        const auto n = std::min<std::size_t>(max_bytes, s->size());
+        return std::vector<std::byte>(s->begin(), s->begin() + static_cast<std::ptrdiff_t>(n));
+    }
+    if (e.mem_size > sxpe::core::caps::kMaxLivePreviewBytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "preview cap"));
+    }
+    auto u = uncompressed(i);
+    if (!u) {
+        return std::unexpected(u.error());
+    }
+    if (u->size() > max_bytes) {
+        u->resize(max_bytes);
+    }
+    return u;
 }
 
 Result<std::vector<std::byte>> Package::uncompressed(std::uint32_t i) const {

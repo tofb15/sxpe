@@ -10,6 +10,7 @@ class QPlainTextEdit;
 class QTreeWidget;
 class QTableWidget;
 class QTabWidget;
+class QTimer;
 
 namespace sxpe::gui {
 
@@ -18,12 +19,14 @@ class Inspector final : public QWidget {
 public:
     explicit Inspector(sxpe::commands::Bus& bus, QWidget* parent = nullptr);
     void set_session(QString session_id);
-    void show_resource(const sxpe::commands::UiRow& row);
+    void show_resource(std::uint32_t type, std::uint32_t mem_size, nlohmann::json rid);
     void clear();
 
     QWidget* clone_preview() const;
 
 private:
+    void flush();
+    void load_visible();
     void load_preview(const nlohmann::json& rid);
     void load_hex(const nlohmann::json& rid);
     void load_graph(const nlohmann::json& rid);
@@ -37,6 +40,11 @@ private:
     QTreeWidget* graph_{};
     QTableWidget* stbl_{};
     QPlainTextEdit* text_{};
+    QTimer* debounce_{};
+    nlohmann::json pending_rid_;
+    std::uint32_t pending_type_{0};
+    std::uint32_t pending_mem_{0};
+    int load_gen_{0};
 };
 
 }  // namespace sxpe::gui

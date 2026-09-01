@@ -49,7 +49,8 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     table_->setModel(model_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    table_->setSortingEnabled(false);
+    table_->setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+    table_->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     table_->verticalHeader()->setVisible(false);
     table_->verticalHeader()->setDefaultSectionSize(22);
     table_->setShowGrid(false);
@@ -80,7 +81,10 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         table_->setColumnWidth(ResourceModel::Ordinal, fm.horizontalAdvance(QStringLiteral("000")) + 16);
         table_->setColumnWidth(ResourceModel::Size, fm.horizontalAdvance(QStringLiteral("00000000")) + 16);
         table_->setColumnWidth(ResourceModel::Compressed, fm.horizontalAdvance(QStringLiteral("Cmp")) + 16);
+        hdr->setSortIndicatorShown(true);
+        hdr->setSectionsClickable(true);
     }
+    table_->setSortingEnabled(true);
     inspector_ = new Inspector(bus_, this);
     inspector_->set_session(session_);
     split->addWidget(table_);
@@ -98,7 +102,11 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
             [this](const QModelIndex& cur, const QModelIndex&) {
                 if (const auto* r = model_->row_at(cur.row())) {
-                    inspector_->show_resource(*r);
+                    inspector_->show_resource(r->type, r->mem_size,
+                                             nlohmann::json{{"type", r->type},
+                                                            {"group", r->group},
+                                                            {"instance", r->instance},
+                                                            {"ordinal", r->ordinal}});
                 }
             });
 
@@ -119,8 +127,8 @@ void PackageTab::apply_filter() {
     const auto text = filter_->text();
     const auto tag = tag_->currentText();
     const int gen = ++filter_gen_;
-    auto snapshot = model_->all();
-    std::thread([this, text, tag, gen, snapshot = std::move(snapshot)]() mutable {
+    const auto snapshot = model_->all();  // QString implicit-share, cheap
+    std::thread([this, text, tag, gen, snapshot]() {
         auto vis = filter_rows(snapshot, text, tag);
         QMetaObject::invokeMethod(
             this,
@@ -134,7 +142,7 @@ void PackageTab::apply_filter() {
     }).detach();
 }
 
-const sxpe::commands::UiRow* PackageTab::current() const {
+const DisplayRow* PackageTab::current() const {
     return model_->row_at(table_->currentIndex().row());
 }
 
@@ -167,7 +175,11 @@ void PackageTab::float_preview() {
     auto* lay = new QVBoxLayout(dlg);
     auto* ins = new Inspector(bus_, dlg);
     ins->set_session(session_);
-    ins->show_resource(*r);
+    ins->show_resource(r->type, r->mem_size,
+                       nlohmann::json{{"type", r->type},
+                                      {"group", r->group},
+                                      {"instance", r->instance},
+                                      {"ordinal", r->ordinal}});
     lay->addWidget(ins);
     dlg->resize(420, 360);
     dlg->show();

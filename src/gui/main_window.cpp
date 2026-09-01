@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCursor>
 #include <QCloseEvent>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -131,7 +132,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!t || !r) {
             return;
         }
-        show_details_dialog(this, bus_, t->session_id(), *r);
+        show_details_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal,
+                            r->name, r->compressed, r->deleted);
         t->reload();
     });
     act(res, tr("&Float preview"), {}, [this] {
@@ -215,14 +217,17 @@ void MainWindow::new_package() {
 }
 
 bool MainWindow::open_path(const QString& path, bool writable) {
+    QApplication::setOverrideCursor(Qt::WaitCursor);
     auto env = bus_.execute("package.open", {{"path", path.toStdString()}, {"writable", writable}});
     if (!env.value("ok", false)) {
+        QApplication::restoreOverrideCursor();
         warn_if_err(env);
         return false;
     }
     const auto sid = QString::fromStdString(env["data"]["sessionId"].get<std::string>());
     add_tab(sid, QFileInfo(path).fileName());
     remember_mru(path);
+    QApplication::restoreOverrideCursor();
     return true;
 }
 

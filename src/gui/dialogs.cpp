@@ -55,19 +55,21 @@ void show_fnv_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
 }
 
 void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
-                         const sxpe::commands::UiRow& row) {
+                         std::uint32_t type_id, std::uint32_t group_id, std::uint64_t instance,
+                         std::uint32_t ordinal, const QString& name_s, bool compressed,
+                         bool deleted) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Resource details"));
     auto* form = new QFormLayout(&dlg);
-    auto* type = new QLineEdit(QString("%1").arg(row.type, 8, 16, QLatin1Char('0')).toUpper());
-    auto* group = new QLineEdit(QString("%1").arg(row.group, 8, 16, QLatin1Char('0')).toUpper());
+    auto* type = new QLineEdit(QString("%1").arg(type_id, 8, 16, QLatin1Char('0')).toUpper());
+    auto* group = new QLineEdit(QString("%1").arg(group_id, 8, 16, QLatin1Char('0')).toUpper());
     auto* inst =
-        new QLineEdit(QString("%1").arg(row.instance, 16, 16, QLatin1Char('0')).toUpper());
-    auto* name = new QLineEdit(QString::fromStdString(row.name));
+        new QLineEdit(QString("%1").arg(instance, 16, 16, QLatin1Char('0')).toUpper());
+    auto* name = new QLineEdit(name_s);
     auto* cmp = new QCheckBox(QObject::tr("Compressed"));
     auto* del = new QCheckBox(QObject::tr("Deleted"));
-    cmp->setChecked(row.compressed);
-    del->setChecked(row.deleted);
+    cmp->setChecked(compressed);
+    del->setChecked(deleted);
     form->addRow(QObject::tr("Type"), type);
     form->addRow(QObject::tr("Group"), group);
     form->addRow(QObject::tr("Instance"), inst);
@@ -78,15 +80,15 @@ void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QStrin
     form->addRow(box);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
-        nlohmann::json rid{{"type", row.type},
-                           {"group", row.group},
-                           {"instance", row.instance},
-                           {"ordinal", row.ordinal}};
+        nlohmann::json rid{{"type", type_id},
+                           {"group", group_id},
+                           {"instance", instance},
+                           {"ordinal", ordinal}};
         bool ok = true;
         const auto nt = type->text().toUInt(nullptr, 16);
         const auto ng = group->text().toUInt(nullptr, 16);
         const auto ni = inst->text().toULongLong(nullptr, 16);
-        if (nt != row.type || ng != row.group || ni != row.instance) {
+        if (nt != type_id || ng != group_id || ni != instance) {
             auto e = bus.execute("resource.rekey",
                                  {{"sessionId", session.toStdString()},
                                   {"resourceId", rid},

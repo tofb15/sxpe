@@ -12,5 +12,6 @@ inline constexpr std::uint32_t kHeaderSize = 96;
 inline constexpr std::uint32_t kMaxTableEntries = 500'000;
 inline constexpr std::uint32_t kMaxNameBytes = 64u << 10;
 inline constexpr std::uint32_t kMaxDdsEdge = 8192;
+inline constexpr std::uint32_t kMaxLivePreviewBytes = 8u << 20;
 
 }  // namespace sxpe::core::caps

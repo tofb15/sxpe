@@ -16,8 +16,10 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <sstream>
+#include <unordered_map>
 #include <utility>
 
 namespace sxpe::commands {
@@ -243,11 +245,23 @@ sxpe::resources::Nmap load_nmap(Package& pkg) {
     return merged;
 }
 
-json item_meta(Package& pkg, std::uint32_t i, const sxpe::resources::Nmap& names) {
+std::unordered_map<std::uint64_t, std::string> name_index(Package& pkg) {
+    auto names = load_nmap(pkg);
+    std::unordered_map<std::uint64_t, std::string> m;
+    m.reserve(names.entries.size() * 2 + 1);
+    for (auto& e : names.entries) {
+        m.insert_or_assign(e.instance, std::move(e.name));
+    }
+    return m;
+}
+
+json item_meta(Package& pkg, std::uint32_t i,
+               const std::unordered_map<std::uint64_t, std::string>& names) {
     const auto& e = pkg.entry(i);
     json j = rid_json(e.tgi, e.ordinal);
     j["tag"] = sxpe::resources::tag_for(e.tgi.type);
-    j["name"] = sxpe::resources::lookup_name(names, e.tgi.instance);
+    auto it = names.find(e.tgi.instance);
+    j["name"] = it == names.end() ? "" : it->second;
     j["fileSize"] = e.file_size;
     j["memSize"] = e.mem_size;
     j["compressed"] = e.compressed == 0xFFFF;
@@ -690,6 +704,7 @@ int exit_code_for(ErrorCode c) {
 }
 
 struct Bus::Impl {
+    std::recursive_mutex mu;
     std::vector<Tool> catalog = make_catalog();
     std::vector<std::unique_ptr<Session>> sessions;
     std::uint32_t next_id{1};
@@ -816,11 +831,12 @@ nlohmann::json Bus::manifest() const {
 }
 
 Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
     auto* s = impl_->find(std::string(session_id));
     if (!s) {
         return std::unexpected(err(ErrorCode::not_found, "session"));
     }
-    auto names = load_nmap(s->pkg);
+    auto names = name_index(s->pkg);
     std::vector<UiRow> rows;
     rows.reserve(s->pkg.count());
     for (std::uint32_t i = 0; i < s->pkg.count(); ++i) {
@@ -834,7 +850,9 @@ Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
         r.file_size = e.file_size;
         r.mem_size = e.mem_size;
         r.tag = std::string(sxpe::resources::tag_for(e.tgi.type));
-        r.name = sxpe::resources::lookup_name(names, e.tgi.instance);
+        if (auto it = names.find(e.tgi.instance); it != names.end()) {
+            r.name = it->second;
+        }
         r.compressed = e.compressed == 0xFFFF;
         r.deleted = s->pkg.deleted(i);
         rows.push_back(std::move(r));
@@ -843,6 +861,7 @@ Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
 }
 
 nlohmann::json Bus::execute(std::string_view id, const nlohmann::json& args) {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
     try {
         if (args.contains("game") && args["game"].is_string()) {
             const auto g = args["game"].get<std::string>();
@@ -1006,7 +1025,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok({{"path", path->string()}});
     }
     if (cmd == "resource.list") {
-        auto names = load_nmap(s.pkg);
+        auto names = name_index(s.pkg);
         json filter = args.value("filter", json::object());
         std::uint32_t limit = args.value("limit", kListDefault);
         if (limit == 0 || limit > kListMax) {
@@ -1056,7 +1075,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 }
             }
             if (filter.contains("nameContains")) {
-                auto nm = sxpe::resources::lookup_name(names, e.tgi.instance);
+                auto it = names.find(e.tgi.instance);
+                const auto& nm = it == names.end() ? std::string{} : it->second;
                 auto sub = filter["nameContains"].get<std::string>();
                 if (nm.find(sub) == std::string::npos) {
                     continue;
@@ -1085,7 +1105,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!i) {
             return envelope_err(i.error());
         }
-        auto names = load_nmap(s.pkg);
+        auto names = name_index(s.pkg);
         json data = item_meta(s.pkg, *i, names);
         if (args.value("includePayload", false)) {
             auto body = s.pkg.uncompressed(*i);
@@ -1667,34 +1687,33 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!i) {
             return envelope_err(i.error());
         }
-        auto body = s.pkg.uncompressed(*i);
+        std::uint32_t n = args.value("maxBytes", 256);
+        auto body = s.pkg.peek(*i, n);
         if (!body) {
             return envelope_err(body.error());
         }
-        std::uint32_t n = args.value("maxBytes", 256);
-        n = std::min<std::uint32_t>(n, static_cast<std::uint32_t>(body->size()));
-        std::ostringstream os;
-        os << std::hex;
-        for (std::uint32_t b = 0; b < n; ++b) {
-            os.width(2);
-            os.fill('0');
-            os << static_cast<unsigned>(body->at(b));
+        std::string hex;
+        hex.reserve(body->size() * 2);
+        static constexpr char kHex[] = "0123456789abcdef";
+        for (auto b : *body) {
+            const auto u = static_cast<unsigned>(b);
+            hex.push_back(kHex[(u >> 4) & 0xF]);
+            hex.push_back(kHex[u & 0xF]);
         }
-        return envelope_ok({{"hex", os.str()}, {"bytes", n}});
+        return envelope_ok({{"hex", hex}, {"bytes", body->size()}});
     }
     if (cmd == "text.get") {
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
         }
-        auto body = s.pkg.uncompressed(*i);
+        std::uint32_t n = args.value("maxBytes", 4096);
+        auto body = s.pkg.peek(*i, n);
         if (!body) {
             return envelope_err(body.error());
         }
-        std::uint32_t n = args.value("maxBytes", 4096);
-        n = std::min<std::uint32_t>(n, static_cast<std::uint32_t>(body->size()));
-        std::string t(reinterpret_cast<const char*>(body->data()), n);
-        return envelope_ok({{"text", t}, {"bytes", n}});
+        std::string t(reinterpret_cast<const char*>(body->data()), body->size());
+        return envelope_ok({{"text", t}, {"bytes", body->size()}});
     }
     if (cmd == "search.bytes") {
         std::vector<std::byte> needle;
@@ -1718,7 +1737,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json hits = json::array();
         const auto limit = args.value("limit", 100);
-        auto names = load_nmap(s.pkg);
+        auto names = name_index(s.pkg);
         for (std::uint32_t i = 0; i < s.pkg.count() && hits.size() < limit; ++i) {
             if (s.pkg.entry(i).mem_size > 16u << 20) {
                 continue;

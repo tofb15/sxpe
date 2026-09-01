@@ -44,6 +44,8 @@ public:
 
     Result<std::span<const std::byte>> raw(std::uint32_t i) const;
     Result<std::vector<std::byte>> uncompressed(std::uint32_t i) const;
+    /// First max_bytes of uncompressed payload. Uncompressed resources are a mmap slice copy.
+    Result<std::vector<std::byte>> peek(std::uint32_t i, std::uint32_t max_bytes) const;
     VoidResult set_uncompressed(std::uint32_t i, std::span<const std::byte> data, bool compress);
     Result<std::uint32_t> add(Tgi tgi, std::span<const std::byte> data, bool compress);
     VoidResult remove(std::uint32_t i);

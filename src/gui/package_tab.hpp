@@ -21,7 +21,7 @@ public:
     void reload();
     void apply_filter();
     bool export_selected(const QString& path, bool raw);
-    const sxpe::commands::UiRow* current() const;
+    const DisplayRow* current() const;
     void float_preview();
     void select_all();
     [[nodiscard]] int visible_count() const { return model_ ? model_->visible_count() : 0; }
