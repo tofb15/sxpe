@@ -7,11 +7,14 @@
 
 #include <QAction>
 #include <QComboBox>
+#include <QCursor>
 #include <QDialog>
 #include <QDir>
+#include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
 #include <QHeaderView>
+#include <QMouseEvent>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLabel>
@@ -41,6 +44,7 @@ class ResourceTableView final : public QTableView {
 public:
     explicit ResourceTableView(QWidget* parent = nullptr) : QTableView(parent) {
         auto* hdr = horizontalHeader();
+        hdr->installEventFilter(this);
         connect(hdr, &QHeaderView::sectionResized, this, &ResourceTableView::on_section_resized);
         hdr->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(hdr, &QWidget::customContextMenuRequested, this,
@@ -226,6 +230,24 @@ public:
     }
 
 protected:
+    bool eventFilter(QObject* o, QEvent* e) override {
+        if (o == horizontalHeader()) {
+            switch (e->type()) {
+                case QEvent::MouseButtonPress: {
+                    const auto* me = static_cast<QMouseEvent*>(e);
+                    user_resize_ = me->button() == Qt::LeftButton &&
+                                   horizontalHeader()->cursor().shape() == Qt::SplitHCursor;
+                    break;
+                }
+                case QEvent::MouseButtonRelease:
+                    user_resize_ = false;
+                    break;
+                default:
+                    break;
+            }
+        }
+        return QTableView::eventFilter(o, e);
+    }
     void resizeEvent(QResizeEvent* e) override {
         QTableView::resizeEvent(e);
         const int vw = viewport()->width();
@@ -415,7 +437,7 @@ private:
     }
 
     void on_section_resized(int logical, int /*old_size*/, int new_size) {
-        if (filling_) {
+        if (filling_ || !user_resize_) {
             return;
         }
         apply_user_width(logical, new_size);
@@ -496,6 +518,7 @@ private:
     std::function<void(ColumnMask)> set_mask_;
     int old_vw_{-1};
     bool filling_{false};
+    bool user_resize_{false};
 };
 
 }  // namespace
@@ -663,6 +686,9 @@ void PackageTab::reload() {
         return;
     }
     model_->set_rows(std::move(*rows));
+    if (auto* grid = static_cast<ResourceTableView*>(table_)) {
+        grid->apply_mask(load_column_mask());
+    }
     inspector_->set_session(session_);
     emit status_changed();
 }

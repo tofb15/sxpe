@@ -1,8 +1,11 @@
 #include "resource_model.hpp"
 
+#include <QAbstractItemModel>
 #include <QColor>
 #include <QCoreApplication>
+#include <QList>
 #include <QPainter>
+#include <QPersistentModelIndex>
 #include <QSettings>
 #include <QStringList>
 #include <QStyle>
@@ -62,9 +65,9 @@ void ResourceModel::set_visible(QVector<int> visible) {
     if (sort_col_ >= 0) {
         apply_sort(visible);
     }
-    emit layoutAboutToBeChanged();
+    emit layoutAboutToBeChanged(QList<QPersistentModelIndex>{}, QAbstractItemModel::VerticalSortHint);
     visible_ = std::move(visible);
-    emit layoutChanged();
+    emit layoutChanged(QList<QPersistentModelIndex>{}, QAbstractItemModel::VerticalSortHint);
 }
 
 void ResourceModel::apply_sort(QVector<int>& vis) const {
@@ -124,13 +127,13 @@ void ResourceModel::apply_sort(QVector<int>& vis) const {
 void ResourceModel::sort(int column, Qt::SortOrder order) {
     sort_col_ = (column >= 0 && column < Count_) ? column : -1;
     sort_order_ = order;
-    emit layoutAboutToBeChanged();
+    emit layoutAboutToBeChanged(QList<QPersistentModelIndex>{}, QAbstractItemModel::VerticalSortHint);
     if (sort_col_ >= 0) {
         apply_sort(visible_);
     } else {
         std::sort(visible_.begin(), visible_.end());
     }
-    emit layoutChanged();
+    emit layoutChanged(QList<QPersistentModelIndex>{}, QAbstractItemModel::VerticalSortHint);
 }
 
 int ResourceModel::rowCount(const QModelIndex& parent) const {
