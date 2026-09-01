@@ -26,6 +26,7 @@ public:
     void clear();
     void copy_visible();
     bool save_visible(const QString& path);
+    bool save_image_as();
 
     QWidget* clone_preview() const;
 
@@ -42,6 +43,8 @@ private:
     [[nodiscard]] QString identity_card() const;
     void show_preview_image(const QPixmap& pm);
     void show_preview_body(const QString& text);
+    void popup_image_menu(const QPoint& local);
+    [[nodiscard]] bool write_preview_image(const QString& path);
 
     sxpe::commands::Bus& bus_;
     QString session_;

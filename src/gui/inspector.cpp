@@ -1,6 +1,7 @@
 #include "inspector.hpp"
 
 #include "sxpe/core/caps.hpp"
+#include "sxpe/games/sims3/tgi.hpp"
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/types.hpp"
 
@@ -9,11 +10,14 @@
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QScrollArea>
@@ -239,9 +243,16 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     preview_ = new QLabel;
     preview_->setAlignment(Qt::AlignCenter);
     preview_->setMinimumSize(160, 120);
+    preview_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(preview_, &QWidget::customContextMenuRequested, this, &Inspector::popup_image_menu);
     preview_scroll_ = new QScrollArea;
     preview_scroll_->setWidgetResizable(true);
     preview_scroll_->setWidget(preview_);
+    preview_scroll_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(preview_scroll_, &QWidget::customContextMenuRequested, this, &Inspector::popup_image_menu);
+    preview_scroll_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(preview_scroll_->viewport(), &QWidget::customContextMenuRequested, this,
+            &Inspector::popup_image_menu);
     preview_scroll_->hide();
     preview_body_ = new QPlainTextEdit;
     preview_body_->setReadOnly(true);
@@ -297,6 +308,8 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     connect(this, &QWidget::customContextMenuRequested, this, [this](const QPoint& p) {
         QMenu m(this);
         m.addAction(tr("Copy preview"), this, [this] { copy_visible(); });
+        auto* save = m.addAction(tr("Save As…"), this, [this] { save_image_as(); });
+        save->setEnabled(!preview_->pixmap().isNull());
         m.exec(mapToGlobal(p));
     });
     debounce_ = new QTimer(this);
@@ -713,6 +726,121 @@ void Inspector::load_text(const nlohmann::json& rid) {
     }
 }
 
+void Inspector::popup_image_menu(const QPoint& local) {
+    auto* origin = qobject_cast<QWidget*>(sender());
+    if (!origin) {
+        origin = preview_;
+    }
+    QMenu m(this);
+    const bool has = !preview_->pixmap().isNull();
+    auto* copy = m.addAction(tr("&Copy"), this, [this] { copy_visible(); });
+    copy->setEnabled(has);
+    auto* save = m.addAction(tr("Save &As…"), this, [this] { save_image_as(); });
+    save->setEnabled(has);
+    m.exec(origin->mapToGlobal(local));
+}
+
+bool Inspector::save_image_as() {
+    if (preview_->pixmap().isNull()) {
+        return false;
+    }
+    QString ext = QStringLiteral("png");
+    QString filter = tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;DDS (*.dds);;All files (*.*)");
+    if (sxpe::resources::is_dds_image(pending_type_)) {
+        ext = QStringLiteral("dds");
+        filter = tr("DDS (*.dds);;PNG (*.png);;JPEG (*.jpg *.jpeg);;All files (*.*)");
+    } else if (pending_type_ == sxpe::resources::kImagJpeg) {
+        ext = QStringLiteral("jpg");
+        filter = tr("JPEG (*.jpg *.jpeg);;PNG (*.png);;DDS (*.dds);;All files (*.*)");
+    }
+    const auto type = pending_rid_.value("type", pending_type_);
+    const auto group = pending_rid_.value("group", 0u);
+    const auto inst = pending_rid_.value("instance", 0ull);
+    const sxpe::games::sims3::Tgi tgi{type, group, inst};
+    const auto suggested = QString::fromStdString(sxpe::games::sims3::community_filename(
+        tgi, pending_name_.toStdString(), ext.toStdString()));
+    QString selected;
+    auto path = QFileDialog::getSaveFileName(this, tr("Save image"), suggested, filter, &selected);
+    if (path.isEmpty()) {
+        return false;
+    }
+    if (QFileInfo(path).suffix().isEmpty()) {
+        if (selected.contains(QLatin1String("DDS"), Qt::CaseInsensitive)) {
+            path += QStringLiteral(".dds");
+        } else if (selected.contains(QLatin1String("JPEG"), Qt::CaseInsensitive)) {
+            path += QStringLiteral(".jpg");
+        } else {
+            path += QStringLiteral(".png");
+        }
+    }
+    if (!write_preview_image(path)) {
+        QMessageBox::warning(this, tr("SXPE"), tr("Could not save image."));
+        return false;
+    }
+    return true;
+}
+
+bool Inspector::write_preview_image(const QString& path) {
+    if (path.isEmpty() || preview_->pixmap().isNull()) {
+        return false;
+    }
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    auto save_pixmap = [&] { return preview_->pixmap().save(path); };
+    if (session_.isEmpty() || pending_rid_.is_null()) {
+        return save_pixmap();
+    }
+    QTemporaryFile tmp(QDir::tempPath() + "/sxpe-img-XXXXXX.bin");
+    tmp.setAutoRemove(true);
+    if (!tmp.open()) {
+        return save_pixmap();
+    }
+    const auto tmp_path = tmp.fileName().toStdString();
+    auto exp = bus_.execute("resource.export", {{"sessionId", session_.toStdString()},
+                                                {"resourceId", pending_rid_},
+                                                {"path", tmp_path},
+                                                {"force", true}});
+    if (!exp.value("ok", false)) {
+        return save_pixmap();
+    }
+    std::ifstream f(tmp_path, std::ios::binary);
+    std::vector<char> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const bool png = looks_png(raw);
+    const bool jpeg = looks_jpeg(raw);
+    const bool dds = looks_dds(raw);
+    const bool same = (suffix == QLatin1String("png") && png) ||
+                      ((suffix == QLatin1String("jpg") || suffix == QLatin1String("jpeg")) && jpeg) ||
+                      (suffix == QLatin1String("dds") && dds);
+    if (same) {
+        QFile out(path);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return false;
+        }
+        return out.write(raw.data(), static_cast<qint64>(raw.size())) ==
+               static_cast<qint64>(raw.size());
+    }
+    QImage img;
+    if (png || jpeg) {
+        img.loadFromData(reinterpret_cast<const uchar*>(raw.data()), static_cast<int>(raw.size()));
+    } else {
+        std::vector<std::byte> bytes(raw.size());
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(raw[i]));
+        }
+        auto pix = sxpe::resources::decode_dds_rgba(bytes);
+        auto inf = sxpe::resources::parse_dds(bytes);
+        if (pix && inf) {
+            QImage decoded(reinterpret_cast<const uchar*>(pix->data()), static_cast<int>(inf->width),
+                           static_cast<int>(inf->height), static_cast<int>(inf->width * 4),
+                           QImage::Format_RGBA8888);
+            img = decoded.copy();
+        }
+    }
+    if (img.isNull()) {
+        return save_pixmap();
+    }
+    return img.save(path);
+}
+
 void Inspector::copy_visible() {
     auto* cb = QApplication::clipboard();
     if (!cb) {
@@ -763,9 +891,8 @@ bool Inspector::save_visible(const QString& path) {
     }
     const int pane = tabs_->currentIndex();
     if (pane == 0) {
-        const QPixmap pm = preview_->pixmap();
-        if (!pm.isNull()) {
-            return pm.save(path);
+        if (!preview_->pixmap().isNull()) {
+            return write_preview_image(path);
         }
         QString t = preview_card_->text();
         if (preview_body_->isVisible() && !preview_body_->toPlainText().isEmpty()) {
