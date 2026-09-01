@@ -166,6 +166,21 @@ GUI:
 
 CLI:
   sxpe-cli.bat --help
+  sxpe-cli.bat --version
+  sxpe-cli.bat help
+  sxpe-cli.bat help resource
+  sxpe-cli.bat resource rename --help
+
+How the CLI works:
+  Commands are noun + verb (resource list, package info).
+  --package PATH is one-shot: open, run, save if it writes, close.
+  Every command returns JSON {ok, data} or {ok, error}.
+  --format text or table prints a human table; json is compact JSON.
+  --force / --dry-run gate writes. --type/--group/--instance accept hex 0x...
+
+Rename a door (NMAP name), one-shot:
+  sxpe-cli.bat resource rename --package door.package --type 0x0333406C --group 0 --instance 0x1 --name NRaas.NoCD --force
+
   sxpe-cli.bat package info --package path\to\file.package --format json
 
 License: GPL-3.0-or-later (LICENSE and NOTICE).

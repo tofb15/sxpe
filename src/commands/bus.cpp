@@ -435,18 +435,20 @@ std::vector<Tool> make_catalog() {
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, false, false,
          true, false});
     add({"package.save", "Save",
-         "Save only this session. Neighborhood .nhd/.world/.dbc keep on-disk layout. "
-         "Does not save other open packages.",
+         "Write this session to its current path (in place). Neighborhood .nhd/.world/.dbc "
+         "keep on-disk layout. Does not save other open packages.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
-    add({"package.saveAs", "Save As", "Write to a new path and switch the session to it.",
+    add({"package.saveAs", "Save As",
+         "Write to a new path and switch this session to it (later saves use that path).",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"dryRun", dry_prop()},
                      {"force", force_prop()}},
                     json::array({"sessionId", "path"})),
          env_out, false, true, false, true});
-    add({"package.saveCopyAs", "Save Copy As", "Write a copy without changing the session path.",
+    add({"package.saveCopyAs", "Save Copy As",
+         "Write a copy to a new path; this session keeps its current path.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"dryRun", dry_prop()},
@@ -1125,6 +1127,17 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                       [&](const auto& x) { return x->id == sid; }),
                        sessions.end());
         return envelope_ok({{"closed", sid}});
+    }
+
+    bool known = false;
+    for (const auto& t : catalog) {
+        if (t.id == cmd) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) {
+        return envelope_err(err(ErrorCode::invalid_argument, "unknown command: '" + cmd + "'"));
     }
 
     auto sr = require(args);

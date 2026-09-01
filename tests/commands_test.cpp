@@ -27,6 +27,10 @@ int main() {
     CHECK(sxpe::resources::tag_for(0x00B2D882) == "_IMG");
     CHECK(sxpe::resources::tag_for(0xFFFFFFFFu).empty());
 
+    auto unknown = bus.execute("bogus.thing", json::object());
+    CHECK(unknown["ok"] == false);
+    CHECK(unknown["error"]["message"].get<std::string>().find("unknown command") != std::string::npos);
+
     auto man = bus.execute("manifest", json::object());
     CHECK(man["ok"] == true);
     CHECK(man["data"]["tools"].is_array());
