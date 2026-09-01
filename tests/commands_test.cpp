@@ -19,6 +19,11 @@ int main() {
     CHECK(sxpe::resources::tag_for(0x0580A2B4) == "THUM");
     CHECK(sxpe::resources::tag_for(0x626F60CE) == "THUM");
     CHECK(sxpe::resources::is_png_image(0x626F60CE));
+    CHECK(sxpe::resources::tag_for(sxpe::resources::kImag) == "IMAG");
+    CHECK(sxpe::resources::is_png_image(sxpe::resources::kImag));
+    CHECK(sxpe::resources::tag_for(sxpe::resources::kImagJpeg) == "IMAG");
+    CHECK(!sxpe::resources::is_png_image(sxpe::resources::kImagJpeg));
+    CHECK(sxpe::resources::name_for(sxpe::resources::kImagJpeg) == "JPEG image");
     CHECK(sxpe::resources::tag_for(0x00B2D882) == "_IMG");
     CHECK(sxpe::resources::tag_for(0xFFFFFFFFu).empty());
 

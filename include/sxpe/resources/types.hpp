@@ -23,6 +23,7 @@ inline constexpr std::uint32_t kObjd = 0x319E4F1D;
 inline constexpr std::uint32_t kObjn = 0x4D1A5589;
 inline constexpr std::uint32_t kGeom = 0x015A1849;
 inline constexpr std::uint32_t kImag = 0x2F7D0004;
+inline constexpr std::uint32_t kImagJpeg = 0x2F7D0002;
 inline constexpr std::uint32_t kIcon = 0x2E75C764;
 inline constexpr std::uint32_t kSnap = 0x0580A2CD;
 inline constexpr std::uint32_t kSnapSmall = 0x0580A2CE;
@@ -137,6 +138,7 @@ inline constexpr TypeInfo kTypes[] = {
     {0x0A36F07A, "CCFP", "Catalog fountain/pool"},
     {0x0B2CB440, "_VID", "AVI video"},
     {kImag, "IMAG", "PNG image"},
+    {kImagJpeg, "IMAG", "JPEG image"},
     {kIcon, "ICON", "PNG thumbnail"},
     {0x2E75C765, "ICON", "PNG thumbnail"},
     {0x2E75C766, "ICON", "PNG thumbnail"},
@@ -170,9 +172,21 @@ inline std::string_view tag_for(std::uint32_t type) {
     return "";
 }
 
+inline std::string_view name_for(std::uint32_t type) {
+    for (const auto& t : kTypes) {
+        if (t.id == type) {
+            return t.name;
+        }
+    }
+    return "";
+}
+
 inline bool is_dds_image(std::uint32_t type) { return type == kImg || type == kImgAlt; }
 
 inline bool is_png_image(std::uint32_t type) {
+    if (type == kImagJpeg) {
+        return false;
+    }
     const auto tag = tag_for(type);
     return tag == "SNAP" || tag == "THUM" || tag == "IMAG" || tag == "ICON" || tag == "TSNP";
 }

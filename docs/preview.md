@@ -10,7 +10,7 @@ s3pe’s Auto Preview is the reference *behaviour*, not source: image / wrapper 
 
 | Surface | Today |
 | --- | --- |
-| Preview tab | PNG (magic `89 PNG`) or DDS (DXT1 / DXT5 / 24/32-bit RGB) as pixels. Else “No image preview”. |
+| Preview tab | Identity card on every resource (tag, TGI, size, NMAP name). PNG / JPEG / DDS as pixels when the payload sniffs as an image. STBL first ~20 strings, NMAP first ~20 names, `_XML`/`ITUN` pretty ~4 KiB, S3SA PE/module card. Else magic sniff plus a short text or hex excerpt. |
 | Hex tab | First 4 KiB as hex (`hex.get`). |
 | Graph tab | Size plus a few parsed nodes (`graph.get`; STBL ids, otherwise one blob). |
 | Text tab | STBL table (`stbl.get`) or first 8 KiB as text (`text.get`). |
@@ -32,7 +32,7 @@ These are the only types s3pe draws as pictures in Preview.
 | `THUM` | `0580A2B4–B6`, `0589DC44–47`, `05B17698–9A`, `05B1B524–26`, `2653E3C8–CA`, `2D4284F0–F2`, `5DE9DBA0–A2`, **`626F60CC–CE` (CAS)** | PNG | S (done for listed IDs) | P0 | Catalog / CAS / fence thumbs. More IDs may appear; magic sniff covers unlisted PNGs. |
 | `SNAP` | `0580A2CD–CF`, `6B6D837D–7F` | PNG | S (done) | P0 | Sim / family snapshots. Neighbourhood SNAPs are game-picky on encode, not on preview. |
 | `ICON` | `2E75C764–767` | PNG | S (done) | P0 | Object icons. |
-| `IMAG` | `2F7D0004` PNG, `2F7D0002` JPEG | PNG/JPEG | S | P1 | JPEG not sniffed yet; Qt can load it. |
+| `IMAG` | `2F7D0004` PNG, `2F7D0002` JPEG | PNG/JPEG | S (done) | P0 | JPEG sniffed by magic (`FF D8 FF`) and tagged `IMAG`. |
 | `TSNP` | `54372472` | PNG | S (done) | P1 | Travel snapshot. |
 | `TWNI` | `0668F635` | PNG | S | P1 | Town image; not in tag table yet. |
 | extra THUM/ICON | `AD366F95–96`, `D84E7FC5–C7`, `FCEAB65B` | PNG | S | P1 | s3pe ImageControl list; add tags when seen. |
@@ -149,7 +149,7 @@ That is how “preview for all types” is reachable without a decoder per fourc
 
 Do **not** start with 3D. Fill the Preview tab so a click always answers “what is this?”
 
-### Wave 1 — P0 (reuse codecs we have)
+### Wave 1 — P0 (reuse codecs we have) — **done on the Preview tab**
 
 1. **Identity card** for every resource (TGI + tag + size + name).  
 2. **STBL** — first ~20 strings.  

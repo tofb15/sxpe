@@ -18,17 +18,207 @@
 #include <QPlainTextEdit>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSizePolicy>
+#include <QStringList>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <string>
+#include <string_view>
 
 namespace sxpe::gui {
 namespace {
+
+QString hex32(std::uint32_t v) { return QString("%1").arg(v, 8, 16, QLatin1Char('0')).toUpper(); }
+QString hex64(std::uint64_t v) { return QString("%1").arg(v, 16, 16, QLatin1Char('0')).toUpper(); }
+
+QString from_sv(std::string_view s) {
+    return QString::fromUtf8(s.data(), static_cast<int>(s.size()));
+}
+
+bool looks_png(const std::vector<char>& raw) {
+    return raw.size() >= 8 && static_cast<unsigned char>(raw[0]) == 0x89 && raw[1] == 'P' &&
+           raw[2] == 'N' && raw[3] == 'G';
+}
+
+bool looks_jpeg(const std::vector<char>& raw) {
+    return raw.size() >= 3 && static_cast<unsigned char>(raw[0]) == 0xFF &&
+           static_cast<unsigned char>(raw[1]) == 0xD8 &&
+           static_cast<unsigned char>(raw[2]) == 0xFF;
+}
+
+bool looks_dds(const std::vector<char>& raw) {
+    return raw.size() >= 4 && raw[0] == 'D' && raw[1] == 'D' && raw[2] == 'S' && raw[3] == ' ';
+}
+
+bool looks_mz(const std::vector<char>& raw) {
+    return raw.size() >= 2 && raw[0] == 'M' && raw[1] == 'Z';
+}
+
+QString decode_preview_bytes(const std::vector<char>& raw) {
+    const auto n = raw.size();
+    const auto* p = reinterpret_cast<const unsigned char*>(raw.data());
+    if (n >= 2 && p[0] == 0xFF && p[1] == 0xFE) {
+        return QString::fromUtf16(reinterpret_cast<const char16_t*>(p + 2),
+                                  static_cast<int>((n - 2) / 2));
+    }
+    if (n >= 2 && p[0] == 0xFE && p[1] == 0xFF) {
+        QString out;
+        out.resize(static_cast<int>((n - 2) / 2));
+        for (int i = 0; i < out.size(); ++i) {
+            out[i] = QChar(static_cast<char16_t>((p[2 + 2 * i] << 8) | p[3 + 2 * i]));
+        }
+        return out;
+    }
+    if (n >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) {
+        return QString::fromUtf8(raw.data() + 3, static_cast<int>(n - 3));
+    }
+    if (n >= 8) {
+        const int sample = static_cast<int>(std::min<std::size_t>(n, 64));
+        int zeros = 0;
+        for (int i = 1; i < sample; i += 2) {
+            if (p[i] == 0) {
+                ++zeros;
+            }
+        }
+        if (zeros >= sample / 4) {
+            return QString::fromUtf16(reinterpret_cast<const char16_t*>(p), static_cast<int>(n / 2));
+        }
+    }
+    return QString::fromUtf8(raw.data(), static_cast<int>(n));
+}
+
+QString pretty_xml_excerpt(QString xml, int max_chars) {
+    xml.replace(QLatin1String("\r\n"), QLatin1String("\n"));
+    xml.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    xml = xml.trimmed();
+    if (xml.contains(QLatin1Char('\n'))) {
+        if (xml.size() > max_chars) {
+            xml.truncate(max_chars);
+            xml += QChar(0x2026);
+        }
+        return xml;
+    }
+    QString out;
+    int depth = 0;
+    int i = 0;
+    while (i < xml.size() && out.size() < max_chars) {
+        if (xml[i] == QLatin1Char('<')) {
+            const int end = xml.indexOf(QLatin1Char('>'), i);
+            if (end < 0) {
+                out += xml.mid(i);
+                break;
+            }
+            const QString tag = xml.mid(i, end - i + 1);
+            const bool close = tag.startsWith(QLatin1String("</"));
+            const bool self = tag.endsWith(QLatin1String("/>")) ||
+                              tag.startsWith(QLatin1String("<?")) ||
+                              tag.startsWith(QLatin1String("<!"));
+            if (close && depth > 0) {
+                --depth;
+            }
+            if (!out.isEmpty() && !out.endsWith(QLatin1Char('\n'))) {
+                out += QLatin1Char('\n');
+            }
+            out += QString(depth * 2, QLatin1Char(' '));
+            out += tag;
+            if (!close && !self) {
+                ++depth;
+            }
+            i = end + 1;
+        } else {
+            int next = xml.indexOf(QLatin1Char('<'), i);
+            if (next < 0) {
+                next = xml.size();
+            }
+            const QString text = xml.mid(i, next - i).trimmed();
+            if (!text.isEmpty()) {
+                if (!out.isEmpty() && !out.endsWith(QLatin1Char('\n'))) {
+                    out += QLatin1Char('\n');
+                }
+                out += QString(depth * 2, QLatin1Char(' '));
+                out += text;
+            }
+            i = next;
+        }
+    }
+    if (i < xml.size()) {
+        out += QChar(0x2026);
+    }
+    return out;
+}
+
+QString sniff_kind(const std::vector<char>& raw) {
+    if (looks_png(raw)) {
+        return QStringLiteral("PNG");
+    }
+    if (looks_jpeg(raw)) {
+        return QStringLiteral("JPEG");
+    }
+    if (looks_dds(raw)) {
+        return QStringLiteral("DDS");
+    }
+    if (looks_mz(raw)) {
+        return QStringLiteral("PE (MZ)");
+    }
+    if (raw.size() >= 2 && static_cast<unsigned char>(raw[0]) == 0xFF &&
+        static_cast<unsigned char>(raw[1]) == 0xFE) {
+        return QStringLiteral("UTF-16LE");
+    }
+    if (raw.size() >= 2 && static_cast<unsigned char>(raw[0]) == 0xFE &&
+        static_cast<unsigned char>(raw[1]) == 0xFF) {
+        return QStringLiteral("UTF-16BE");
+    }
+    const QString t = decode_preview_bytes(raw).trimmed();
+    if (t.startsWith(QLatin1Char('<')) || t.startsWith(QLatin1String("<?xml"))) {
+        return QStringLiteral("XML");
+    }
+    return {};
+}
+
+QString hex_excerpt(const std::vector<char>& raw, int max_bytes) {
+    const int n = std::min(max_bytes, static_cast<int>(raw.size()));
+    QString dump;
+    dump.reserve(n * 3);
+    for (int i = 0; i < n; ++i) {
+        if (i && (i % 16) == 0) {
+            dump += QLatin1Char('\n');
+        }
+        dump += QString("%1 ").arg(static_cast<unsigned char>(raw[static_cast<std::size_t>(i)]), 2,
+                                   16, QLatin1Char('0'))
+                    .toUpper();
+    }
+    if (static_cast<int>(raw.size()) > n) {
+        dump += QChar(0x2026);
+    }
+    return dump;
+}
+
+bool mostly_text(const QString& s) {
+    if (s.isEmpty()) {
+        return false;
+    }
+    int bad = 0;
+    for (const QChar c : s) {
+        if (!c.isPrint() && !c.isSpace()) {
+            ++bad;
+        }
+    }
+    return bad * 10 < s.size();
+}
+
+QString clip_line(const QString& s, int max_len) {
+    if (s.size() <= max_len) {
+        return s;
+    }
+    return s.left(max_len) + QChar(0x2026);
+}
 
 }  // namespace
 
@@ -36,12 +226,31 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     tabs_ = new QTabWidget;
-    preview_ = new QLabel(tr("No selection"));
+    const QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    auto* preview_pane = new QWidget;
+    auto* preview_lay = new QVBoxLayout(preview_pane);
+    preview_lay->setContentsMargins(0, 0, 0, 0);
+    preview_card_ = new QLabel(tr("No selection"));
+    preview_card_->setWordWrap(true);
+    preview_card_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    preview_card_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    preview_card_->setFont(mono);
+    preview_card_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    preview_ = new QLabel;
     preview_->setAlignment(Qt::AlignCenter);
     preview_->setMinimumSize(160, 120);
-    auto* scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    scroll->setWidget(preview_);
+    preview_scroll_ = new QScrollArea;
+    preview_scroll_->setWidgetResizable(true);
+    preview_scroll_->setWidget(preview_);
+    preview_scroll_->hide();
+    preview_body_ = new QPlainTextEdit;
+    preview_body_->setReadOnly(true);
+    preview_body_->setFont(mono);
+    preview_body_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    preview_body_->hide();
+    preview_lay->addWidget(preview_card_);
+    preview_lay->addWidget(preview_scroll_, 1);
+    preview_lay->addWidget(preview_body_, 1);
     hex_ = new QPlainTextEdit;
     hex_->setReadOnly(true);
     hex_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -79,7 +288,7 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
     tl->setContentsMargins(0, 0, 0, 0);
     tl->addWidget(stbl_);
     tl->addWidget(text_);
-    tabs_->addTab(scroll, tr("Preview"));
+    tabs_->addTab(preview_pane, tr("Preview"));
     tabs_->addTab(hex_, tr("Hex"));
     tabs_->addTab(graph_, tr("Graph"));
     tabs_->addTab(text_wrap, tr("Text"));
@@ -100,19 +309,29 @@ Inspector::Inspector(sxpe::commands::Bus& bus, QWidget* parent) : QWidget(parent
 void Inspector::set_session(QString session_id) { session_ = std::move(session_id); }
 
 void Inspector::clear() {
+    preview_card_->setText(tr("No selection"));
     preview_->setPixmap({});
-    preview_->setText(tr("No selection"));
+    preview_->setText({});
+    preview_scroll_->hide();
+    preview_body_->hide();
+    preview_body_->clear();
     hex_->clear();
     graph_->clear();
     stbl_->setRowCount(0);
     text_->clear();
 }
 
-void Inspector::show_resource(std::uint32_t type, std::uint32_t mem_size, nlohmann::json rid) {
+void Inspector::show_resource(std::uint32_t type, std::uint32_t mem_size, nlohmann::json rid,
+                             QString name) {
     pending_type_ = type;
     pending_mem_ = mem_size;
     pending_rid_ = std::move(rid);
-    preview_->setText(tr("…"));
+    pending_name_ = std::move(name);
+    preview_card_->setText(tr("…"));
+    preview_->setPixmap({});
+    preview_->setText({});
+    preview_scroll_->hide();
+    preview_body_->hide();
     debounce_->start();
 }
 
@@ -125,11 +344,6 @@ void Inspector::load_visible() {
     const int pane = tabs_->currentIndex();
     const auto& rid = pending_rid_;
     QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
-    if (pane == 0 && !st.value("preview/dds", true).toBool()) {
-        preview_->setPixmap({});
-        preview_->setText(tr("DDS preview is off (Settings)."));
-        return;
-    }
     if (pane == 1 && !st.value("preview/hex", true).toBool()) {
         hex_->setPlainText(tr("Hex preview is off (Settings)."));
         return;
@@ -144,8 +358,8 @@ void Inspector::load_visible() {
         const auto msg = tr("Resource is %1 MB — live preview skipped.")
                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1);
         if (pane == 0) {
-            preview_->setPixmap({});
-            preview_->setText(msg);
+            load_preview(rid);
+            return;
         } else if (pane == 1) {
             hex_->setPlainText(msg);
         } else if (pane == 2) {
@@ -168,16 +382,159 @@ void Inspector::load_visible() {
     }
 }
 
+QString Inspector::identity_card() const {
+    const auto tag = sxpe::resources::tag_for(pending_type_);
+    const auto desc = sxpe::resources::name_for(pending_type_);
+    const QString tag_s = tag.empty() ? tr("(untagged)") : from_sv(tag);
+    const auto type = pending_rid_.value("type", pending_type_);
+    const auto group = pending_rid_.value("group", 0u);
+    const auto inst = pending_rid_.value("instance", 0ull);
+    const auto ord = pending_rid_.value("ordinal", 0u);
+    QStringList lines;
+    if (desc.empty()) {
+        lines << tag_s;
+    } else {
+        lines << QStringLiteral("%1 — %2").arg(tag_s, from_sv(desc));
+    }
+    lines << QStringLiteral("%1-%2-%3").arg(hex32(type), hex32(group), hex64(inst));
+    if (ord != 0) {
+        lines << tr("Ordinal %1").arg(ord);
+    }
+    lines << tr("%1 bytes").arg(pending_mem_);
+    if (!pending_name_.isEmpty()) {
+        lines << tr("Name: %1").arg(pending_name_);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+void Inspector::show_preview_image(const QPixmap& pm) {
+    preview_->setPixmap(pm);
+    preview_->setText({});
+    preview_scroll_->show();
+    preview_body_->hide();
+    preview_body_->clear();
+}
+
+void Inspector::show_preview_body(const QString& text) {
+    preview_->setPixmap({});
+    preview_->setText({});
+    preview_scroll_->hide();
+    preview_body_->setPlainText(text);
+    preview_body_->setVisible(!text.isEmpty());
+}
+
 void Inspector::load_preview(const nlohmann::json& rid) {
     preview_->setPixmap({});
-    preview_->setText(tr("No image preview"));
+    preview_->setText({});
+    preview_scroll_->hide();
+    preview_body_->hide();
+    preview_body_->clear();
+    preview_card_->setText(identity_card());
+
+    if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
+        show_preview_body(tr("Resource is %1 MB — live preview skipped.")
+                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1));
+        return;
+    }
+
+    const auto sid = session_.toStdString();
+    constexpr int kPreviewRows = 20;
+    constexpr int kXmlBytes = 4096;
+
+    if (pending_type_ == sxpe::resources::kStbl) {
+        auto st = bus_.execute("stbl.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (st.value("ok", false) && st["data"].contains("entries")) {
+            const auto& ents = st["data"]["entries"];
+            QStringList lines;
+            lines << tr("%1 strings").arg(ents.size());
+            const int n = std::min(kPreviewRows, static_cast<int>(ents.size()));
+            for (int i = 0; i < n; ++i) {
+                const auto& e = ents[static_cast<std::size_t>(i)];
+                lines << QStringLiteral("%1  %2")
+                             .arg(hex64(e.value("id", 0ull)),
+                                  clip_line(QString::fromStdString(e.value("text", "")), 96));
+            }
+            if (static_cast<int>(ents.size()) > n) {
+                lines << QChar(0x2026);
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kNmap) {
+        auto ng = bus_.execute("nmap.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (ng.value("ok", false) && ng["data"].contains("entries")) {
+            const auto& ents = ng["data"]["entries"];
+            QStringList lines;
+            lines << tr("%1 names").arg(ents.size());
+            const int n = std::min(kPreviewRows, static_cast<int>(ents.size()));
+            for (int i = 0; i < n; ++i) {
+                const auto& e = ents[static_cast<std::size_t>(i)];
+                lines << QStringLiteral("%1  %2")
+                             .arg(hex64(e.value("instance", 0ull)),
+                                  clip_line(QString::fromStdString(e.value("name", "")), 96));
+            }
+            if (static_cast<int>(ents.size()) > n) {
+                lines << QChar(0x2026);
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kS3sa) {
+        auto info = bus_.execute("s3sa.info", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("Size: %1 bytes").arg(d.value("size", 0));
+            if (d.contains("peOffset")) {
+                lines << tr("PE (MZ) at offset %1").arg(d.value("peOffset", 0));
+            } else {
+                lines << tr("No MZ signature found");
+            }
+            const auto hint = QString::fromStdString(d.value("moduleHint", std::string()));
+            if (!hint.isEmpty()) {
+                lines << tr("Module: %1").arg(hint);
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kXml || pending_type_ == sxpe::resources::kItun) {
+        auto env = bus_.execute("text.get", {{"sessionId", sid},
+                                             {"resourceId", rid},
+                                             {"maxBytes", kXmlBytes}});
+        if (env.value("ok", false)) {
+            const auto raw_s = env["data"].value("text", std::string());
+            std::vector<char> raw(raw_s.begin(), raw_s.end());
+            const QString decoded = decode_preview_bytes(raw);
+            QString head;
+            if (raw.size() >= 2 && static_cast<unsigned char>(raw[0]) == 0xFF &&
+                static_cast<unsigned char>(raw[1]) == 0xFE) {
+                head = tr("UTF-16LE") + QLatin1Char('\n');
+            } else if (raw.size() >= 2 && static_cast<unsigned char>(raw[0]) == 0xFE &&
+                       static_cast<unsigned char>(raw[1]) == 0xFF) {
+                head = tr("UTF-16BE") + QLatin1Char('\n');
+            } else if (raw.size() >= 3 && static_cast<unsigned char>(raw[0]) == 0xEF &&
+                       static_cast<unsigned char>(raw[1]) == 0xBB &&
+                       static_cast<unsigned char>(raw[2]) == 0xBF) {
+                head = tr("UTF-8 BOM") + QLatin1Char('\n');
+            }
+            show_preview_body(head + pretty_xml_excerpt(decoded, kXmlBytes));
+            return;
+        }
+    }
+
     QTemporaryFile tmp(QDir::tempPath() + "/sxpe-prev-XXXXXX.bin");
     tmp.setAutoRemove(true);
     if (!tmp.open()) {
         return;
     }
     const auto path = tmp.fileName().toStdString();
-    auto exp = bus_.execute("resource.export", {{"sessionId", session_.toStdString()},
+    auto exp = bus_.execute("resource.export", {{"sessionId", sid},
                                                 {"resourceId", rid},
                                                 {"path", path},
                                                 {"force", true}});
@@ -186,47 +543,97 @@ void Inspector::load_preview(const nlohmann::json& rid) {
     }
     std::ifstream f(path, std::ios::binary);
     std::vector<char> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (raw.size() >= 8 && static_cast<unsigned char>(raw[0]) == 0x89 && raw[1] == 'P' &&
-        raw[2] == 'N' && raw[3] == 'G') {
+
+    const bool png = looks_png(raw);
+    const bool jpeg = looks_jpeg(raw);
+    const bool dds = looks_dds(raw);
+    if (png || jpeg || !dds) {
         QImage img;
-        if (img.loadFromData(reinterpret_cast<const uchar*>(raw.data()), static_cast<int>(raw.size()))) {
+        if (img.loadFromData(reinterpret_cast<const uchar*>(raw.data()),
+                             static_cast<int>(raw.size()))) {
             QPixmap pm = QPixmap::fromImage(img);
             if (pm.width() > 512 || pm.height() > 512) {
                 pm = pm.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             }
-            preview_->setPixmap(pm);
-            preview_->setText({});
+            show_preview_image(pm);
+            return;
         }
-        return;
+        if (png || jpeg) {
+            show_preview_body(png ? tr("PNG (decode failed)") : tr("JPEG (decode failed)"));
+            return;
+        }
     }
+
+    QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+    const bool dds_on = st.value("preview/dds", true).toBool();
     std::vector<std::byte> bytes(raw.size());
     for (std::size_t i = 0; i < raw.size(); ++i) {
         bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(raw[i]));
     }
-    auto pix = sxpe::resources::decode_dds_rgba(bytes);
-    if (!pix) {
-        auto info = sxpe::resources::parse_dds(bytes);
-        if (info) {
-            preview_->setText(tr("%1×%2 %3 (no pixel decode)")
-                                  .arg(info->width)
-                                  .arg(info->height)
-                                  .arg(QString::fromStdString(info->format)));
+    if (dds || sxpe::resources::parse_dds(bytes)) {
+        auto inf = sxpe::resources::parse_dds(bytes);
+        if (!dds_on) {
+            if (inf) {
+                show_preview_body(tr("%1×%2 %3\nDDS preview is off (Settings).")
+                                      .arg(inf->width)
+                                      .arg(inf->height)
+                                      .arg(QString::fromStdString(inf->format)));
+            } else {
+                show_preview_body(tr("DDS preview is off (Settings)."));
+            }
+            return;
         }
+        auto pix = sxpe::resources::decode_dds_rgba(bytes);
+        if (!pix) {
+            if (inf) {
+                show_preview_body(tr("%1×%2 %3 (no pixel decode)")
+                                      .arg(inf->width)
+                                      .arg(inf->height)
+                                      .arg(QString::fromStdString(inf->format)));
+            }
+            return;
+        }
+        if (!inf) {
+            return;
+        }
+        QImage img(reinterpret_cast<const uchar*>(pix->data()), static_cast<int>(inf->width),
+                   static_cast<int>(inf->height), static_cast<int>(inf->width * 4),
+                   QImage::Format_RGBA8888);
+        QPixmap pm = QPixmap::fromImage(img.copy());
+        if (pm.width() > 512 || pm.height() > 512) {
+            pm = pm.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        show_preview_image(pm);
         return;
     }
-    auto inf = sxpe::resources::parse_dds(bytes);
-    if (!inf) {
-        return;
+
+    const QString kind = sniff_kind(raw);
+    const QString decoded = decode_preview_bytes(raw);
+    QString body;
+    if (!kind.isEmpty()) {
+        body += kind;
+        body += QLatin1Char('\n');
     }
-    QImage img(reinterpret_cast<const uchar*>(pix->data()), static_cast<int>(inf->width),
-               static_cast<int>(inf->height), static_cast<int>(inf->width * 4),
-               QImage::Format_RGBA8888);
-    QPixmap pm = QPixmap::fromImage(img.copy());
-    if (pm.width() > 512 || pm.height() > 512) {
-        pm = pm.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (kind == QLatin1String("XML") || decoded.trimmed().startsWith(QLatin1Char('<'))) {
+        if (!body.isEmpty()) {
+            body += QLatin1Char('\n');
+        }
+        body += pretty_xml_excerpt(decoded, kXmlBytes);
+    } else if (mostly_text(decoded)) {
+        if (!body.isEmpty()) {
+            body += QLatin1Char('\n');
+        }
+        body += decoded.left(kXmlBytes);
+        if (decoded.size() > kXmlBytes) {
+            body += QChar(0x2026);
+        }
+    } else if (!raw.empty()) {
+        if (!body.isEmpty()) {
+            body += QLatin1Char('\n');
+        }
+        body += hex_excerpt(raw, 256);
     }
-    preview_->setPixmap(pm);
-    preview_->setText({});
+    show_preview_body(body);
 }
 
 void Inspector::load_hex(const nlohmann::json& rid) {
@@ -318,7 +725,14 @@ void Inspector::copy_visible() {
             cb->setPixmap(pm);
             return;
         }
-        cb->setText(preview_->text());
+        QString t = preview_card_->text();
+        if (preview_body_->isVisible() && !preview_body_->toPlainText().isEmpty()) {
+            if (!t.isEmpty()) {
+                t += QLatin1String("\n\n");
+            }
+            t += preview_body_->toPlainText();
+        }
+        cb->setText(t);
         return;
     }
     if (pane == 1) {
@@ -353,6 +767,19 @@ bool Inspector::save_visible(const QString& path) {
         if (!pm.isNull()) {
             return pm.save(path);
         }
+        QString t = preview_card_->text();
+        if (preview_body_->isVisible() && !preview_body_->toPlainText().isEmpty()) {
+            if (!t.isEmpty()) {
+                t += QLatin1String("\n\n");
+            }
+            t += preview_body_->toPlainText();
+        }
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return false;
+        }
+        f.write(t.toUtf8());
+        return true;
     }
     QString body;
     if (pane == 1) {

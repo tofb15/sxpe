@@ -436,7 +436,8 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
                                              nlohmann::json{{"type", r->type},
                                                             {"group", r->group},
                                                             {"instance", r->instance},
-                                                            {"ordinal", r->ordinal}});
+                                                            {"ordinal", r->ordinal}},
+                                             r->name);
                 }
             });
 
@@ -561,7 +562,8 @@ void PackageTab::float_preview() {
                        nlohmann::json{{"type", r->type},
                                       {"group", r->group},
                                       {"instance", r->instance},
-                                      {"ordinal", r->ordinal}});
+                                      {"ordinal", r->ordinal}},
+                       r->name);
     lay->addWidget(ins);
     dlg->resize(420, 360);
     dlg->show();
