@@ -401,34 +401,23 @@ VoidResult Package::patch_in_place(std::uint32_t i, std::span<const std::byte> u
         disk.assign(uncompressed.begin(), uncompressed.end());
     }
     auto& e = entries_[i];
-    if (disk.size() > e.payload_capacity) {
+    const std::uint32_t old_size = e.file_size;
+    if (disk.size() > old_size) {
         return std::unexpected(err(ErrorCode::cap_exceeded,
                                    "new resource is " + std::to_string(disk.size()) +
-                                       " bytes; in-place hole is " +
-                                       std::to_string(e.payload_capacity) +
-                                       " bytes. Export a smaller PNG (same pixels, higher PNG compression)."));
+                                       " bytes; SNAP hole is " + std::to_string(old_size) +
+                                       " bytes"));
     }
     auto mut = map_.writable_bytes();
     const auto start = static_cast<std::size_t>(e.chunk_offset);
-    if (start + e.payload_capacity > mut.size()) {
+    if (start + old_size > mut.size()) {
         return std::unexpected(err(ErrorCode::corrupt, "hole out of range"));
     }
-    const std::uint32_t old_size = e.file_size;
     std::memcpy(mut.data() + start, disk.data(), disk.size());
     if (old_size > disk.size()) {
         std::memset(mut.data() + start + disk.size(), 0, old_size - disk.size());
     }
-    e.file_size = static_cast<std::uint32_t>(disk.size());
-    e.mem_size = static_cast<std::uint32_t>(uncompressed.size());
-    e.compressed = compress ? 0xFFFF : 0;
-    const std::size_t rec = static_cast<std::size_t>(index_pos_) + 4 + static_cast<std::size_t>(i) * 32;
-    if (rec + 32 > mut.size()) {
-        return std::unexpected(err(ErrorCode::corrupt, "index row out of range"));
-    }
-    poke_u32(mut, rec + 20, e.file_size | (e.file_size_high_bit ? 0x80000000u : 0));
-    poke_u32(mut, rec + 24, e.mem_size);
-    poke_u32(mut, rec + 28, static_cast<std::uint32_t>(e.compressed) |
-                                (static_cast<std::uint32_t>(e.unknown2) << 16));
+    // Keep original file_size/mem_size so the game still reads the same blob length.
     overrides_[i].reset();
     bool still = false;
     for (const auto& o : overrides_) {

@@ -25,6 +25,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <span>
 
 namespace sxpe::gui {
 
@@ -444,6 +445,19 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
         }
         fitted.clear();
     }
+    QFile srcf(path);
+    if (srcf.open(QIODevice::ReadOnly)) {
+        const QByteArray raw = srcf.readAll();
+        srcf.close();
+        const auto sp = std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw.constData()),
+                                                   static_cast<std::size_t>(raw.size()));
+        if (auto ih = sxpe::resources::parse_png_ihdr(sp);
+            ih && ih->width == static_cast<std::uint32_t>(tw) &&
+            ih->height == static_cast<std::uint32_t>(th) && ih->bit_depth == 8 &&
+            ih->color_type == 6 && static_cast<std::uint32_t>(raw.size()) <= max_bytes) {
+            fitted = raw;
+        }
+    }
     if (fitted.isEmpty()) {
         QMessageBox::warning(
             parent, QObject::tr("SXPE"),
@@ -452,7 +466,11 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                 .arg(max_bytes));
         return false;
     }
-    const auto fitted_path = QDir::temp().filePath(QStringLiteral("sxpe-snap-fit.png"));
+    // Pad to the original blob length so the index size fields stay unchanged.
+    if (static_cast<std::uint32_t>(fitted.size()) < max_bytes) {
+        fitted.append(QByteArray(static_cast<int>(max_bytes) - fitted.size(), '\0'));
+    }
+    const auto fitted_path = QDir::temp().filePath(QStringLiteral("sxpe-snap-fit.bin"));
     QFile out(fitted_path);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
         out.write(fitted) != fitted.size()) {
@@ -460,13 +478,15 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
         return false;
     }
     out.close();
-    auto env = bus.execute("resource.replaceInPlace",
+    auto env = bus.execute("resource.importFiles",
                            {{"sessionId", session.toStdString()},
                             {"resourceId", rid},
-                            {"path", fitted_path.toStdString()}});
+                            {"path", fitted_path.toStdString()},
+                            {"force", true},
+                            {"compress", false}});
     QFile::remove(fitted_path);
     if (!env.value("ok", false)) {
-        QString msg = QObject::tr("Could not patch SNAP.");
+        QString msg = QObject::tr("Could not stage SNAP replace.");
         if (env.contains("error") && env["error"].contains("message")) {
             msg = QString::fromStdString(env["error"]["message"].get<std::string>());
         }
