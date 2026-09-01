@@ -83,7 +83,26 @@ if (-not $windeployqt -or -not (Test-Path $windeployqt)) {
     throw "windeployqt.exe not found. Point CMAKE_PREFIX_PATH at Qt, or keep Qt at ../qt/6.8.2/msvc2022_64."
 }
 
-if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
+function Clear-OutDir([string]$Path) {
+    if (-not (Test-Path $Path)) { return }
+    for ($i = 0; $i -lt 8; $i++) {
+        try {
+            Remove-Item $Path -Recurse -Force -ErrorAction Stop
+            if (-not (Test-Path $Path)) { return }
+        } catch {
+            Start-Sleep -Milliseconds (250 * ($i + 1))
+        }
+    }
+    $park = "$Path.old.$PID"
+    try {
+        Rename-Item $Path $park -ErrorAction Stop
+    } catch {
+        throw "Cannot replace $Path (in use). Close SXPE or any Explorer window in that folder, then retry."
+    }
+    Remove-Item $park -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Clear-OutDir $OutDir
 New-Item -ItemType Directory -Path $OutDir | Out-Null
 
 foreach ($n in $need) {
