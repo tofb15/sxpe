@@ -17,6 +17,8 @@ int main() {
 
     CHECK(sxpe::resources::tag_for(0x00AE6C67) == "BONE");
     CHECK(sxpe::resources::tag_for(0x0580A2B4) == "THUM");
+    CHECK(sxpe::resources::tag_for(0x626F60CE) == "THUM");
+    CHECK(sxpe::resources::is_png_image(0x626F60CE));
     CHECK(sxpe::resources::tag_for(0x00B2D882) == "_IMG");
     CHECK(sxpe::resources::tag_for(0xFFFFFFFFu).empty());
 

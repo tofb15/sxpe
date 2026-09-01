@@ -158,13 +158,7 @@ void Inspector::load_visible() {
         return;
     }
     if (pane == 0) {
-        if (sxpe::resources::is_dds_image(pending_type_) ||
-            sxpe::resources::is_png_image(pending_type_)) {
-            load_preview(rid);
-        } else {
-            preview_->setPixmap({});
-            preview_->setText(tr("No image preview"));
-        }
+        load_preview(rid);
     } else if (pane == 1) {
         load_hex(rid);
     } else if (pane == 2) {
