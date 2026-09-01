@@ -150,6 +150,19 @@ const QString& ResourceModel::cell_text(const DisplayRow& r, int column) {
     }
 }
 
+int ResourceModel::hint_width(int column, const QFontMetrics& fm) const {
+    int w = fm.horizontalAdvance(headerData(column, Qt::Horizontal, Qt::DisplayRole).toString());
+    const int n = visible_.isEmpty() ? static_cast<int>(all_.size()) : visible_.size();
+    for (int i = 0; i < n; ++i) {
+        const int idx = visible_.isEmpty() ? i : visible_[i];
+        if (idx < 0 || static_cast<size_t>(idx) >= all_.size()) {
+            continue;
+        }
+        w = std::max(w, fm.horizontalAdvance(cell_text(all_[static_cast<size_t>(idx)], column)));
+    }
+    return w + 16;
+}
+
 QVariant ResourceModel::data(const QModelIndex& index, int role) const {
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole) {
         return {};

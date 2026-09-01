@@ -57,6 +57,7 @@ public:
 
     [[nodiscard]] const DisplayRow* row_at(int view_row) const;
     [[nodiscard]] static const QString& cell_text(const DisplayRow& r, int column);
+    [[nodiscard]] int hint_width(int column, const QFontMetrics& fm) const;
     [[nodiscard]] const std::vector<DisplayRow>& all() const { return all_; }
     [[nodiscard]] int visible_count() const { return visible_.size(); }
     [[nodiscard]] int sort_column() const { return sort_col_; }

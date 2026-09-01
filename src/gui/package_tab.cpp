@@ -13,6 +13,7 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
@@ -33,8 +34,11 @@ namespace {
 class ResourceTableView final : public QTableView {
 public:
     explicit ResourceTableView(QWidget* parent = nullptr) : QTableView(parent) {
-        connect(horizontalHeader(), &QHeaderView::sectionResized, this,
-                &ResourceTableView::on_section_resized);
+        auto* hdr = horizontalHeader();
+        connect(hdr, &QHeaderView::sectionResized, this, &ResourceTableView::on_section_resized);
+        hdr->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(hdr, &QWidget::customContextMenuRequested, this,
+                &ResourceTableView::on_header_menu);
     }
 
     void set_mins(std::array<int, ResourceModel::Count_> mins) {
@@ -53,6 +57,88 @@ public:
             return;
         }
         apply_user_width(logical, defaults_[static_cast<size_t>(logical)]);
+    }
+
+    void autofit_column(int logical) {
+        auto* m = qobject_cast<ResourceModel*>(model());
+        if (!m || logical < 0 || logical >= ResourceModel::Count_) {
+            return;
+        }
+        const int w = std::max(min_for(logical), m->hint_width(logical, fontMetrics()));
+        apply_user_width(logical, w);
+    }
+
+    void autofit_all() {
+        auto* m = qobject_cast<ResourceModel*>(model());
+        if (!m || filling_) {
+            return;
+        }
+        filling_ = true;
+        const int n = m->columnCount();
+        const QFontMetrics fm = fontMetrics();
+        std::vector<int> w(static_cast<size_t>(n));
+        int sum = 0;
+        for (int i = 0; i < n; ++i) {
+            w[static_cast<size_t>(i)] = std::max(min_for(i), m->hint_width(i, fm));
+            sum += w[static_cast<size_t>(i)];
+        }
+        const int vw = std::max(1, viewport()->width());
+        if (sum > vw) {
+            int need = sum - vw;
+            while (need > 0) {
+                int flexible = 0;
+                for (int i = 0; i < n; ++i) {
+                    if (w[static_cast<size_t>(i)] > min_for(i)) {
+                        ++flexible;
+                    }
+                }
+                if (flexible == 0) {
+                    break;
+                }
+                const int share = std::max(1, need / flexible);
+                for (int i = 0; i < n && need > 0; ++i) {
+                    const int room = w[static_cast<size_t>(i)] - min_for(i);
+                    if (room <= 0) {
+                        continue;
+                    }
+                    const int take = std::min(share, std::min(room, need));
+                    w[static_cast<size_t>(i)] -= take;
+                    need -= take;
+                }
+            }
+        } else if (sum < vw) {
+            int extra = vw - sum;
+            const int base = extra / n;
+            int rem = extra % n;
+            for (int i = 0; i < n; ++i) {
+                w[static_cast<size_t>(i)] += base + (rem > 0 ? 1 : 0);
+                if (rem > 0) {
+                    --rem;
+                }
+            }
+        }
+        for (int i = 0; i < n; ++i) {
+            setColumnWidth(i, w[static_cast<size_t>(i)]);
+        }
+        filling_ = false;
+        old_vw_ = viewport()->width();
+        viewport()->update();
+    }
+
+    void reset_all() {
+        if (filling_ || !model()) {
+            return;
+        }
+        filling_ = true;
+        const int n = model()->columnCount();
+        for (int i = 0; i < n; ++i) {
+            setColumnWidth(i, std::max(min_for(i), defaults_[static_cast<size_t>(i)]));
+        }
+        filling_ = false;
+        old_vw_ = -1;
+        distribute_delta(viewport()->width() - current_sum());
+        old_vw_ = viewport()->width();
+        viewport()->update();
     }
 
 protected:
@@ -193,6 +279,24 @@ private:
             return;
         }
         apply_user_width(logical, new_size);
+    }
+
+    void on_header_menu(const QPoint& pos) {
+        auto* hdr = horizontalHeader();
+        const int col = hdr->logicalIndexAt(pos);
+        QMenu menu(this);
+        auto* fit_col = menu.addAction(tr("Autofit column"));
+        fit_col->setEnabled(col >= 0);
+        auto* fit_all = menu.addAction(tr("Autofit all"));
+        auto* reset = menu.addAction(tr("Reset"));
+        auto* chosen = menu.exec(hdr->mapToGlobal(pos));
+        if (chosen == fit_col) {
+            autofit_column(col);
+        } else if (chosen == fit_all) {
+            autofit_all();
+        } else if (chosen == reset) {
+            reset_all();
+        }
     }
 
     std::array<int, ResourceModel::Count_> mins_{};
