@@ -6,6 +6,8 @@
 
 #include <QComboBox>
 #include <QDialog>
+#include <QFont>
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
@@ -53,8 +55,32 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     table_->setShowGrid(false);
     table_->setAlternatingRowColors(true);
     table_->horizontalHeader()->setStretchLastSection(false);
-    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     table_->setWordWrap(false);
+    table_->setTextElideMode(Qt::ElideNone);
+    {
+        QFont mono;
+        mono.setStyleHint(QFont::Monospace);
+        mono.setFamily(QStringLiteral("Consolas"));
+        const QFontMetrics fm(mono);
+        const int hex8 = fm.horizontalAdvance(QStringLiteral("00000000")) + 20;
+        const int hex16 = fm.horizontalAdvance(QStringLiteral("0000000000000000")) + 20;
+        auto* hdr = table_->horizontalHeader();
+        hdr->setSectionResizeMode(ResourceModel::Name, QHeaderView::Stretch);
+        hdr->setSectionResizeMode(ResourceModel::Tag, QHeaderView::Interactive);
+        hdr->setSectionResizeMode(ResourceModel::Type, QHeaderView::Fixed);
+        hdr->setSectionResizeMode(ResourceModel::Group, QHeaderView::Fixed);
+        hdr->setSectionResizeMode(ResourceModel::Instance, QHeaderView::Fixed);
+        hdr->setSectionResizeMode(ResourceModel::Ordinal, QHeaderView::Fixed);
+        hdr->setSectionResizeMode(ResourceModel::Size, QHeaderView::Interactive);
+        hdr->setSectionResizeMode(ResourceModel::Compressed, QHeaderView::Fixed);
+        table_->setColumnWidth(ResourceModel::Tag, fm.horizontalAdvance(QStringLiteral("_IMG")) + 28);
+        table_->setColumnWidth(ResourceModel::Type, hex8);
+        table_->setColumnWidth(ResourceModel::Group, hex8);
+        table_->setColumnWidth(ResourceModel::Instance, hex16);
+        table_->setColumnWidth(ResourceModel::Ordinal, fm.horizontalAdvance(QStringLiteral("000")) + 16);
+        table_->setColumnWidth(ResourceModel::Size, fm.horizontalAdvance(QStringLiteral("00000000")) + 16);
+        table_->setColumnWidth(ResourceModel::Compressed, fm.horizontalAdvance(QStringLiteral("Cmp")) + 16);
+    }
     inspector_ = new Inspector(bus_, this);
     inspector_->set_session(session_);
     split->addWidget(table_);

@@ -1,6 +1,7 @@
 #include "resource_model.hpp"
 
 #include <QColor>
+#include <QFont>
 
 namespace sxpe::gui {
 namespace {
@@ -52,6 +53,18 @@ QVariant ResourceModel::data(const QModelIndex& index, int role) const {
     if (role == Qt::ForegroundRole && r->deleted) {
         return QColor(128, 128, 128);
     }
+    if (role == Qt::FontRole && (index.column() == Type || index.column() == Group ||
+                                 index.column() == Instance || index.column() == Ordinal)) {
+        QFont f;
+        f.setStyleHint(QFont::Monospace);
+        f.setFamily(QStringLiteral("Consolas"));
+        return f;
+    }
+    if (role == Qt::ToolTipRole) {
+        return QString("%1-%2-%3 #%4")
+            .arg(hex32(r->type), hex32(r->group), hex64(r->instance))
+            .arg(r->ordinal);
+    }
     if (role != Qt::DisplayRole) {
         return {};
     }
@@ -66,6 +79,8 @@ QVariant ResourceModel::data(const QModelIndex& index, int role) const {
             return hex32(r->group);
         case Instance:
             return hex64(r->instance);
+        case Ordinal:
+            return QString::number(r->ordinal);
         case Size:
             return QString::number(r->mem_size);
         case Compressed:
@@ -79,7 +94,7 @@ QVariant ResourceModel::headerData(int section, Qt::Orientation o, int role) con
     if (o != Qt::Horizontal || role != Qt::DisplayRole) {
         return {};
     }
-    static const char* k[] = {"Tag", "Name", "Type", "Group", "Instance", "Size", "Cmp"};
+    static const char* k[] = {"Tag", "Name", "Type", "Group", "Instance", "#", "Size", "Cmp"};
     return section >= 0 && section < Count_ ? QString::fromLatin1(k[section]) : QVariant{};
 }
 

@@ -13,7 +13,7 @@ namespace sxpe::gui {
 class ResourceModel final : public QAbstractTableModel {
     Q_OBJECT
 public:
-    enum Col { Tag, Name, Type, Group, Instance, Size, Compressed, Count_ };
+    enum Col { Tag, Name, Type, Group, Instance, Ordinal, Size, Compressed, Count_ };
 
     explicit ResourceModel(QObject* parent = nullptr) : QAbstractTableModel(parent) {}
 

@@ -21,7 +21,6 @@
 #include <QStatusBar>
 #include <QStyleHints>
 #include <QTabWidget>
-#include <QToolBar>
 
 namespace sxpe::gui {
 namespace {
@@ -45,10 +44,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::close_tab);
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int) { update_status(); });
 
-    auto* tb = addToolBar(tr("File"));
-    tb->setMovable(false);
-    tb->setIconSize(QSize(16, 16));
-
     auto act = [&](QMenu* m, const QString& name, const QKeySequence& ks, auto slot) {
         auto* a = m->addAction(name);
         a->setShortcut(ks);
@@ -57,9 +52,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     };
 
     auto* file = menuBar()->addMenu(tr("&File"));
-    tb->addAction(act(file, tr("&New"), QKeySequence::New, [this] { new_package(); }));
-    tb->addAction(act(file, tr("&Open…"), QKeySequence::Open, [this] { open_dialog(); }));
-    tb->addAction(act(file, tr("&Save"), QKeySequence::Save, [this] { save(false, false); }));
+    act(file, tr("&New"), QKeySequence::New, [this] { new_package(); });
+    act(file, tr("&Open…"), QKeySequence::Open, [this] { open_dialog(); });
+    act(file, tr("&Save"), QKeySequence::Save, [this] { save(false, false); });
     act(file, tr("Save &As…"), QKeySequence::SaveAs, [this] { save(false, true); });
     act(file, tr("Save &Copy As…"), {}, [this] { save(true, true); });
     act(file, tr("&Close"), QKeySequence::Close, [this] { close_tab(tabs_->currentIndex()); });
