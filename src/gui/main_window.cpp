@@ -28,6 +28,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
 #include <QStyleHints>
@@ -304,6 +305,45 @@ void MainWindow::new_package() {
         return;
     }
     add_tab(QString::fromStdString(env["data"]["sessionId"].get<std::string>()), tr("Untitled"));
+}
+
+void MainWindow::merge_dropped_packages(const QStringList& paths) {
+    auto created = bus_.execute("package.new", nlohmann::json::object());
+    if (!created.value("ok", false)) {
+        warn_if_err(created);
+        return;
+    }
+    const auto sid = QString::fromStdString(created["data"]["sessionId"].get<std::string>());
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& p : paths) {
+        arr.push_back(p.toStdString());
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    auto env = bus_.execute("resource.importPackage",
+                            {{"sessionId", sid.toStdString()}, {"paths", arr}, {"force", true}});
+    QApplication::restoreOverrideCursor();
+    if (!env.value("ok", false) || env["data"].value("imported", 0) == 0) {
+        bus_.execute("package.close", {{"sessionId", sid.toStdString()}});
+        warn_if_err(env.value("ok", false)
+                        ? nlohmann::json{{"ok", false},
+                                         {"error", {{"message", tr("Nothing was imported.").toStdString()}}}}
+                        : env);
+        return;
+    }
+    add_tab(sid, tr("Untitled merge"));
+    const auto imported = env["data"].value("imported", 0);
+    const auto pkgs = env["data"].value("packages", 0);
+    const auto failed = env["data"].value("failed", 0);
+    QString msg = tr("Merged %1 resource(s) from %2 file(s) into a new untitled package. "
+                     "Use File → Save As to write it. The original files were not changed.")
+                      .arg(imported)
+                      .arg(pkgs);
+    if (failed > 0) {
+        msg += QLatin1Char('\n') + tr("%1 file(s) could not be imported.").arg(failed);
+        QMessageBox::warning(this, tr("SXPE"), msg);
+    } else {
+        QMessageBox::information(this, tr("SXPE"), msg);
+    }
 }
 
 bool MainWindow::open_path(const QString& path, bool writable) {
@@ -1226,11 +1266,37 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
 }
 
 void MainWindow::dropEvent(QDropEvent* e) {
+    QStringList files;
     for (const auto& u : e->mimeData()->urls()) {
         const auto p = u.toLocalFile();
-        if (!p.isEmpty()) {
+        if (!p.isEmpty() && QFileInfo::exists(p)) {
+            files.push_back(p);
+        }
+    }
+    if (files.isEmpty()) {
+        return;
+    }
+    if (files.size() == 1) {
+        open_path(files.front(), true);
+        return;
+    }
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Drop %1 files").arg(files.size()));
+    box.setText(tr("Open each file in its own tab, or merge every resource into a new untitled package?"));
+    box.setInformativeText(
+        tr("A merge never writes the dropped files. If two packages share a resource key, "
+           "the later file wins. Save the result with File → Save As."));
+    auto* as_tabs = box.addButton(tr("Open as tabs"), QMessageBox::AcceptRole);
+    auto* as_merge = box.addButton(tr("Merge into new package"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(qobject_cast<QPushButton*>(as_tabs));
+    box.exec();
+    if (box.clickedButton() == as_tabs) {
+        for (const auto& p : files) {
             open_path(p, true);
         }
+    } else if (box.clickedButton() == as_merge) {
+        merge_dropped_packages(files);
     }
 }
 

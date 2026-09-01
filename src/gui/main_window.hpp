@@ -31,6 +31,7 @@ protected:
 private:
     PackageTab* current_tab() const;
     void add_tab(const QString& session_id, const QString& title);
+    void merge_dropped_packages(const QStringList& paths);
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);
