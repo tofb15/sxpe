@@ -158,7 +158,8 @@ void Inspector::load_visible() {
         return;
     }
     if (pane == 0) {
-        if (pending_type_ == sxpe::resources::kImg || pending_type_ == sxpe::resources::kImgAlt) {
+        if (sxpe::resources::is_dds_image(pending_type_) ||
+            sxpe::resources::is_png_image(pending_type_)) {
             load_preview(rid);
         } else {
             preview_->setPixmap({});
@@ -176,7 +177,7 @@ void Inspector::load_visible() {
 void Inspector::load_preview(const nlohmann::json& rid) {
     preview_->setPixmap({});
     preview_->setText(tr("No image preview"));
-    QTemporaryFile tmp(QDir::tempPath() + "/sxpe-prev-XXXXXX.dds");
+    QTemporaryFile tmp(QDir::tempPath() + "/sxpe-prev-XXXXXX.bin");
     tmp.setAutoRemove(true);
     if (!tmp.open()) {
         return;
@@ -191,6 +192,19 @@ void Inspector::load_preview(const nlohmann::json& rid) {
     }
     std::ifstream f(path, std::ios::binary);
     std::vector<char> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (raw.size() >= 8 && static_cast<unsigned char>(raw[0]) == 0x89 && raw[1] == 'P' &&
+        raw[2] == 'N' && raw[3] == 'G') {
+        QImage img;
+        if (img.loadFromData(reinterpret_cast<const uchar*>(raw.data()), static_cast<int>(raw.size()))) {
+            QPixmap pm = QPixmap::fromImage(img);
+            if (pm.width() > 512 || pm.height() > 512) {
+                pm = pm.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            }
+            preview_->setPixmap(pm);
+            preview_->setText({});
+        }
+        return;
+    }
     std::vector<std::byte> bytes(raw.size());
     for (std::size_t i = 0; i < raw.size(); ++i) {
         bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(raw[i]));
