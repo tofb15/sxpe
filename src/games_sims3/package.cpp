@@ -655,6 +655,10 @@ VoidResult Package::save() {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
     if (neighborhood_path(path_)) {
+        if (!dirty_) {
+            map_.flush();
+            return ok();
+        }
         return flush_layout();
     }
     return save_as(path_);

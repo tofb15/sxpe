@@ -147,6 +147,49 @@ int main() {
                           json{{"sessionId", sid}, {"path", dest}, {"force", true}});
     CHECK(sa["ok"] == true);
 
+    auto a_path = (tmp / "iso-a.bin").string();
+    auto b_path = (tmp / "iso-b.bin").string();
+    auto na = bus.execute("package.new", json::object());
+    auto nb = bus.execute("package.new", json::object());
+    CHECK(na["ok"] == true && nb["ok"] == true);
+    const auto sa_id = na["data"]["sessionId"].get<std::string>();
+    const auto sb_id = nb["data"]["sessionId"].get<std::string>();
+    CHECK(sa_id != sb_id);
+    auto add_a = bus.execute("resource.add",
+                             json{{"sessionId", sa_id},
+                                  {"resourceId", json{{"type", 1}, {"group", 0}, {"instance", 1}}},
+                                  {"payloadB64", b64(*raw)}});
+    auto add_b = bus.execute("resource.add",
+                             json{{"sessionId", sb_id},
+                                  {"resourceId", json{{"type", 2}, {"group", 0}, {"instance", 2}}},
+                                  {"payloadB64", b64(*raw)}});
+    CHECK(add_a["ok"] == true && add_b["ok"] == true);
+    CHECK(bus.execute("package.saveAs",
+                      json{{"sessionId", sa_id}, {"path", a_path}, {"force", true}})["ok"] == true);
+    CHECK(bus.execute("package.saveAs",
+                      json{{"sessionId", sb_id}, {"path", b_path}, {"force", true}})["ok"] == true);
+    bus.execute("package.close", json{{"sessionId", sa_id}});
+    bus.execute("package.close", json{{"sessionId", sb_id}});
+    auto oa = bus.execute("package.open", json{{"path", a_path}, {"writable", true}});
+    auto ob = bus.execute("package.open", json{{"path", b_path}, {"writable", true}});
+    CHECK(oa["ok"] == true && ob["ok"] == true);
+    const auto oa_id = oa["data"]["sessionId"].get<std::string>();
+    const auto ob_id = ob["data"]["sessionId"].get<std::string>();
+    auto again = bus.execute("package.open", json{{"path", a_path}, {"writable", true}});
+    CHECK(again["ok"] == true);
+    CHECK(again["data"].value("alreadyOpen", false) == true);
+    CHECK(again["data"]["sessionId"] == oa_id);
+    CHECK(bus.execute("resource.setFlags",
+                      json{{"sessionId", oa_id},
+                           {"resourceId", json{{"type", 1}, {"group", 0}, {"instance", 1}}},
+                           {"deleted", true}})["ok"] == true);
+    CHECK(bus.execute("package.save", json{{"sessionId", oa_id}})["ok"] == true);
+    auto lb = bus.execute("resource.list", json{{"sessionId", ob_id}, {"limit", 10}});
+    CHECK(lb["ok"] == true);
+    CHECK(lb["data"]["items"].size() == 1);
+    CHECK(lb["data"]["items"][0]["type"] == 2);
+    CHECK(lb["data"]["items"][0].value("deleted", false) == false);
+
     auto bad = bus.execute("package.open", json{{"path", dest + "-missing"}});
     CHECK(bad["ok"] == false);
 

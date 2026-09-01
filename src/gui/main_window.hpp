@@ -34,8 +34,11 @@ private:
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);
-    void close_tab(int index);
+    bool close_tab(int index);
     void update_status();
+    void refresh_tab_chrome(PackageTab* tab);
+    int tab_index_for_session(const QString& session_id) const;
+    bool path_is_open(const QString& path, const PackageTab* except = nullptr);
     void run_palette();
     void remember_mru(const QString& path);
     void rebuild_mru();

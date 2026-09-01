@@ -33,7 +33,7 @@ using sxpe::resources::kNmap;
 using sxpe::resources::kS3sa;
 using sxpe::resources::kStbl;
 
-constexpr int kMaxSessions = 8;
+constexpr int kMaxSessions = 64;
 constexpr int kUndoCap = 50;
 constexpr std::uint32_t kListDefault = 100;
 constexpr std::uint32_t kListMax = 500;
@@ -365,7 +365,9 @@ std::vector<Tool> make_catalog() {
     add({"package.close", "Close", "Drop a session without saving.",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, false, false,
          true, false});
-    add({"package.save", "Save", "Unmap then ReplaceFile. dryRun reports the path only.",
+    add({"package.save", "Save",
+         "Save only this session. Neighborhood .nhd/.world/.dbc keep on-disk layout. "
+         "Does not save other open packages.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
     add({"package.saveAs", "Save As", "Write to a new path and switch the session to it.",
@@ -769,9 +771,31 @@ struct Bus::Impl {
         return *i;
     }
 
+    static bool same_file(const std::filesystem::path& a, const std::filesystem::path& b) {
+        if (a.empty() || b.empty()) {
+            return false;
+        }
+        std::error_code ec;
+        if (std::filesystem::exists(a, ec) && std::filesystem::exists(b, ec)) {
+            if (std::filesystem::equivalent(a, b, ec) && !ec) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    Session* find_by_path(const std::filesystem::path& p) {
+        for (auto& s : sessions) {
+            if (same_file(s->pkg.path(), p)) {
+                return s.get();
+            }
+        }
+        return nullptr;
+    }
+
     Result<std::string> add_session(Package p) {
         if (static_cast<int>(sessions.size()) >= kMaxSessions) {
-            return std::unexpected(err(ErrorCode::refused, "session cap (8)"));
+            return std::unexpected(err(ErrorCode::refused, "too many packages open (64)"));
         }
         auto s = std::make_unique<Session>(std::move(p));
         s->id = "s-" + std::to_string(next_id++);
@@ -978,6 +1002,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
             return envelope_err(path.error());
         }
         const bool wr = args.value("writable", false);
+        if (auto* existing = find_by_path(*path)) {
+            auto out = info(*existing);
+            out["alreadyOpen"] = true;
+            return envelope_ok(out);
+        }
         auto p = Package::open(*path, wr);
         if (!p) {
             return envelope_err(p.error(), p.error().code == ErrorCode::io, "none");

@@ -41,6 +41,25 @@ QString filters() {
     return QObject::tr("Sims 3 packages (*.package *.world *.dbc *.nhd);;All files (*.*)");
 }
 
+QString tab_label(const QString& path, bool writable, bool dirty) {
+    if (path.isEmpty()) {
+        return dirty ? QObject::tr("Untitled *") : QObject::tr("Untitled");
+    }
+    const QFileInfo fi(path);
+    const auto folder = fi.dir().dirName();
+    QString name = fi.fileName();
+    if (!folder.isEmpty() && folder != QLatin1String(".") && folder != QLatin1String("\\")) {
+        name = folder + QStringLiteral(" — ") + name;
+    }
+    if (!writable) {
+        name += QObject::tr(" [read-only]");
+    }
+    if (dirty) {
+        name += QLatin1Char('*');
+    }
+    return name;
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -274,6 +293,7 @@ void MainWindow::add_tab(const QString& session_id, const QString& title) {
     connect(tab, &PackageTab::resource_context_menu, this, &MainWindow::show_resource_context);
     const int i = tabs_->addTab(tab, title);
     tabs_->setCurrentIndex(i);
+    refresh_tab_chrome(tab);
     update_status();
 }
 
@@ -295,6 +315,14 @@ bool MainWindow::open_path(const QString& path, bool writable) {
         return false;
     }
     const auto sid = QString::fromStdString(env["data"]["sessionId"].get<std::string>());
+    if (env["data"].value("alreadyOpen", false)) {
+        QApplication::restoreOverrideCursor();
+        const int i = tab_index_for_session(sid);
+        if (i >= 0) {
+            tabs_->setCurrentIndex(i);
+        }
+        return true;
+    }
     add_tab(sid, QFileInfo(path).fileName() + (writable ? QString() : tr(" [read-only]")));
     remember_mru(path);
     QApplication::restoreOverrideCursor();
@@ -322,8 +350,15 @@ bool MainWindow::save(bool as_copy, bool save_as) {
     }
     QString dest;
     if (save_as || as_copy) {
-        dest = QFileDialog::getSaveFileName(this, tr("Save package"), {}, filters());
+        dest = QFileDialog::getSaveFileName(this, tr("Save package"), current_package_path(),
+                                            filters());
         if (dest.isEmpty()) {
+            return false;
+        }
+        if (path_is_open(dest, t)) {
+            QMessageBox::warning(this, tr("SXPE"),
+                                 tr("That file is already open in another tab. Close it first, or "
+                                    "pick a different name."));
             return false;
         }
     }
@@ -341,19 +376,38 @@ bool MainWindow::save(bool as_copy, bool save_as) {
         return false;
     }
     if (!dest.isEmpty() && !as_copy) {
-        tabs_->setTabText(tabs_->currentIndex(), QFileInfo(dest).fileName());
         remember_mru(dest);
     }
     t->reload();
+    refresh_tab_chrome(t);
     return true;
 }
 
-void MainWindow::close_tab(int index) {
+bool MainWindow::close_tab(int index) {
     if (index < 0 || index >= tabs_->count()) {
-        return;
+        return true;
     }
     auto* t = qobject_cast<PackageTab*>(tabs_->widget(index));
     if (t) {
+        auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
+        const bool dirty = info.value("ok", false) && info["data"].value("dirty", false);
+        const bool writable = info.value("ok", false) && info["data"].value("readWrite", false);
+        if (dirty && writable) {
+            const auto path = QString::fromStdString(info["data"].value("path", std::string()));
+            const auto name = path.isEmpty() ? tr("Untitled") : QFileInfo(path).fileName();
+            const auto btn = QMessageBox::question(
+                this, tr("Unsaved changes"), tr("Save changes to %1?").arg(name),
+                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+            if (btn == QMessageBox::Cancel) {
+                return false;
+            }
+            if (btn == QMessageBox::Save) {
+                tabs_->setCurrentIndex(index);
+                if (!save(false, path.isEmpty())) {
+                    return false;
+                }
+            }
+        }
         bus_.execute("package.close", {{"sessionId", t->session_id().toStdString()}});
     }
     tabs_->removeTab(index);
@@ -364,10 +418,73 @@ void MainWindow::close_tab(int index) {
         tabs_->addTab(empty, tr("Start"));
     }
     update_status();
+    return true;
 }
 
 PackageTab* MainWindow::current_tab() const {
     return qobject_cast<PackageTab*>(tabs_->currentWidget());
+}
+
+int MainWindow::tab_index_for_session(const QString& session_id) const {
+    for (int i = 0; i < tabs_->count(); ++i) {
+        auto* t = qobject_cast<PackageTab*>(tabs_->widget(i));
+        if (t && t->session_id() == session_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool MainWindow::path_is_open(const QString& path, const PackageTab* except) {
+    const QFileInfo want(path);
+    const auto key = want.canonicalFilePath().isEmpty() ? want.absoluteFilePath()
+                                                        : want.canonicalFilePath();
+    for (int i = 0; i < tabs_->count(); ++i) {
+        auto* t = qobject_cast<PackageTab*>(tabs_->widget(i));
+        if (!t || t == except) {
+            continue;
+        }
+        auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
+        if (!info.value("ok", false)) {
+            continue;
+        }
+        const auto p = QString::fromStdString(info["data"].value("path", std::string()));
+        if (p.isEmpty()) {
+            continue;
+        }
+        const QFileInfo have(p);
+        const auto hk = have.canonicalFilePath().isEmpty() ? have.absoluteFilePath()
+                                                           : have.canonicalFilePath();
+        if (QString::compare(key, hk, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void MainWindow::refresh_tab_chrome(PackageTab* tab) {
+    if (!tab) {
+        return;
+    }
+    auto info = bus_.execute("package.info", {{"sessionId", tab->session_id().toStdString()}});
+    QString path;
+    bool dirty = false;
+    bool writable = true;
+    if (info.value("ok", false)) {
+        path = QString::fromStdString(info["data"].value("path", std::string()));
+        dirty = info["data"].value("dirty", false);
+        writable = info["data"].value("readWrite", true);
+    }
+    const int i = tabs_->indexOf(tab);
+    if (i >= 0) {
+        tabs_->setTabText(i, tab_label(path, writable, dirty));
+        tabs_->setTabToolTip(i, path.isEmpty() ? tr("Untitled") : path);
+    }
+    if (tab == current_tab()) {
+        setWindowTitle(tab_label(path, writable, false) + QStringLiteral("[*]") +
+                       QStringLiteral(" — SXPE"));
+        setWindowModified(dirty);
+    }
 }
 
 void MainWindow::update_status() {
@@ -375,8 +492,11 @@ void MainWindow::update_status() {
     if (!t) {
         status_path_->setText(tr("No package"));
         status_counts_->clear();
+        setWindowTitle(tr("SXPE"));
+        setWindowModified(false);
         return;
     }
+    refresh_tab_chrome(t);
     auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
     if (!info.value("ok", false)) {
         return;
@@ -1084,8 +1204,11 @@ bool MainWindow::smoke_filter(const QString& text) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
-    while (auto* t = current_tab()) {
-        close_tab(tabs_->indexOf(t));
+    for (int i = tabs_->count() - 1; i >= 0; --i) {
+        if (!close_tab(i)) {
+            e->ignore();
+            return;
+        }
     }
     e->accept();
 }
