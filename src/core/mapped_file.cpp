@@ -2,6 +2,8 @@
 
 #include "sxpe/core/caps.hpp"
 
+#include <string>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -10,9 +12,46 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <cerrno>
+#include <cstring>
 #endif
 
 namespace sxpe::core {
+
+std::string MappedFile::open_error_message(bool writable) {
+#ifdef _WIN32
+    const DWORD e = GetLastError();
+    switch (e) {
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND:
+            return "file not found";
+        case ERROR_ACCESS_DENIED:
+            return writable ? "access denied — close The Sims 3 or check file permissions"
+                            : "access denied";
+        case ERROR_SHARING_VIOLATION:
+        case ERROR_LOCK_VIOLATION:
+            return writable ? "file is in use — close The Sims 3 and try again"
+                            : "file is in use";
+        default:
+            return "open failed (Windows error " + std::to_string(e) + ")";
+    }
+#else
+    switch (errno) {
+        case ENOENT:
+            return "file not found";
+        case EACCES:
+        case EPERM:
+            return writable ? "access denied — close the game or check file permissions"
+                            : "access denied";
+        case EBUSY:
+        case ETXTBSY:
+            return "file is in use";
+        default:
+            return std::string("open failed: ") + std::strerror(errno);
+    }
+#endif
+}
 
 MappedFile& MappedFile::operator=(MappedFile&& o) noexcept {
     if (this == &o) {
@@ -56,9 +95,7 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
     m.file_ = CreateFileW(path.c_str(), access, share, nullptr, OPEN_EXISTING,
                           FILE_ATTRIBUTE_NORMAL, nullptr);
     if (as_handle(m.file_) == INVALID_HANDLE_VALUE) {
-        return std::unexpected(
-            err(ErrorCode::io, writable ? "file is in use — close The Sims 3 and try again"
-                                        : "CreateFile failed"));
+        return std::unexpected(err(ErrorCode::io, MappedFile::open_error_message(writable)));
     }
     LARGE_INTEGER sz{};
     if (!GetFileSizeEx(as_handle(m.file_), &sz)) {
@@ -125,7 +162,7 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
     m.writable_ = writable;
     m.fd_ = ::open(path.c_str(), writable ? O_RDWR : O_RDONLY);
     if (m.fd_ < 0) {
-        return std::unexpected(err(ErrorCode::io, "open failed"));
+        return std::unexpected(err(ErrorCode::io, MappedFile::open_error_message(writable)));
     }
     struct stat st {};
     if (fstat(m.fd_, &st) != 0) {

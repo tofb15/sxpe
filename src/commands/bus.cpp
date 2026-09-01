@@ -305,6 +305,49 @@ Result<std::vector<std::byte>> read_file(const std::filesystem::path& p) {
     return o;
 }
 
+Result<std::vector<std::byte>> payload_from_args(const json& args) {
+    if (args.contains("payloadB64") && args["payloadB64"].is_string()) {
+        const auto s = args["payloadB64"].get<std::string>();
+        if (!s.empty()) {
+            return b64_decode(s);
+        }
+    }
+    if (args.contains("path") && args["path"].is_string()) {
+        auto p = check_path(args["path"].get<std::string>());
+        if (!p) {
+            return std::unexpected(p.error());
+        }
+        return read_file(*p);
+    }
+    return std::unexpected(
+        err(ErrorCode::invalid_argument, "need payloadB64 or path (bytes to insert)"));
+}
+
+Result<std::uint32_t> ensure_nmap_index(Package& pkg) {
+    for (std::uint32_t i = 0; i < pkg.count(); ++i) {
+        if (pkg.entry(i).tgi.type == kNmap) {
+            return i;
+        }
+    }
+    if (pkg.layout_locked()) {
+        return std::unexpected(err(ErrorCode::refused,
+                                   "this neighborhood file has no name map and cannot gain one"));
+    }
+    sxpe::resources::Nmap blank;
+    blank.version = 1;
+    auto body = sxpe::resources::write_nmap(blank);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    Tgi t{};
+    t.type = kNmap;
+    auto idx = pkg.add(t, *body, false);
+    if (!idx) {
+        return std::unexpected(idx.error());
+    }
+    return *idx;
+}
+
 bool parse_community_name(std::string_view fn, Tgi& t, std::string& name) {
     // S3_TTTTTTTT_GGGGGGGG_IIIIIIIIIIIIIIII_name%%+ext
     if (fn.size() < 40 || fn.substr(0, 3) != "S3_") {
@@ -425,13 +468,15 @@ std::vector<Tool> make_catalog() {
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
          env_out, true, false, true, true});
-    add({"resource.add", "Add resource", "Insert bytes with a TGI.",
+    add({"resource.add", "Add resource",
+         "Insert bytes with a TGI. Pass payloadB64 or path to a file (not both required).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"payloadB64", {{"type", "string"}}},
+                     {"path", {{"type", "string"}}},
                      {"compress", {{"type", "boolean"}, {"default", false}}},
                      {"dryRun", dry_prop()}},
-                    json::array({"sessionId", "resourceId", "payloadB64"})),
+                    json::array({"sessionId", "resourceId"})),
          env_out, false, true, false, false});
     add({"resource.delete", "Delete resource", "Remove from the index (undoable).",
          obj_schema({{"sessionId", sess_prop()},
@@ -445,13 +490,15 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, false, true, false, false});
-    add({"resource.replace", "Replace payload", "Keep TGI, replace uncompressed body.",
+    add({"resource.replace", "Replace payload",
+         "Keep TGI, replace uncompressed body. Pass payloadB64 or path.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"payloadB64", {{"type", "string"}}},
+                     {"path", {{"type", "string"}}},
                      {"compress", {{"type", "boolean"}}},
                      {"dryRun", dry_prop()}},
-                    json::array({"sessionId", "resourceId", "payloadB64"})),
+                    json::array({"sessionId", "resourceId"})),
          env_out, false, true, false, false});
     add({"resource.replaceInPlace", "Replace in place",
          "Patch one resource into its existing on-disk hole. Does not rewrite the package. "
@@ -540,11 +587,14 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "id"})),
          env_out, false, true, false, false});
-    add({"nmap.get", "NMAP get", "Name map entries.",
+    add({"nmap.get", "NMAP get",
+         "Merged name-map entries. These strings are the Name column on resource.list.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId"})),
          env_out, true, false, true, false});
-    add({"nmap.set", "NMAP set", "Set the name for an instance in a name map.",
+    add({"nmap.set", "NMAP set",
+         "Set the display name for an instance (the Name column). Creates a name map "
+         "if the package has none. Prefer resource.rename when you have a resourceId.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"instance", {{"type", "integer"}}},
@@ -552,15 +602,27 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "instance", "name"})),
          env_out, false, true, false, false});
+    add({"resource.rename", "Rename resource",
+         "Set the NMAP display name for a resource (creates a name map if needed). "
+         "This is the Name the game and the resource list show.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"name", {{"type", "string"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "name"})),
+         env_out, false, true, false, false});
     add({"dds.info", "DDS info", "Width/height/format from a DDS resource.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
-    add({"dds.decode", "DDS decode", "Decode to RGBA metadata (size); does not dump pixels in MCP.",
+    add({"dds.decode", "DDS decode",
+         "Decode DXT1, DXT5, or 24/32-bit RGB(A) to RGBA byte count. Other DDS formats "
+         "return unsupported. Does not embed pixels in MCP (use dds.export for the file).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
-    add({"dds.export", "DDS export", "Write the on-disk DDS bytes to a .dds path.",
+    add({"dds.export", "DDS export",
+         "Write the on-disk DDS bytes to a .dds path (no recompress; works without DirectXTex).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"path", {{"type", "string"}}},
@@ -986,6 +1048,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"features",
                              {{"simCity5Create", false},
                               {"directXTex", false},
+                              {"ddsDecode", true},
+                              {"ddsExport", true},
                               {"mcpHttp", false}}},
                             {"mruMax", 12}});
     }
@@ -1214,7 +1278,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
     }
     if (cmd == "resource.add") {
         Tgi t = tgi_from(args.at("resourceId"));
-        auto raw = b64_decode(args.at("payloadB64").get<std::string>());
+        auto raw = payload_from_args(args);
         if (!raw) {
             return envelope_err(raw.error());
         }
@@ -1272,7 +1336,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!i) {
             return envelope_err(i.error());
         }
-        auto raw = b64_decode(args.at("payloadB64").get<std::string>());
+        auto raw = payload_from_args(args);
         if (!raw) {
             return envelope_err(raw.error());
         }
@@ -1617,24 +1681,45 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return envelope_ok({{"entries", arr}});
     }
-    if (cmd == "nmap.set") {
-        std::optional<std::uint32_t> ni;
-        if (args.contains("resourceId")) {
+    if (cmd == "nmap.set" || cmd == "resource.rename") {
+        std::uint64_t inst = 0;
+        if (cmd == "resource.rename") {
             auto i = need_idx();
             if (!i) {
                 return envelope_err(i.error());
             }
+            inst = s.pkg.entry(*i).tgi.instance;
+        } else {
+            inst = as_u64(args.at("instance"));
+        }
+        const auto name = args.at("name").get<std::string>();
+        std::optional<std::uint32_t> ni;
+        if (cmd == "nmap.set" && args.contains("resourceId")) {
+            auto i = need_idx();
+            if (!i) {
+                return envelope_err(i.error());
+            }
+            if (s.pkg.entry(*i).tgi.type != kNmap) {
+                return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not an NMAP"));
+            }
             ni = *i;
         } else {
+            bool have = false;
             for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
                 if (s.pkg.entry(i).tgi.type == kNmap) {
-                    ni = i;
+                    have = true;
                     break;
                 }
             }
-        }
-        if (!ni) {
-            return envelope_err(err(ErrorCode::not_found, "nmap"));
+            if (!have && dry(args)) {
+                return envelope_ok(
+                    {{"dryRun", true}, {"instance", inst}, {"name", name}, {"wouldCreateMap", true}});
+            }
+            auto found = ensure_nmap_index(s.pkg);
+            if (!found) {
+                return envelope_err(found.error());
+            }
+            ni = *found;
         }
         auto body = s.pkg.uncompressed(*ni);
         if (!body) {
@@ -1644,8 +1729,6 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!n) {
             return envelope_err(n.error());
         }
-        const auto inst = as_u64(args.at("instance"));
-        const auto name = args.at("name").get<std::string>();
         bool found = false;
         for (auto& e : n->entries) {
             if (e.instance == inst) {
@@ -1658,7 +1741,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
             n->entries.push_back({inst, name});
         }
         if (dry(args)) {
-            return envelope_ok({{"dryRun", true}});
+            return envelope_ok({{"dryRun", true}, {"instance", inst}, {"name", name}});
         }
         snapshot(s, *ni);
         auto out = sxpe::resources::write_nmap(*n);

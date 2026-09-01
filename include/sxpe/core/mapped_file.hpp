@@ -20,6 +20,8 @@ public:
     MappedFile& operator=(const MappedFile&) = delete;
 
     static Result<MappedFile> open(const std::filesystem::path& path, bool writable);
+    /// Human-readable CreateFile / open(2) failure. Never a blanket "in use".
+    static std::string open_error_message(bool writable);
 
     [[nodiscard]] std::uint64_t size() const { return size_; }
     [[nodiscard]] bool writable() const { return writable_; }

@@ -111,6 +111,14 @@ int main() {
     std::error_code ec;
     std::filesystem::create_directories(tmp, ec);
 
+    auto missing = tmp / "no-such-sxpe-file.bin";
+    auto missing_pkg = Package::open(missing, true);
+    CHECK(!missing_pkg);
+    if (!missing_pkg) {
+        CHECK(missing_pkg.error().message.find("in use") == std::string::npos);
+        CHECK(missing_pkg.error().message.find("not found") != std::string::npos);
+    }
+
     auto junk = tmp / "not-dbpf.bin";
     const std::byte bad[] = {std::byte{'X'}, std::byte{'X'}, std::byte{'X'}, std::byte{'X'}};
     write_bytes(junk, bad);

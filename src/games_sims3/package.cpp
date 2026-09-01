@@ -86,8 +86,7 @@ VoidResult apply_disk_writes(const std::filesystem::path& path, const std::vecto
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-        return std::unexpected(
-            err(ErrorCode::io, "file is in use — close The Sims 3 and try again"));
+        return std::unexpected(err(ErrorCode::io, core::MappedFile::open_error_message(true)));
     }
     for (const auto& w : ws) {
         if (w.data.empty()) {

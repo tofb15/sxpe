@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <string>
 
 int main() {
     using nlohmann::json;
@@ -128,6 +129,29 @@ int main() {
     auto ng = bus.execute("nmap.get", json{{"sessionId", sid}});
     CHECK(ng["ok"] == true);
     CHECK(ng["data"]["entries"].size() == 1);
+
+    auto fresh = bus.execute("package.new", json::object());
+    CHECK(fresh["ok"] == true);
+    const auto fsid = fresh["data"]["sessionId"].get<std::string>();
+    auto named = bus.execute("nmap.set", json{{"sessionId", fsid}, {"instance", 99}, {"name", "Door"}});
+    CHECK(named["ok"] == true);
+    auto xml_rid = json{{"type", sxpe::resources::kXml}, {"group", 0}, {"instance", 99}};
+    auto xml_add = bus.execute("resource.add",
+                               json{{"sessionId", fsid}, {"resourceId", xml_rid}, {"payloadB64", b64(*raw)}});
+    CHECK(xml_add["ok"] == true);
+    auto renamed = bus.execute(
+        "resource.rename", json{{"sessionId", fsid}, {"resourceId", xml_rid}, {"name", "NRaas.NoCD"}});
+    CHECK(renamed["ok"] == true);
+    auto listed_names = bus.execute("resource.list", json{{"sessionId", fsid}, {"limit", 20}});
+    CHECK(listed_names["ok"] == true);
+    bool saw_door = false;
+    for (const auto& it : listed_names["data"]["items"]) {
+        if (it.value("instance", 0ull) == 99 && it.value("name", "") == "NRaas.NoCD") {
+            saw_door = true;
+        }
+    }
+    CHECK(saw_door);
+    bus.execute("package.close", json{{"sessionId", fsid}});
 
     auto fl = bus.execute("resource.setFlags",
                           json{{"sessionId", sid}, {"resourceId", rid}, {"deleted", true}});

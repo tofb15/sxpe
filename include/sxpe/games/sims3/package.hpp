@@ -73,6 +73,8 @@ public:
     [[nodiscard]] std::uint32_t deleted_count() const;
     [[nodiscard]] bool dir_present() const;
     [[nodiscard]] std::uint64_t mapped_bytes() const { return map_.size(); }
+    /// Neighborhood .nhd/.world/.dbc: in-place holes only; cannot add index rows.
+    [[nodiscard]] bool layout_locked() const;
 
 private:
     Package() = default;
@@ -81,7 +83,6 @@ private:
     Result<std::vector<std::byte>> payload_on_disk(std::uint32_t i) const;
     void compute_payload_capacities();
     VoidResult flush_layout();
-    [[nodiscard]] bool layout_locked() const;
 
     std::filesystem::path path_;
     bool writable_{false};

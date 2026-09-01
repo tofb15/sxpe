@@ -113,9 +113,11 @@ void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QStrin
                                                    {"deleted", del->isChecked()}});
         ok = ok && f.value("ok", false);
         if (!name->text().isEmpty()) {
-            bus.execute("nmap.set", {{"sessionId", session.toStdString()},
-                                     {"instance", ni},
-                                     {"name", name->text().toStdString()}});
+            auto nm = bus.execute("resource.rename",
+                                  {{"sessionId", session.toStdString()},
+                                   {"resourceId", rid},
+                                   {"name", name->text().toStdString()}});
+            ok = ok && nm.value("ok", false);
         }
         if (ok) {
             dlg.accept();

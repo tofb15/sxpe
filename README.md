@@ -42,7 +42,12 @@ Requires CMake 3.28+ and a C++23 compiler. The GUI needs Qt 6 Widgets (`find_pac
 
 ```text
 sxpe_gui path\to\file.package
+sxpe --help
+sxpe resource list --package path\to\file.package
+sxpe resource rename --package path\to\file.package --type 0x0333406C --group 0 --instance 0x1 --name NRaas.NoCD --force
 ```
+
+Resource **Name** is the package name map (NMAP). `nmap.set` / `resource.rename` write it and **create an NMAP if the package has none**. `sxpe --help` lists every command from the same catalog MCP uses.
 
 ## Layout
 
