@@ -16,24 +16,63 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QSplitter>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <array>
 #include <thread>
+#include <vector>
 
 namespace sxpe::gui {
 namespace {
 
 class ResourceTableView final : public QTableView {
 public:
-    using QTableView::QTableView;
+    explicit ResourceTableView(QWidget* parent = nullptr) : QTableView(parent) {
+        connect(horizontalHeader(), &QHeaderView::sectionResized, this,
+                &ResourceTableView::on_section_resized);
+    }
+
+    void set_mins(std::array<int, ResourceModel::Count_> mins) {
+        mins_ = mins;
+        int sum = 0;
+        for (int m : mins_) {
+            sum += m;
+        }
+        setMinimumWidth(sum + 24);
+    }
+
+    void set_defaults(std::array<int, ResourceModel::Count_> defaults) { defaults_ = defaults; }
+
+    void reset_column(int logical) {
+        if (logical < 0 || logical >= ResourceModel::Count_) {
+            return;
+        }
+        apply_user_width(logical, defaults_[static_cast<size_t>(logical)]);
+    }
 
 protected:
     void resizeEvent(QResizeEvent* e) override {
         QTableView::resizeEvent(e);
+        const int vw = viewport()->width();
+        if (old_vw_ < 0) {
+            distribute_delta(vw - current_sum());
+        } else if (vw != old_vw_) {
+            distribute_delta(vw - old_vw_);
+        }
+        old_vw_ = viewport()->width();
         viewport()->update();
+    }
+    void showEvent(QShowEvent* e) override {
+        QTableView::showEvent(e);
+        if (old_vw_ < 0) {
+            distribute_delta(viewport()->width() - current_sum());
+            old_vw_ = viewport()->width();
+        }
     }
     void paintEvent(QPaintEvent* e) override {
         QPainter bg(viewport());
@@ -41,6 +80,125 @@ protected:
         bg.end();
         QTableView::paintEvent(e);
     }
+
+private:
+    int min_for(int col) const {
+        if (col < 0 || col >= ResourceModel::Count_) {
+            return 32;
+        }
+        return mins_[static_cast<size_t>(col)];
+    }
+
+    int current_sum() const {
+        int s = 0;
+        const int n = model() ? model()->columnCount() : 0;
+        for (int i = 0; i < n; ++i) {
+            s += columnWidth(i);
+        }
+        return s;
+    }
+
+    void distribute_delta(int delta) {
+        if (filling_ || !model() || delta == 0) {
+            return;
+        }
+        filling_ = true;
+        const int n = model()->columnCount();
+        std::vector<int> w(static_cast<size_t>(n));
+        std::vector<int> mn(static_cast<size_t>(n));
+        for (int i = 0; i < n; ++i) {
+            mn[static_cast<size_t>(i)] = min_for(i);
+            w[static_cast<size_t>(i)] = std::max(columnWidth(i), mn[static_cast<size_t>(i)]);
+        }
+        if (delta > 0) {
+            const int base = delta / n;
+            int rem = delta % n;
+            for (int i = 0; i < n; ++i) {
+                w[static_cast<size_t>(i)] += base + (rem > 0 ? 1 : 0);
+                if (rem > 0) {
+                    --rem;
+                }
+            }
+        } else {
+            int need = -delta;
+            while (need > 0) {
+                int flexible = 0;
+                for (int i = 0; i < n; ++i) {
+                    if (w[static_cast<size_t>(i)] > mn[static_cast<size_t>(i)]) {
+                        ++flexible;
+                    }
+                }
+                if (flexible == 0) {
+                    break;
+                }
+                const int share = std::max(1, need / flexible);
+                for (int i = 0; i < n && need > 0; ++i) {
+                    const int room = w[static_cast<size_t>(i)] - mn[static_cast<size_t>(i)];
+                    if (room <= 0) {
+                        continue;
+                    }
+                    const int take = std::min(share, std::min(room, need));
+                    w[static_cast<size_t>(i)] -= take;
+                    need -= take;
+                }
+            }
+        }
+        for (int i = 0; i < n; ++i) {
+            setColumnWidth(i, w[static_cast<size_t>(i)]);
+        }
+        filling_ = false;
+    }
+
+    void apply_user_width(int logical, int new_size) {
+        if (!model()) {
+            return;
+        }
+        filling_ = true;
+        const int n = model()->columnCount();
+        const int old_size = columnWidth(logical);
+        const int mn = min_for(logical);
+        new_size = std::max(new_size, mn);
+        int delta = new_size - old_size;
+        setColumnWidth(logical, new_size);
+        auto steal = [&](int i) {
+            if (delta == 0 || i < 0 || i >= n || i == logical) {
+                return;
+            }
+            if (delta > 0) {
+                const int room = columnWidth(i) - min_for(i);
+                const int take = std::min(room, delta);
+                if (take > 0) {
+                    setColumnWidth(i, columnWidth(i) - take);
+                    delta -= take;
+                }
+            } else {
+                setColumnWidth(i, columnWidth(i) - delta);
+                delta = 0;
+            }
+        };
+        for (int i = logical + 1; i < n; ++i) {
+            steal(i);
+        }
+        for (int i = logical - 1; i >= 0; --i) {
+            steal(i);
+        }
+        if (delta > 0) {
+            setColumnWidth(logical, columnWidth(logical) - delta);
+        }
+        filling_ = false;
+    }
+
+    void on_section_resized(int logical, int /*old_size*/, int new_size) {
+        if (filling_) {
+            return;
+        }
+        apply_user_width(logical, new_size);
+    }
+
+    std::array<int, ResourceModel::Count_> mins_{};
+    std::array<int, ResourceModel::Count_> defaults_{};
+    int old_vw_{-1};
+    bool filling_{false};
 };
 
 }  // namespace
@@ -71,13 +229,13 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     split->setOpaqueResize(true);
     split->setHandleWidth(8);
     table_ = new ResourceTableView;
-    table_->setMinimumWidth(280);
     model_ = new ResourceModel(this);
     table_->setModel(model_);
     table_->setItemDelegate(new ResourcePaintDelegate(table_));
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    table_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     table_->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setTabKeyNavigation(false);
@@ -103,18 +261,33 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         auto* hdr = table_->horizontalHeader();
         hdr->setSectionResizeMode(QHeaderView::Interactive);
         hdr->setCascadingSectionResizes(false);
-        hdr->setMinimumSectionSize(32);
-        hdr->setStretchLastSection(true);
+        hdr->setStretchLastSection(false);
         hdr->setSectionsMovable(false);
         hdr->setHighlightSections(false);
         hdr->setSortIndicatorShown(true);
         hdr->setSectionsClickable(true);
         const int tag_w = fm.horizontalAdvance(QStringLiteral("_IMG")) + 28;
+        const int name_w = 180;
         const int ord_w = fm.horizontalAdvance(QStringLiteral("000")) + 20;
         const int size_w = fm.horizontalAdvance(QStringLiteral("00000000")) + 20;
         const int cmp_w = fm.horizontalAdvance(QStringLiteral("Cmp")) + 20;
+        std::array<int, ResourceModel::Count_> mins{};
+        mins[ResourceModel::Tag] = tag_w;
+        mins[ResourceModel::Name] = 72;
+        mins[ResourceModel::Type] = hex8;
+        mins[ResourceModel::Group] = hex8;
+        mins[ResourceModel::Instance] = hex16;
+        mins[ResourceModel::Ordinal] = ord_w;
+        mins[ResourceModel::Size] = size_w;
+        mins[ResourceModel::Compressed] = cmp_w;
+        std::array<int, ResourceModel::Count_> defs = mins;
+        defs[ResourceModel::Name] = name_w;
+        auto* grid = static_cast<ResourceTableView*>(table_);
+        grid->set_mins(mins);
+        grid->set_defaults(defs);
+        hdr->setMinimumSectionSize(32);
         table_->setColumnWidth(ResourceModel::Tag, tag_w);
-        table_->setColumnWidth(ResourceModel::Name, 180);
+        table_->setColumnWidth(ResourceModel::Name, name_w);
         table_->setColumnWidth(ResourceModel::Type, hex8);
         table_->setColumnWidth(ResourceModel::Group, hex8);
         table_->setColumnWidth(ResourceModel::Instance, hex16);
@@ -122,34 +295,7 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         table_->setColumnWidth(ResourceModel::Size, size_w);
         table_->setColumnWidth(ResourceModel::Compressed, cmp_w);
         connect(hdr, &QHeaderView::sectionHandleDoubleClicked, table_,
-                [=](int logical) {
-                    switch (logical) {
-                        case ResourceModel::Tag:
-                            table_->setColumnWidth(logical, tag_w);
-                            break;
-                        case ResourceModel::Name:
-                            table_->setColumnWidth(logical, 180);
-                            break;
-                        case ResourceModel::Type:
-                        case ResourceModel::Group:
-                            table_->setColumnWidth(logical, hex8);
-                            break;
-                        case ResourceModel::Instance:
-                            table_->setColumnWidth(logical, hex16);
-                            break;
-                        case ResourceModel::Ordinal:
-                            table_->setColumnWidth(logical, ord_w);
-                            break;
-                        case ResourceModel::Size:
-                            table_->setColumnWidth(logical, size_w);
-                            break;
-                        case ResourceModel::Compressed:
-                            table_->setColumnWidth(logical, cmp_w);
-                            break;
-                        default:
-                            break;
-                    }
-                });
+                [grid](int logical) { grid->reset_column(logical); });
     }
     table_->setSortingEnabled(true);
     inspector_ = new Inspector(bus_, this);
