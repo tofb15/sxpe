@@ -30,30 +30,10 @@ class ResourceTableView final : public QTableView {
 public:
     using QTableView::QTableView;
 
-    void fill_width() {
-        if (filling_ || !model()) {
-            return;
-        }
-        filling_ = true;
-        int others = 0;
-        const int cols = model()->columnCount();
-        for (int c = 0; c < cols; ++c) {
-            if (c != ResourceModel::Name) {
-                others += columnWidth(c);
-            }
-        }
-        const int w = viewport()->width() - others;
-        if (w >= 48) {
-            setColumnWidth(ResourceModel::Name, w);
-        }
-        filling_ = false;
-        viewport()->update();
-    }
-
 protected:
     void resizeEvent(QResizeEvent* e) override {
         QTableView::resizeEvent(e);
-        fill_width();
+        viewport()->update();
     }
     void paintEvent(QPaintEvent* e) override {
         QPainter bg(viewport());
@@ -61,9 +41,6 @@ protected:
         bg.end();
         QTableView::paintEvent(e);
     }
-
-private:
-    bool filling_{false};
 };
 
 }  // namespace
@@ -92,7 +69,9 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     auto* split = new QSplitter(Qt::Horizontal);
     split->setChildrenCollapsible(false);
     split->setOpaqueResize(true);
+    split->setHandleWidth(8);
     table_ = new ResourceTableView;
+    table_->setMinimumWidth(280);
     model_ = new ResourceModel(this);
     table_->setModel(model_);
     table_->setItemDelegate(new ResourcePaintDelegate(table_));
@@ -110,7 +89,6 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     table_->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     table_->verticalHeader()->setDefaultSectionSize(22);
     table_->verticalHeader()->setMinimumSectionSize(22);
-    table_->horizontalHeader()->setStretchLastSection(false);
     table_->viewport()->setAutoFillBackground(true);
     table_->setMouseTracking(false);
     {
@@ -124,24 +102,58 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         const int hex16 = fm.horizontalAdvance(QStringLiteral("0000000000000000")) + 20;
         auto* hdr = table_->horizontalHeader();
         hdr->setSectionResizeMode(QHeaderView::Interactive);
-        hdr->setMinimumSectionSize(24);
-        hdr->setStretchLastSection(false);
-        table_->setColumnWidth(ResourceModel::Tag, fm.horizontalAdvance(QStringLiteral("_IMG")) + 28);
+        hdr->setCascadingSectionResizes(false);
+        hdr->setMinimumSectionSize(32);
+        hdr->setStretchLastSection(true);
+        hdr->setSectionsMovable(false);
+        hdr->setHighlightSections(false);
+        hdr->setSortIndicatorShown(true);
+        hdr->setSectionsClickable(true);
+        const int tag_w = fm.horizontalAdvance(QStringLiteral("_IMG")) + 28;
+        const int ord_w = fm.horizontalAdvance(QStringLiteral("000")) + 20;
+        const int size_w = fm.horizontalAdvance(QStringLiteral("00000000")) + 20;
+        const int cmp_w = fm.horizontalAdvance(QStringLiteral("Cmp")) + 20;
+        table_->setColumnWidth(ResourceModel::Tag, tag_w);
         table_->setColumnWidth(ResourceModel::Name, 180);
         table_->setColumnWidth(ResourceModel::Type, hex8);
         table_->setColumnWidth(ResourceModel::Group, hex8);
         table_->setColumnWidth(ResourceModel::Instance, hex16);
-        table_->setColumnWidth(ResourceModel::Ordinal, fm.horizontalAdvance(QStringLiteral("000")) + 16);
-        table_->setColumnWidth(ResourceModel::Size, fm.horizontalAdvance(QStringLiteral("00000000")) + 16);
-        table_->setColumnWidth(ResourceModel::Compressed, fm.horizontalAdvance(QStringLiteral("Cmp")) + 16);
-        hdr->setSortIndicatorShown(true);
-        hdr->setSectionsClickable(true);
-        connect(hdr, &QHeaderView::sectionResized, table_, [this](int, int, int) {
-            static_cast<ResourceTableView*>(table_)->fill_width();
-        });
+        table_->setColumnWidth(ResourceModel::Ordinal, ord_w);
+        table_->setColumnWidth(ResourceModel::Size, size_w);
+        table_->setColumnWidth(ResourceModel::Compressed, cmp_w);
+        connect(hdr, &QHeaderView::sectionHandleDoubleClicked, table_,
+                [=](int logical) {
+                    switch (logical) {
+                        case ResourceModel::Tag:
+                            table_->setColumnWidth(logical, tag_w);
+                            break;
+                        case ResourceModel::Name:
+                            table_->setColumnWidth(logical, 180);
+                            break;
+                        case ResourceModel::Type:
+                        case ResourceModel::Group:
+                            table_->setColumnWidth(logical, hex8);
+                            break;
+                        case ResourceModel::Instance:
+                            table_->setColumnWidth(logical, hex16);
+                            break;
+                        case ResourceModel::Ordinal:
+                            table_->setColumnWidth(logical, ord_w);
+                            break;
+                        case ResourceModel::Size:
+                            table_->setColumnWidth(logical, size_w);
+                            break;
+                        case ResourceModel::Compressed:
+                            table_->setColumnWidth(logical, cmp_w);
+                            break;
+                        default:
+                            break;
+                    }
+                });
     }
     table_->setSortingEnabled(true);
     inspector_ = new Inspector(bus_, this);
+    inspector_->setMinimumWidth(220);
     inspector_->set_session(session_);
     split->addWidget(table_);
     split->addWidget(inspector_);
