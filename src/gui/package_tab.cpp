@@ -91,17 +91,13 @@ public:
         filling_ = true;
         for (int i = 0; i < ResourceModel::Count_; ++i) {
             const bool want = (m & (1u << static_cast<unsigned>(i))) != 0;
-            const bool hidden = hdr->isSectionHidden(i);
+            setColumnHidden(i, !want);
             if (want) {
-                if (hidden) {
-                    hdr->showSection(i);
-                }
                 setColumnWidth(i, std::max(min_for(i), stored_[static_cast<size_t>(i)]));
-            } else if (!hidden) {
-                hdr->hideSection(i);
             }
         }
         filling_ = false;
+        pack_hidden_to_end();
         update_min_width();
         old_vw_ = -1;
         distribute_delta(viewport()->width() - current_sum());
@@ -204,6 +200,7 @@ public:
             }
         }
         filling_ = false;
+        pack_hidden_to_end();
         old_vw_ = viewport()->width();
         viewport()->update();
         save_stored_widths();
@@ -222,6 +219,7 @@ public:
             }
         }
         filling_ = false;
+        pack_hidden_to_end();
         old_vw_ = -1;
         distribute_delta(viewport()->width() - current_sum());
         old_vw_ = viewport()->width();
@@ -274,9 +272,28 @@ protected:
     }
 
 private:
-    bool section_hidden(int col) const {
+    bool section_hidden(int col) const { return isColumnHidden(col); }
+
+    void pack_hidden_to_end() {
         auto* hdr = horizontalHeader();
-        return hdr && hdr->isSectionHidden(col);
+        if (!hdr || !model()) {
+            return;
+        }
+        const bool was = filling_;
+        filling_ = true;
+        const int n = model()->columnCount();
+        int dest = 0;
+        for (int logical = 0; logical < n; ++logical) {
+            if (isColumnHidden(logical)) {
+                continue;
+            }
+            const int vis = hdr->visualIndex(logical);
+            if (vis >= 0 && vis != dest) {
+                hdr->moveSection(vis, dest);
+            }
+            ++dest;
+        }
+        filling_ = was;
     }
 
     int min_for(int col) const {
@@ -610,7 +627,7 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         auto* grid = static_cast<ResourceTableView*>(table_);
         grid->set_mins(mins);
         grid->set_defaults(defs);
-        hdr->setMinimumSectionSize(32);
+        hdr->setMinimumSectionSize(0);
         hdr->setSortIndicator(-1, Qt::AscendingOrder);
         table_->setColumnWidth(ResourceModel::Id, id_w);
         table_->setColumnWidth(ResourceModel::Tag, tag_w);
