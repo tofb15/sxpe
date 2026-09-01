@@ -177,6 +177,8 @@ void ResourcePaintDelegate::paint(QPainter* painter, const QStyleOptionViewItem&
     const QColor bg = sel ? pal.color(QPalette::Highlight)
                           : ((index.row() & 1) ? pal.color(QPalette::AlternateBase)
                                                : pal.color(QPalette::Base));
+    painter->save();
+    painter->setClipRect(option.rect);
     painter->fillRect(option.rect, bg);
     if (sel) {
         painter->setPen(pal.color(QPalette::HighlightedText));
@@ -188,6 +190,7 @@ void ResourcePaintDelegate::paint(QPainter* painter, const QStyleOptionViewItem&
     painter->setFont(option.font);
     painter->drawText(option.rect.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft,
                       ResourceModel::cell_text(*r, index.column()));
+    painter->restore();
 }
 
 QSize ResourcePaintDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const {

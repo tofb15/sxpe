@@ -13,6 +13,9 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QResizeEvent>
 #include <QSplitter>
 #include <QTableView>
 #include <QTimer>
@@ -21,6 +24,26 @@
 #include <thread>
 
 namespace sxpe::gui {
+namespace {
+
+class ResourceTableView final : public QTableView {
+public:
+    using QTableView::QTableView;
+
+protected:
+    void resizeEvent(QResizeEvent* e) override {
+        QTableView::resizeEvent(e);
+        viewport()->update();
+    }
+    void paintEvent(QPaintEvent* e) override {
+        QPainter bg(viewport());
+        bg.fillRect(e->rect(), palette().color(QPalette::Base));
+        bg.end();
+        QTableView::paintEvent(e);
+    }
+};
+
+}  // namespace
 
 PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* parent)
     : QWidget(parent), bus_(bus), session_(std::move(session_id)) {
@@ -44,7 +67,9 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     root->addLayout(filter_row);
 
     auto* split = new QSplitter(Qt::Horizontal);
-    table_ = new QTableView;
+    split->setChildrenCollapsible(false);
+    split->setOpaqueResize(true);
+    table_ = new ResourceTableView;
     model_ = new ResourceModel(this);
     table_->setModel(model_);
     table_->setItemDelegate(new ResourcePaintDelegate(table_));
@@ -63,7 +88,7 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
     table_->verticalHeader()->setDefaultSectionSize(22);
     table_->verticalHeader()->setMinimumSectionSize(22);
     table_->horizontalHeader()->setStretchLastSection(false);
-    table_->viewport()->setAttribute(Qt::WA_OpaquePaintEvent, true);
+    table_->viewport()->setAutoFillBackground(true);
     table_->setMouseTracking(false);
     {
         QFont mono;
@@ -88,6 +113,7 @@ PackageTab::PackageTab(sxpe::commands::Bus& bus, QString session_id, QWidget* pa
         table_->setColumnWidth(ResourceModel::Compressed, fm.horizontalAdvance(QStringLiteral("Cmp")) + 16);
         hdr->setSortIndicatorShown(true);
         hdr->setSectionsClickable(true);
+        connect(hdr, &QHeaderView::sectionResized, table_, [this] { table_->viewport()->update(); });
     }
     table_->setSortingEnabled(true);
     inspector_ = new Inspector(bus_, this);
