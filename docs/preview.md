@@ -2,6 +2,8 @@
 
 Long-term goal: **every selected resource shows something useful** on the inspector Preview tab (image, structured summary, text, or an honest “opaque binary” card). This file lists what we know can be previewed, whether or not SXPE should do it soon.
 
+What each **Tag** actually stores (XML vs DDS vs mesh vs PE): [tags.md](tags.md).
+
 s3pe’s Auto Preview is the reference *behaviour*, not source: image / wrapper `Value` string / type-specific control, then fallback hex or text. It does **not** render 3D meshes or play clips in the main pane.
 
 ## What SXPE already shows

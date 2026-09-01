@@ -13,6 +13,7 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [hashing.md](hashing.md) | FNV-1 and CLIP instance |
 | [catalog.md](catalog.md) | Command catalog (CLI/MCP) sketch |
 | [preview.md](../preview.md) | Inspector preview inventory (what can be shown, difficulty, priority) |
+| [tags.md](../tags.md) | What each Tag means and what bytes the resource holds |
 
 **TBC-game:** confirm on this machine’s Steam install (`FullBuild0.package`, mmap in place). See workspace `LOCAL.md` (not in this repo).
 

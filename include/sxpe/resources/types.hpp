@@ -44,6 +44,7 @@ struct TypeInfo {
 // Display tags for the resource list (s3pe-style 4-char names). Public
 // community type IDs (SimsWiki PackedFileTypes / catalog resources), not an
 // s3pi ExtList dump. Unknown types still show an empty tag.
+// Human descriptions of each tag: docs/tags.md
 inline constexpr TypeInfo kTypes[] = {
     {0x00AE6C67, "BONE", "Skeleton / bone"},
     {kImg, "_IMG", "DDS image"},
