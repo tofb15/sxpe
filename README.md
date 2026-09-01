@@ -2,8 +2,9 @@
 
 **SXPE** is a 2026 reimplementation of a Sims 3 package editor: inspect and edit DBPF `.package` files used by *The Sims 3*.
 
-- **Humans:** Windows desktop app (Avalonia)
-- **Agents / scripts:** JSON/JSONL CLI and MCP (stdio)
+- **Language:** C++23 (CMake)
+- **Humans:** Windows desktop app (Qt 6 Widgets, later milestone)
+- **Agents / scripts:** JSON/JSONL CLI and MCP stdio (Qt-free, later milestone)
 - **License:** [GPL-3.0-or-later](LICENSE)
 - **v1 target:** The Sims 3 only
 
@@ -13,20 +14,22 @@ This project is unofficial. The Sims 3 is a trademark of Electronic Arts. SXPE i
 
 ## Status
 
-Foundation only. Package I/O, CLI, MCP, and GUI land in later work.
-
-Requires **.NET 10** SDK:
+Foundation only: game-profile interfaces and a Sims 3 stub. Package I/O, CLI, MCP, and GUI land in later work.
 
 ```text
-dotnet build
-dotnet test
+cmake --preset default
+cmake --build --preset default
+ctest --preset default
 ```
+
+Requires CMake 3.28+ and a C++23 compiler (MSVC 2022 17.8+ or equivalent). Qt is **not** required until the GUI target exists.
 
 ## Layout
 
-- `src/Sxpe.Games.Abstractions` — game-profile interfaces
-- `src/Sxpe.Games.Sims3` — Sims 3 profile (v1)
-- `src/Sxpe.Core` — sessions, mmap, registry
+- `include/sxpe/games` — game-profile interfaces
+- `include/sxpe/games/sims3` — Sims 3 profile (v1)
+- `include/sxpe/core` — registry
+- `src/` — implementations
 - `tests/` — unit tests (synthetic fixtures only)
 
 Do not commit game packages, custom-content, or other copyrighted binaries.
