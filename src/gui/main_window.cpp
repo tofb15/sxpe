@@ -330,16 +330,14 @@ bool MainWindow::save(bool as_copy, bool save_as) {
     const QString check = dest.isEmpty() ? current_package_path() : dest;
     const auto ext = QFileInfo(check).suffix().toLower();
     if (ext == QLatin1String("nhd") || ext == QLatin1String("world") || ext == QLatin1String("dbc")) {
-        const auto ans = QMessageBox::warning(
-            this, tr("Rewrite neighborhood file"),
-            tr("SXPE rewrites the entire file on save (not an in-place SNAP patch).\n"
-               "The game often refuses .nhd / .world / .dbc after that — missing "
-               "household snapshots are a common crash.\n\n"
-               "Keep a copy of the original folder first. Continue?"),
-            QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
-        if (ans != QMessageBox::Ok) {
-            return false;
-        }
+        QMessageBox::warning(
+            this, tr("Cannot save neighborhood file"),
+            tr("File → Save rebuilds the whole .nhd and the game rejects it.\n"
+               "For portraits use Resource → Editors → Replace SNAP PNG (in-place) "
+               "and then close SXPE without saving.\n"
+               "The PNG must be 8-bit RGBA at the original pixel size, and no larger "
+               "than the original file (Paint often writes a bigger PNG)."));
+        return false;
     }
     nlohmann::json args{{"sessionId", t->session_id().toStdString()}, {"force", true}};
     const char* cmd = "package.save";

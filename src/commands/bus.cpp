@@ -55,6 +55,18 @@ json rid_schema() {
 }
 
 json sess_prop() { return {{"type", "string"}}; }
+
+bool neighborhood_file(const std::filesystem::path& p) {
+    auto e = p.extension().string();
+    for (char& c : e) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return e == ".nhd" || e == ".world" || e == ".dbc";
+}
+
+const char* kNhdSaveMsg =
+    "Refusing to rewrite .nhd/.world/.dbc. Full save rebuilds the neighborhood and the game "
+    "rejects it. Use resource.replaceInPlace for SNAP/PNG (no File Save).";
 json dry_prop() { return {{"type", "boolean"}, {"default", false}}; }
 json force_prop() { return {{"type", "boolean"}, {"default", false}}; }
 
@@ -1012,6 +1024,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok({{"ok", issues.empty()}, {"issues", issues}, {"indexCount", s.pkg.count()}});
     }
     if (cmd == "package.save" || cmd == "package.compact") {
+        if (neighborhood_file(s.pkg.path())) {
+            return envelope_err(err(ErrorCode::refused, kNhdSaveMsg));
+        }
         if (dry(args)) {
             return envelope_ok({{"dryRun", true}, {"path", s.pkg.path().string()}});
         }
@@ -1025,6 +1040,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
         auto path = check_path(args.at("path").get<std::string>());
         if (!path) {
             return envelope_err(path.error());
+        }
+        if (neighborhood_file(*path) || neighborhood_file(s.pkg.path())) {
+            return envelope_err(err(ErrorCode::refused, kNhdSaveMsg));
         }
         if (std::filesystem::exists(*path) && !force(args)) {
             return envelope_err(err(ErrorCode::refused, "exists; pass force"), false);
