@@ -157,20 +157,38 @@ void show_search_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
 
 void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                         bool dbc) {
-    const auto path = QFileDialog::getOpenFileName(
-        parent, dbc ? QObject::tr("Import DBC") : QObject::tr("Import package or files"), {},
+    const auto paths = QFileDialog::getOpenFileNames(
+        parent,
+        dbc ? QObject::tr("Import DBC (Shift+click or Ctrl+click to select several)")
+            : QObject::tr("Import packages (Shift+click or Ctrl+click to select several)"),
+        {},
         dbc ? QObject::tr("DBC (*.dbc *.package);;All (*.*)")
             : QObject::tr("Packages (*.package *.dbc *.world *.nhd);;All (*.*)"));
-    if (path.isEmpty()) {
+    if (paths.isEmpty()) {
         return;
+    }
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& p : paths) {
+        arr.push_back(p.toStdString());
     }
     const char* cmd = dbc ? "resource.importDbc" : "resource.importPackage";
     auto env = bus.execute(cmd, {{"sessionId", session.toStdString()},
-                                 {"path", path.toStdString()},
+                                 {"paths", arr},
                                  {"force", true}});
     if (!env.value("ok", false)) {
         QMessageBox::warning(parent, QObject::tr("SXPE"),
-                             QString::fromStdString(env.dump()));
+                             QString::fromStdString(env["error"].value("message", env.dump())));
+        return;
+    }
+    const auto imported = env["data"].value("imported", 0);
+    const auto pkgs = env["data"].value("packages", 0);
+    const auto failed = env["data"].value("failed", 0);
+    QString msg = QObject::tr("Imported %1 resource(s) from %2 package(s).").arg(imported).arg(pkgs);
+    if (failed > 0) {
+        msg += QLatin1Char('\n') + QObject::tr("%1 file(s) failed.").arg(failed);
+        QMessageBox::warning(parent, QObject::tr("SXPE"), msg);
+    } else if (paths.size() > 1) {
+        QMessageBox::information(parent, QObject::tr("SXPE"), msg);
     }
 }
 

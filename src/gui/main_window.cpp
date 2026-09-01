@@ -153,7 +153,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         [this] { copy_resource_key(); });
     auto* imp = res->addMenu(tr("&Import"));
     act(imp, tr("From &file…"), {}, [this] { import_files(); });
-    act(imp, tr("From &package…"), {}, [this] {
+    act(imp, tr("From &package(s)…"), {}, [this] {
         if (auto* t = current_tab()) {
             show_import_dialog(this, bus_, t->session_id(), false);
             t->reload();
@@ -1088,7 +1088,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addAction(tr("Copy resource &key"), this, [this] { copy_resource_key(); });
     auto* imp = m.addMenu(tr("&Import"));
     imp->addAction(tr("From &file…"), this, [this] { import_files(); });
-    imp->addAction(tr("From &package…"), this, [this] {
+    imp->addAction(tr("From &package(s)…"), this, [this] {
         if (auto* tab = current_tab()) {
             show_import_dialog(this, bus_, tab->session_id(), false);
             tab->reload();

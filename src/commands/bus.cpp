@@ -520,20 +520,23 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "path"})),
          env_out, false, true, false, true});
-    add({"resource.importPackage", "Import package", "Copy resources from another TS3 package.",
+    add({"resource.importPackage", "Import package",
+         "Copy resources from one or more TS3 packages. Pass path or paths[].",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
+                     {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
-                    json::array({"sessionId", "path"})),
+                    json::array({"sessionId"})),
          env_out, false, true, false, true});
     add({"resource.importDbc", "Import DBC",
-         "Treat a .dbc/DBPF as a package and copy resources (surveyed: same container as .package).",
+         "Treat .dbc/DBPF files as packages and copy resources. Pass path or paths[].",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
+                     {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
-                    json::array({"sessionId", "path"})),
+                    json::array({"sessionId"})),
          env_out, false, true, false, true});
     add({"resource.exportToPackage", "Export to package", "Copy one resource into a dest package (created if missing).",
          obj_schema({{"sessionId", sess_prop()},
@@ -1540,39 +1543,93 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok({{"resourceId", rid_json(s.pkg.entry(*r).tgi, s.pkg.entry(*r).ordinal)}});
     }
     if (cmd == "resource.importPackage" || cmd == "resource.importDbc") {
-        auto path = check_path(args.at("path").get<std::string>());
-        if (!path) {
-            return envelope_err(path.error());
-        }
-        auto src = Package::open(*path, false);
-        if (!src) {
-            return envelope_err(src.error());
-        }
-        if (dry(args)) {
-            return envelope_ok({{"dryRun", true}, {"count", src->count()}});
-        }
-        json copied = json::array();
-        for (std::uint32_t i = 0; i < src->count(); ++i) {
-            auto body = src->uncompressed(i);
-            if (!body) {
-                return envelope_err(body.error());
-            }
-            const auto t = src->entry(i).tgi;
-            auto ex = s.pkg.find(t, src->entry(i).ordinal);
-            if (ex && !force(args)) {
-                return envelope_err(err(ErrorCode::refused, "duplicate TGI; pass force"));
-            }
-            if (ex) {
-                s.pkg.set_uncompressed(*ex, *body, src->entry(i).compressed == 0xFFFF);
-            } else {
-                auto r = s.pkg.add(t, *body, src->entry(i).compressed == 0xFFFF);
-                if (!r) {
-                    return envelope_err(r.error());
+        std::vector<std::string> paths;
+        if (args.contains("paths") && args["paths"].is_array()) {
+            for (const auto& p : args["paths"]) {
+                if (p.is_string()) {
+                    paths.push_back(p.get<std::string>());
                 }
             }
-            copied.push_back(tgi_json(t));
         }
-        return envelope_ok({{"imported", copied.size()}});
+        if (args.contains("path") && args["path"].is_string()) {
+            paths.push_back(args["path"].get<std::string>());
+        }
+        if (paths.empty()) {
+            return envelope_err(err(ErrorCode::invalid_argument, "need path or paths"));
+        }
+        json packages = json::array();
+        json errors = json::array();
+        std::uint32_t imported = 0;
+        std::uint32_t would = 0;
+        for (const auto& rawp : paths) {
+            auto path = check_path(rawp);
+            if (!path) {
+                errors.push_back({{"path", rawp}, {"message", path.error().message}});
+                continue;
+            }
+            auto src = Package::open(*path, false);
+            if (!src) {
+                errors.push_back({{"path", path->string()}, {"message", src.error().message}});
+                continue;
+            }
+            would += src->count();
+            if (dry(args)) {
+                packages.push_back({{"path", path->string()}, {"count", src->count()}});
+                continue;
+            }
+            std::uint32_t n = 0;
+            bool file_ok = true;
+            for (std::uint32_t i = 0; i < src->count(); ++i) {
+                auto body = src->uncompressed(i);
+                if (!body) {
+                    errors.push_back({{"path", path->string()}, {"message", body.error().message}});
+                    file_ok = false;
+                    break;
+                }
+                const auto t = src->entry(i).tgi;
+                auto ex = s.pkg.find(t, src->entry(i).ordinal);
+                if (ex && !force(args)) {
+                    errors.push_back({{"path", path->string()},
+                                      {"message", "duplicate TGI; pass force"}});
+                    file_ok = false;
+                    break;
+                }
+                if (ex) {
+                    auto wr = s.pkg.set_uncompressed(*ex, *body, src->entry(i).compressed == 0xFFFF);
+                    if (!wr) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", wr.error().message}});
+                        file_ok = false;
+                        break;
+                    }
+                } else {
+                    auto r = s.pkg.add(t, *body, src->entry(i).compressed == 0xFFFF);
+                    if (!r) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", r.error().message}});
+                        file_ok = false;
+                        break;
+                    }
+                }
+                ++n;
+            }
+            if (file_ok) {
+                imported += n;
+                packages.push_back({{"path", path->string()}, {"imported", n}});
+            }
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"packages", packages.size()}, {"count", would}});
+        }
+        json out{{"imported", imported},
+                 {"packages", packages.size()},
+                 {"failed", errors.size()},
+                 {"errors", errors}};
+        if (imported == 0 && !errors.empty()) {
+            return envelope_err(err(ErrorCode::refused, errors[0].value("message", "import failed")),
+                                false);
+        }
+        return envelope_ok(std::move(out));
     }
     if (cmd == "resource.exportToPackage") {
         auto i = need_idx();

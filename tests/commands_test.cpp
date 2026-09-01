@@ -12,6 +12,11 @@ int main() {
     using nlohmann::json;
     sxpe::commands::Bus bus;
 
+    CHECK(sxpe::resources::tag_for(0x00AE6C67) == "BONE");
+    CHECK(sxpe::resources::tag_for(0x0580A2B4) == "THUM");
+    CHECK(sxpe::resources::tag_for(0x00B2D882) == "_IMG");
+    CHECK(sxpe::resources::tag_for(0xFFFFFFFFu).empty());
+
     auto man = bus.execute("manifest", json::object());
     CHECK(man["ok"] == true);
     CHECK(man["data"]["tools"].is_array());
@@ -194,6 +199,21 @@ int main() {
                       json{{"sessionId", sb_id}, {"path", b_path}, {"force", true}})["ok"] == true);
     bus.execute("package.close", json{{"sessionId", sa_id}});
     bus.execute("package.close", json{{"sessionId", sb_id}});
+
+    auto merge = bus.execute("package.new", json::object());
+    CHECK(merge["ok"] == true);
+    const auto mid = merge["data"]["sessionId"].get<std::string>();
+    auto imp = bus.execute("resource.importPackage",
+                           json{{"sessionId", mid},
+                                {"paths", json::array({a_path, b_path})},
+                                {"force", true}});
+    CHECK(imp["ok"] == true);
+    CHECK(imp["data"].value("packages", 0) == 2);
+    auto lm = bus.execute("resource.list", json{{"sessionId", mid}, {"limit", 10}});
+    CHECK(lm["ok"] == true);
+    CHECK(lm["data"]["items"].size() == 2);
+    bus.execute("package.close", json{{"sessionId", mid}});
+
     auto oa = bus.execute("package.open", json{{"path", a_path}, {"writable", true}});
     auto ob = bus.execute("package.open", json{{"path", b_path}, {"writable", true}});
     CHECK(oa["ok"] == true && ob["ok"] == true);
