@@ -496,6 +496,45 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         }
     }
 
+    if (pending_type_ == sxpe::resources::kObjk) {
+        auto info = bus_.execute("objk.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("OBJK version %1").arg(d.value("version", 0));
+            lines << tr("%1 components").arg(d.contains("components") ? d["components"].size() : 0);
+            if (d.contains("data")) {
+                for (const auto& row : d["data"]) {
+                    const auto key = QString::fromStdString(row.value("key", ""));
+                    if (row.contains("text")) {
+                        lines << key + QStringLiteral(" = ") +
+                                     QString::fromStdString(row.value("text", ""));
+                    } else {
+                        lines << key + QStringLiteral(" = ") +
+                                     QString::number(row.value("number", 0));
+                    }
+                }
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kVpxy) {
+        auto info = bus_.execute("vpxy.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("VPXY version %1").arg(d.value("version", 0));
+            lines << tr("%1 entries").arg(d.contains("entries") ? d["entries"].size() : 0);
+            if (d.value("modular", false)) {
+                lines << tr("Modular");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
     if (pending_type_ == sxpe::resources::kS3sa) {
         auto info = bus_.execute("s3sa.info", {{"sessionId", sid}, {"resourceId", rid}});
         if (info.value("ok", false)) {

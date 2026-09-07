@@ -6,10 +6,12 @@
 #include "sxpe/games/sims3/tgi.hpp"
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/nmap.hpp"
+#include "sxpe/resources/objk.hpp"
 #include "sxpe/resources/s3sa.hpp"
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/vpxy.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -660,11 +662,13 @@ std::vector<Tool> make_catalog() {
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
          env_out, true, false, true, true});
-    add({"objk.get", "OBJK get", "Graph of an object-key resource; unknown fields stay bytes.",
+    add({"objk.get", "OBJK get",
+         "Parse OBJK version, component IDs, and data keys (wiki 0x02DC343F). Not a full object editor.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
-    add({"vpxy.get", "VPXY get", "Graph of a visual-proxy resource; unknown chunks stay bytes.",
+    add({"vpxy.get", "VPXY get",
+         "Parse VPXY version, entry types, and bounding box (wiki 0x736884F1). Not a mesh viewer.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
@@ -739,7 +743,7 @@ std::vector<Tool> make_catalog() {
     add({"undo", "Undo", "Undo last session mutation (stack 50).",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, false, true,
          false, false});
-    add({"redo", "Redo", "Redo last undone mutation.",
+    add({"redo", "Redo", "Redo last undone mutation (stack 50).",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, false, true,
          false, false});
     add({"plan", "Plan", "dry-run alias: returns {dryRun:true} without writing.",
@@ -919,6 +923,55 @@ struct Bus::Impl {
         u.payload = std::move(*body);
         push_undo(s, std::move(u));
         return ok();
+    }
+
+    Result<UndoItem> capture_item(Session& s, std::uint32_t i, std::string kind) {
+        UndoItem u;
+        u.kind = std::move(kind);
+        u.index = i;
+        u.tgi = s.pkg.entry(i).tgi;
+        u.compressed = s.pkg.entry(i).compressed;
+        u.deleted = s.pkg.deleted(i);
+        auto body = s.pkg.uncompressed(i);
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        u.payload = std::move(*body);
+        return u;
+    }
+
+    VoidResult apply_item(Session& s, UndoItem& u) {
+        if (u.kind == "remove") {
+            return s.pkg.remove(u.index);
+        }
+        if (u.kind == "inplace") {
+            return s.pkg.patch_in_place(u.index, u.payload, u.compressed == 0xFFFF);
+        }
+        if (u.kind == "insert") {
+            auto r = s.pkg.add(u.tgi, u.payload, u.compressed == 0xFFFF);
+            if (!r) {
+                return std::unexpected(r.error());
+            }
+            u.index = *r;
+            if (u.deleted) {
+                return s.pkg.set_deleted(*r, true);
+            }
+            return ok();
+        }
+        if (auto r = s.pkg.rekey(u.index, u.tgi); !r) {
+            return r;
+        }
+        if (auto r = s.pkg.set_uncompressed(u.index, u.payload, u.compressed == 0xFFFF); !r) {
+            return r;
+        }
+        return s.pkg.set_deleted(u.index, u.deleted);
+    }
+
+    static void push_stack(std::vector<UndoItem>& st, UndoItem u) {
+        st.push_back(std::move(u));
+        if (static_cast<int>(st.size()) > kUndoCap) {
+            st.erase(st.begin());
+        }
     }
 
     json info(Session& s) {
@@ -1886,9 +1939,107 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!body) {
             return envelope_err(body.error());
         }
-        const auto tag = std::string(sxpe::resources::tag_for(s.pkg.entry(*i).tgi.type));
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const auto tag = std::string(sxpe::resources::tag_for(type));
+        if (cmd == "objk.get" || (cmd == "graph.get" && type == sxpe::resources::kObjk)) {
+            auto o = sxpe::resources::parse_objk(*body);
+            if (!o) {
+                if (cmd == "objk.get") {
+                    return envelope_err(o.error());
+                }
+            } else {
+                json comps = json::array();
+                json data = json::array();
+                json nodes = json::array();
+                nodes.push_back({{"id", "version"},
+                                 {"label", "version"},
+                                 {"valueKind", "u32"},
+                                 {"value", o->version},
+                                 {"children", json::array()}});
+                for (auto c : o->components) {
+                    comps.push_back(c);
+                    nodes.push_back({{"id", "component/" + std::to_string(c)},
+                                     {"label", "component"},
+                                     {"valueKind", "u32"},
+                                     {"value", c},
+                                     {"children", json::array()}});
+                }
+                for (const auto& d : o->data) {
+                    json row{{"key", d.key}, {"type", d.type}};
+                    if (!d.text.empty()) {
+                        row["text"] = d.text;
+                    } else {
+                        row["number"] = d.number;
+                    }
+                    data.push_back(row);
+                    nodes.push_back({{"id", "data/" + d.key},
+                                     {"label", d.key},
+                                     {"valueKind", d.text.empty() ? "u32" : "string"},
+                                     {"value", d.text.empty() ? json(d.number) : json(d.text)},
+                                     {"children", json::array()}});
+                }
+                nodes.push_back({{"id", "visibility"},
+                                 {"label", "visibility"},
+                                 {"valueKind", "u8"},
+                                 {"value", o->visibility},
+                                 {"children", json::array()}});
+                return envelope_ok({{"type", "OBJK"},
+                                    {"version", o->version},
+                                    {"components", comps},
+                                    {"data", data},
+                                    {"visibility", o->visibility},
+                                    {"tgiCount", o->tgi_count},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
+        if (cmd == "vpxy.get" || (cmd == "graph.get" && type == sxpe::resources::kVpxy)) {
+            auto v = sxpe::resources::parse_vpxy(*body);
+            if (!v) {
+                if (cmd == "vpxy.get") {
+                    return envelope_err(v.error());
+                }
+            } else {
+                json ents = json::array();
+                json nodes = json::array();
+                nodes.push_back({{"id", "version"},
+                                 {"label", "version"},
+                                 {"valueKind", "u32"},
+                                 {"value", v->version},
+                                 {"children", json::array()}});
+                for (std::size_t ei = 0; ei < v->entries.size(); ++ei) {
+                    const auto& e = v->entries[ei];
+                    json row{{"type", e.type}, {"id", e.id}, {"indices", e.indices}};
+                    ents.push_back(row);
+                    nodes.push_back({{"id", "entry/" + std::to_string(ei)},
+                                     {"label", "entry"},
+                                     {"valueKind", "u8"},
+                                     {"value", e.type},
+                                     {"children", json::array()}});
+                }
+                json bbox = json::array();
+                if (v->has_bbox) {
+                    for (float f : v->bbox) {
+                        bbox.push_back(f);
+                    }
+                    nodes.push_back({{"id", "bbox"},
+                                     {"label", "bbox"},
+                                     {"valueKind", "floats"},
+                                     {"value", bbox},
+                                     {"children", json::array()}});
+                }
+                return envelope_ok({{"type", "VPXY"},
+                                    {"version", v->version},
+                                    {"entries", ents},
+                                    {"bbox", bbox},
+                                    {"modular", v->modular},
+                                    {"tgiCount", v->tgi_count},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
         json nodes = json::array();
-        if (s.pkg.entry(*i).tgi.type == kStbl) {
+        if (type == kStbl) {
             auto t = sxpe::resources::parse_stbl(*body);
             if (t) {
                 for (const auto& e : t->entries) {
@@ -2062,36 +2213,41 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return exec(args.at("command").get<std::string>(), inner);
     }
-    if (cmd == "undo") {
-        if (s.undo.empty()) {
-            return envelope_err(err(ErrorCode::not_found, "nothing to undo"));
+    if (cmd == "undo" || cmd == "redo") {
+        auto& src = (cmd == "undo") ? s.undo : s.redo;
+        auto& dst = (cmd == "undo") ? s.redo : s.undo;
+        if (src.empty()) {
+            return envelope_err(err(ErrorCode::not_found,
+                                    cmd == "undo" ? "nothing to undo" : "nothing to redo"));
         }
-        auto u = std::move(s.undo.back());
-        s.undo.pop_back();
-        if (u.kind == "remove") {
-            s.pkg.remove(u.index);
-        } else if (u.kind == "inplace") {
-            auto r = s.pkg.patch_in_place(u.index, u.payload, u.compressed == 0xFFFF);
-            if (!r) {
-                return envelope_err(r.error());
+        auto u = std::move(src.back());
+        src.pop_back();
+        UndoItem inverse;
+        if (u.kind == "insert") {
+            inverse.kind = "remove";
+        } else if (u.kind == "remove") {
+            auto cap = capture_item(s, u.index, "insert");
+            if (!cap) {
+                return envelope_err(cap.error());
             }
-        } else if (u.kind == "insert" || u.kind == "restore") {
-            if (u.kind == "insert") {
-                auto r = s.pkg.add(u.tgi, u.payload, u.compressed == 0xFFFF);
-                if (!r) {
-                    return envelope_err(r.error());
-                }
-            } else {
-                s.pkg.rekey(u.index, u.tgi);
-                s.pkg.set_uncompressed(u.index, u.payload, u.compressed == 0xFFFF);
-                s.pkg.set_deleted(u.index, u.deleted);
+            inverse = std::move(*cap);
+        } else {
+            auto cap = capture_item(s, u.index, u.kind);
+            if (!cap) {
+                return envelope_err(cap.error());
             }
+            inverse = std::move(*cap);
         }
-        s.redo.push_back(std::move(u));
-        return envelope_ok({{"undone", true}});
-    }
-    if (cmd == "redo") {
-        return envelope_err(err(ErrorCode::refused, "redo not replayed; re-issue the command"));
+        if (auto r = apply_item(s, u); !r) {
+            return envelope_err(r.error());
+        }
+        if (inverse.kind == "remove") {
+            inverse.index = u.index;
+        }
+        push_stack(dst, std::move(inverse));
+        json data;
+        data[cmd == "undo" ? "undone" : "redone"] = true;
+        return envelope_ok(std::move(data));
     }
     return envelope_err(err(ErrorCode::not_found, "unknown command " + cmd));
 }
