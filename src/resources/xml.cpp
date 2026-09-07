@@ -111,10 +111,10 @@ XmlEncoding sniff_xml_encoding(std::span<const std::byte> bytes) {
     const auto* p = reinterpret_cast<const unsigned char*>(bytes.data());
     const auto n = bytes.size();
     if (n >= 2 && p[0] == 0xFF && p[1] == 0xFE) {
-        return XmlEncoding::Utf16Le;
+        return XmlEncoding::Utf16LeBom;
     }
     if (n >= 2 && p[0] == 0xFE && p[1] == 0xFF) {
-        return XmlEncoding::Utf16Be;
+        return XmlEncoding::Utf16BeBom;
     }
     if (n >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) {
         return XmlEncoding::Utf8Bom;
@@ -127,7 +127,10 @@ XmlEncoding sniff_xml_encoding(std::span<const std::byte> bytes) {
             }
         }
         if (zeros >= 8 && p[0] == '<' && p[1] == 0) {
-            return XmlEncoding::Utf16Le;
+            return XmlEncoding::Utf16Le;  // BOM-less UTF-16LE
+        }
+        if (zeros >= 8 && p[0] == 0 && p[1] == '<') {
+            return XmlEncoding::Utf16Be;  // BOM-less UTF-16BE
         }
     }
     return XmlEncoding::Utf8;
@@ -138,16 +141,18 @@ Result<std::string> decode_xml_text(std::span<const std::byte> bytes) {
     const auto* p = reinterpret_cast<const unsigned char*>(bytes.data());
     const auto n = bytes.size();
     switch (enc) {
-        case XmlEncoding::Utf16Le: {
-            std::size_t off = (n >= 2 && p[0] == 0xFF && p[1] == 0xFE) ? 2 : 0;
+        case XmlEncoding::Utf16Le:
+        case XmlEncoding::Utf16LeBom: {
+            std::size_t off = (enc == XmlEncoding::Utf16LeBom) ? 2 : 0;
             if ((n - off) % 2 != 0) {
                 return std::unexpected(err(ErrorCode::corrupt, "UTF-16LE XML length odd"));
             }
             const auto* u = reinterpret_cast<const char16_t*>(p + off);
             return utf16le_to_utf8(std::span<const char16_t>(u, (n - off) / 2));
         }
-        case XmlEncoding::Utf16Be: {
-            std::size_t off = (n >= 2 && p[0] == 0xFE && p[1] == 0xFF) ? 2 : 0;
+        case XmlEncoding::Utf16Be:
+        case XmlEncoding::Utf16BeBom: {
+            std::size_t off = (enc == XmlEncoding::Utf16BeBom) ? 2 : 0;
             if ((n - off) % 2 != 0) {
                 return std::unexpected(err(ErrorCode::corrupt, "UTF-16BE XML length odd"));
             }
@@ -182,22 +187,30 @@ Result<std::vector<std::byte>> encode_xml_text(std::string_view utf8, XmlEncodin
                 out.push_back(static_cast<std::byte>(c));
             }
             return out;
-        case XmlEncoding::Utf16Le: {
+        case XmlEncoding::Utf16Le:
+        case XmlEncoding::Utf16LeBom: {
             const auto u = utf8_to_utf16(utf8);
-            out.reserve(2 + u.size() * 2);
-            out.push_back(std::byte{0xFF});
-            out.push_back(std::byte{0xFE});
+            const bool bom = encoding == XmlEncoding::Utf16LeBom;
+            out.reserve((bom ? 2u : 0u) + u.size() * 2);
+            if (bom) {
+                out.push_back(std::byte{0xFF});
+                out.push_back(std::byte{0xFE});
+            }
             for (char16_t c : u) {
                 out.push_back(static_cast<std::byte>(c & 0xFF));
                 out.push_back(static_cast<std::byte>((c >> 8) & 0xFF));
             }
             return out;
         }
-        case XmlEncoding::Utf16Be: {
+        case XmlEncoding::Utf16Be:
+        case XmlEncoding::Utf16BeBom: {
             const auto u = utf8_to_utf16(utf8);
-            out.reserve(2 + u.size() * 2);
-            out.push_back(std::byte{0xFE});
-            out.push_back(std::byte{0xFF});
+            const bool bom = encoding == XmlEncoding::Utf16BeBom;
+            out.reserve((bom ? 2u : 0u) + u.size() * 2);
+            if (bom) {
+                out.push_back(std::byte{0xFE});
+                out.push_back(std::byte{0xFF});
+            }
             for (char16_t c : u) {
                 out.push_back(static_cast<std::byte>((c >> 8) & 0xFF));
                 out.push_back(static_cast<std::byte>(c & 0xFF));

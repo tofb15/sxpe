@@ -16,6 +16,7 @@ struct PluginInfo {
 /// GUI-only. CLI/MCP must not load these DLLs.
 class PluginHost {
 public:
+    /// No-op until a real plugin SDK (no LoadLibrary enumeration).
     void scan();
     [[nodiscard]] const std::vector<PluginInfo>& plugins() const { return plugins_; }
     /// Substitute `{path}` in a user command and start it. `path` is a filesystem file.

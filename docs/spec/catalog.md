@@ -46,7 +46,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `s3sa.exportDll` | y | n | Decrypt then write PE |
 | `s3sa.importDll` | n | y | Wrap PE as community S3SA v1; replace or add |
 | `s3sa.wrap` | y | n | Stateless wrap |
-| `s3sa.view` | y | n | Export temp PE for external viewer; optional `viewer` `{path}` spawn. Never LoadLibrary. GUI: `ext/s3sa` |
+| `s3sa.view` | y | n | Export PE for external viewer; require `path` or `viewer`/`keepTemp`. Optional `viewer` `{path}` spawn. Never LoadLibrary. GUI: `ext/s3sa` + `keepTemp` |
 | `hash.fnv` | y | n | |
 | `manifest` | y | n | tools/list |
 

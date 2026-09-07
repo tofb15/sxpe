@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sxpe/error.hpp"
+#include "sxpe/games/sims3/tgi.hpp"
 
 #include <cstdint>
 #include <span>
@@ -21,10 +22,12 @@ struct Casp {
     std::uint8_t gender_flags{0};
     std::uint16_t handedness{0};
     std::uint32_t clothing_category{0};
+    /// I64GT key table at header offset+8 (SimsWiki CASP). Empty if absent/unreadable.
+    std::vector<sxpe::games::sims3::Tgi> tgis;
     bool partial{false};
 };
 
-/// CASP (0x034AEECB) best-effort: clothing type + age/gender/species flags.
+/// CASP (0x034AEECB) best-effort: clothing type + age/gender/species flags + TGI refs.
 Result<Casp> parse_casp(std::span<const std::byte> bytes);
 
 const char* casp_clothing_type_name(std::uint32_t id);

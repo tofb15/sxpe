@@ -800,6 +800,35 @@ int main(int argc, char** argv) {
         return print_result(env, format, false);
     }
 
+    // Global --instance fills resourceId; tools like nmap.set/delete require top-level instance.
+    if (const auto tool = find_tool(bus, id)) {
+        bool needs_instance = false;
+        bool needs_rid = false;
+        if (tool->input_schema.contains("required") && tool->input_schema["required"].is_array()) {
+            for (const auto& r : tool->input_schema["required"]) {
+                const auto s = r.get<std::string>();
+                if (s == "instance") {
+                    needs_instance = true;
+                }
+                if (s == "resourceId") {
+                    needs_rid = true;
+                }
+            }
+        }
+        if (needs_instance && !args.contains("instance")) {
+            if (!inst_s.empty()) {
+                args["instance"] = inst_s;
+            } else if (args.contains("resourceId") && args["resourceId"].contains("instance")) {
+                args["instance"] = args["resourceId"]["instance"];
+            }
+        }
+        // Drop a synthesized resourceId that only carried --instance for tools that don't need it.
+        if (needs_instance && !needs_rid && id_json.empty() && type_s.empty() && group_s.empty() &&
+            !inst_s.empty()) {
+            args.erase("resourceId");
+        }
+    }
+
     if (!payload_path.empty() && !args.contains("path")) {
         args["path"] = payload_path;
     } else if (!path.empty()) {

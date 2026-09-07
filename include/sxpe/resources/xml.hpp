@@ -17,16 +17,22 @@ namespace sxpe::resources {
 enum class XmlEncoding : std::uint8_t {
     Utf8 = 0,
     Utf8Bom = 1,
-    Utf16Le = 2,
-    Utf16Be = 3,
+    Utf16Le = 2,       // no BOM
+    Utf16LeBom = 3,    // leading FF FE
+    Utf16Be = 4,       // no BOM
+    Utf16BeBom = 5,    // leading FE FF
 };
 
 inline constexpr std::string_view xml_encoding_name(XmlEncoding e) {
     switch (e) {
         case XmlEncoding::Utf8Bom:
             return "utf-8-bom";
+        case XmlEncoding::Utf16LeBom:
+            return "utf-16le-bom";
         case XmlEncoding::Utf16Le:
             return "utf-16le";
+        case XmlEncoding::Utf16BeBom:
+            return "utf-16be-bom";
         case XmlEncoding::Utf16Be:
             return "utf-16be";
         case XmlEncoding::Utf8:
@@ -42,8 +48,14 @@ inline std::optional<XmlEncoding> xml_encoding_from_name(std::string_view s) {
     if (s == "utf-8-bom" || s == "utf8-bom" || s == "UTF-8-BOM") {
         return XmlEncoding::Utf8Bom;
     }
+    if (s == "utf-16le-bom" || s == "utf-16-le-bom" || s == "UTF-16LE-BOM") {
+        return XmlEncoding::Utf16LeBom;
+    }
     if (s == "utf-16le" || s == "utf-16-le" || s == "UTF-16LE" || s == "UTF-16") {
         return XmlEncoding::Utf16Le;
+    }
+    if (s == "utf-16be-bom" || s == "utf-16-be-bom" || s == "UTF-16BE-BOM") {
+        return XmlEncoding::Utf16BeBom;
     }
     if (s == "utf-16be" || s == "utf-16-be" || s == "UTF-16BE") {
         return XmlEncoding::Utf16Be;

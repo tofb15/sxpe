@@ -17,7 +17,7 @@ Related: [hashing.md](hashing.md) (FNV-1 64, lowercase), [tags.md](../tags.md), 
 | `s3sa.importDll` | Wrap PE as community v1; replace or add; NMAP name = filename |
 | `s3sa.wrap` | Stateless wrap for tests |
 | GUI Editors → Export / Import / View S3SA | Same bus commands; View uses Settings `ext/s3sa` |
-| `s3sa.view` | Export temp PE (+ optional `viewer` spawn). Never `LoadLibrary`. |
+| `s3sa.view` | Export PE (`path` and/or `viewer`; `keepTemp`). Never `LoadLibrary`. |
 | Preview tab | Version, zero-key, assembly size, MZ offset |
 | `resource.add` of a raw `.dll` as type `073FAA07` | **Wrong** — use `s3sa.importDll` |
 
@@ -108,7 +108,7 @@ CLI `sxpe s3sa <verb>`; MCP `s3sa_<verb>`; same bus ids. Envelope unchanged. `--
 | `s3sa.exportDll` | y | **fix** | Decrypt, trim padding after last non-zero? **No** — trim to PE size from the PE headers (or to `assemblyBytes` if we store unpadded length). Write that PE to `path`. Refuse if decrypt fails. `force` if the file exists. |
 | `s3sa.importDll` | n | **new** | Read a PE from `path` (`MZ` required). Wrap as community v1. **Replace** the selected S3SA if `resourceId` is set; **add** if omitted (TGI as above; optional `instance` / `group` overrides). Update NMAP name to the filename when the package has (or we create) an NMAP. `force` / `dryRun`. |
 | `s3sa.wrap` | y | **new** (optional alias) | Stateless: `{path}` → `{bytes}` or write-file; no session. Useful for tests. Prefer `importDll` for the GUI. |
-| `s3sa.view` | y | **new** | Export decrypted PE to a temp path (or `path`). Optional `viewer` string with `{path}` → detached spawn; returns `{path,bytes,spawned,loadLibrary:false,note}`. GUI Settings key `ext/s3sa` (External programs → S3SA viewer). Never `LoadLibrary`. |
+| `s3sa.view` | y | **new** | Export decrypted PE to `path` or a temp. Without `viewer`, pass `path` or `keepTemp:true` (GUI). Optional `viewer` `{path}` spawn; `keepTemp` (default true when viewer set). Returns `{path,bytes,spawned,keepTemp,loadLibrary:false,note}`. Never `LoadLibrary`. |
 
 Do **not** add `s3sa.load` / `LoadLibrary` / CLR host.
 
@@ -120,7 +120,7 @@ Undo: `importDll` is a normal `resource.replace` / `resource.add` mutation (stac
 - Editors → **Import DLL into S3SA…** — new; enabled on an S3SA row (replace) **and** with no row / via Resource → Import as type S3SA (add).
 - Preview: show the extended `s3sa.info` card (version, zero-key, assembly size, `MZ` in decrypted bytes).
 
-Settings → External programs: optional **S3SA viewer** (`ext/s3sa`) path + args (generic `{path}` placeholder), same pattern as hex/text. **Not** bundled. **Not** a clone of s3pe `.helper` grammar. Editors → **View S3SA…** = `s3sa.view` (temp DLL) then spawn; best-effort delete temp when the process exits. If unset, honest message (no crash). CLI/MCP: `s3sa.view` returns the temp path; pass `viewer` with `{path}` to spawn, or open the path yourself.
+Settings → External programs: optional **S3SA viewer** (`ext/s3sa`) path + args (generic `{path}` placeholder), same pattern as hex/text. **Not** bundled. Editors → **View S3SA…** = `s3sa.view` with `keepTemp:true` then spawn; best-effort delete temp when the process exits. CLI/MCP: pass explicit `path`, or `viewer` with `{path}` (temp + `keepTemp`).
 
 ## PE metadata (later, still no load)
 

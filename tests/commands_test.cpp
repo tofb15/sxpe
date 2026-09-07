@@ -12,11 +12,14 @@
 #error "SXPE_SYNTHETIC_DIR required for sims3pack fixture tests"
 #endif
 
+#include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -573,7 +576,12 @@ int main() {
     in_dll.read(mz2, 2);
     CHECK(in_dll.gcount() == 2 && mz2[0] == 'M' && mz2[1] == 'Z');
 
-    auto view = bus.execute("s3sa.view", json{{"sessionId", s3id}, {"resourceId", s3rid}});
+    auto view_refuse = bus.execute("s3sa.view", json{{"sessionId", s3id}, {"resourceId", s3rid}});
+    CHECK(view_refuse["ok"] == false);
+    CHECK(view_refuse["error"]["code"] == "invalid_argument");
+
+    auto view = bus.execute(
+        "s3sa.view", json{{"sessionId", s3id}, {"resourceId", s3rid}, {"keepTemp", true}});
     CHECK(view["ok"] == true);
     CHECK(view["data"].value("loadLibrary", true) == false);
     CHECK(view["data"].value("spawned", true) == false);
@@ -1047,10 +1055,12 @@ int main() {
         auto red = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", xrid}});
         CHECK(red["data"]["text"].get<std::string>().find("changed") != std::string::npos);
 
-        // UTF-16LE round-trip
+        // UTF-16LE with BOM round-trip
         auto enc = sxpe::resources::encode_xml_text("<?xml version=\"1.0\"?><u16>le</u16>",
-                                                    sxpe::resources::XmlEncoding::Utf16Le);
+                                                    sxpe::resources::XmlEncoding::Utf16LeBom);
         CHECK(enc.has_value());
+        CHECK(static_cast<unsigned char>((*enc)[0]) == 0xFF);
+        CHECK(static_cast<unsigned char>((*enc)[1]) == 0xFE);
         json irid{{"type", sxpe::resources::kItun}, {"group", 0}, {"instance", 100}};
         CHECK(bus.execute("resource.add",
                           json{{"sessionId", xsid},
@@ -1058,7 +1068,7 @@ int main() {
                                {"payloadB64", b64(*enc)}})["ok"] == true);
         auto ig = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", irid}});
         CHECK(ig["ok"] == true);
-        CHECK(ig["data"]["encoding"] == "utf-16le");
+        CHECK(ig["data"]["encoding"] == "utf-16le-bom");
         CHECK(ig["data"]["tag"] == "ITUN");
         CHECK(ig["data"]["text"].get<std::string>().find("<u16>le</u16>") != std::string::npos);
         CHECK(bus.execute("xml.set",
@@ -1066,8 +1076,35 @@ int main() {
                                {"resourceId", irid},
                                {"text", "<?xml version=\"1.0\"?><u16>ok</u16>"}})["ok"] == true);
         auto ig2 = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", irid}});
-        CHECK(ig2["data"]["encoding"] == "utf-16le");
+        CHECK(ig2["data"]["encoding"] == "utf-16le-bom");
         CHECK(ig2["data"]["text"].get<std::string>().find("<u16>ok</u16>") != std::string::npos);
+
+        // BOM-less UTF-16LE must not gain FF FE on unchanged xml.set
+        auto enc_nb = sxpe::resources::encode_xml_text("<?xml version=\"1.0\"?><u16>nobom</u16>",
+                                                       sxpe::resources::XmlEncoding::Utf16Le);
+        CHECK(enc_nb.has_value());
+        CHECK(!(static_cast<unsigned char>((*enc_nb)[0]) == 0xFF &&
+                static_cast<unsigned char>((*enc_nb)[1]) == 0xFE));
+        json nbrid{{"type", sxpe::resources::kXml}, {"group", 0}, {"instance", 102}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", xsid},
+                               {"resourceId", nbrid},
+                               {"payloadB64", b64(*enc_nb)}})["ok"] == true);
+        auto ng = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", nbrid}});
+        CHECK(ng["ok"] == true);
+        CHECK(ng["data"]["encoding"] == "utf-16le");
+        const auto nb_text = ng["data"]["text"].get<std::string>();
+        CHECK(bus.execute("xml.set",
+                          json{{"sessionId", xsid},
+                               {"resourceId", nbrid},
+                               {"text", nb_text}})["ok"] == true);
+        auto ng2 = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", nbrid}});
+        CHECK(ng2["data"]["encoding"] == "utf-16le");
+        auto peek_nb = bus.execute("hex.get", json{{"sessionId", xsid},
+                                                   {"resourceId", nbrid},
+                                                   {"maxBytes", 4}});
+        CHECK(peek_nb["ok"] == true);
+        CHECK(peek_nb["data"]["hex"].get<std::string>().substr(0, 4) != "fffe");
 
         // Cap refuse
         std::string huge(static_cast<std::size_t>(sxpe::core::caps::kMaxXmlEditorBytes) + 8, 'x');
@@ -1211,6 +1248,31 @@ int main() {
         bus.execute("package.close", json{{"sessionId", nsid}});
     }
 
+    // PR #49: nmap.delete must not create an NMAP when none exists (incl. dryRun).
+    {
+        auto fresh = bus.execute("package.new", json::object());
+        CHECK(fresh["ok"] == true);
+        const auto dsid = fresh["data"]["sessionId"].get<std::string>();
+        auto dry = bus.execute("nmap.delete",
+                               json{{"sessionId", dsid}, {"instance", 0x99}, {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"].value("removed", 1u) == 0);
+        CHECK(dry["data"].value("dryRun", false) == true);
+        auto listed = bus.execute(
+            "resource.list",
+            json{{"sessionId", dsid}, {"filter", {{"tag", "NMAP"}}}, {"limit", 10}});
+        CHECK(listed["ok"] == true);
+        CHECK(listed["data"]["items"].empty());
+        auto del = bus.execute("nmap.delete", json{{"sessionId", dsid}, {"instance", 0x99}});
+        CHECK(del["ok"] == true);
+        CHECK(del["data"].value("removed", 1u) == 0);
+        listed = bus.execute(
+            "resource.list",
+            json{{"sessionId", dsid}, {"filter", {{"tag", "NMAP"}}}, {"limit", 10}});
+        CHECK(listed["data"]["items"].empty());
+        bus.execute("package.close", json{{"sessionId", dsid}});
+    }
+
 
     // Issue #25: resource.findRefs — REFS + OBJK structured hits; optional byteScan.
     {
@@ -1264,6 +1326,41 @@ int main() {
         wtgi(blob, target_type, target_group, target_inst);
         blob.push_back(std::byte{'Y'});
 
+        // Minimal CASP with I64GT key table referencing the target.
+        auto wf32 = [](std::vector<std::byte>& o, float v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto w7utf16be = [&](std::vector<std::byte>& o, std::string_view ascii) {
+            wu8(o, static_cast<std::uint8_t>(ascii.size()));
+            for (char c : ascii) {
+                wu8(o, 0);
+                wu8(o, static_cast<std::uint8_t>(c));
+            }
+        };
+        std::vector<std::byte> casp_body;
+        wu32(casp_body, 0x12);  // version
+        const auto ref_off_at = casp_body.size();
+        wu32(casp_body, 0);  // placeholder offset
+        wu32(casp_body, 0);  // presets
+        w7utf16be(casp_body, "Part");
+        wf32(casp_body, 1.0f);
+        wu8(casp_body, 0);
+        wu32(casp_body, 5);
+        wu32(casp_body, 0);
+        wu32(casp_body, 0x30u | (0x31u << 8));
+        wu32(casp_body, 0);
+        for (int i = 0; i < 16; ++i) {
+            wu8(casp_body, 0);
+        }
+        const auto tgi_at = casp_body.size();
+        const auto ref_off = static_cast<std::uint32_t>(tgi_at - 8);
+        std::memcpy(casp_body.data() + ref_off_at, &ref_off, 4);
+        wu8(casp_body, 1);  // I64GT count
+        wu64(casp_body, target_inst);
+        wu32(casp_body, target_group);
+        wu32(casp_body, target_type);
+
         auto created = bus.execute("package.new", json::object());
         CHECK(created["ok"] == true);
         const auto fsid = created["data"]["sessionId"].get<std::string>();
@@ -1290,6 +1387,13 @@ int main() {
         CHECK(bus.execute("resource.add",
                           json{{"sessionId", fsid},
                                {"resourceId",
+                                json{{"type", sxpe::resources::kCasp},
+                                     {"group", 0},
+                                     {"instance", 4}}},
+                               {"payloadB64", b64(casp_body)}})["ok"] == true);
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", fsid},
+                               {"resourceId",
                                 json{{"type", 0x12345678u}, {"group", 0}, {"instance", 3}}},
                                {"payloadB64", b64(blob)}})["ok"] == true);
 
@@ -1308,11 +1412,14 @@ int main() {
                                  json{{"sessionId", fsid}, {"resourceId", target_rid}});
         CHECK(found["ok"] == true);
         CHECK(found["data"]["hits"].is_array());
-        CHECK(found["data"]["hits"].size() == 2);
+        CHECK(found["data"]["hits"].size() == 3);
         CHECK(found["data"].contains("summary"));
         CHECK(found["data"]["summary"].is_array());
+        CHECK(!found["data"].contains("notes"));
+        CHECK(found["data"]["scanned"].value("casp", 0u) == 1);
         bool saw_refs = false;
         bool saw_objk = false;
+        bool saw_casp = false;
         for (const auto& h : found["data"]["hits"]) {
             const auto reason = h.value("reason", "");
             if (reason == "refs.entry") {
@@ -1323,9 +1430,14 @@ int main() {
                 saw_objk = true;
                 CHECK(h["source"].value("type", 0u) == sxpe::resources::kObjk);
             }
+            if (reason == "casp.tgi") {
+                saw_casp = true;
+                CHECK(h["source"].value("type", 0u) == sxpe::resources::kCasp);
+            }
         }
         CHECK(saw_refs);
         CHECK(saw_objk);
+        CHECK(saw_casp);
         CHECK(found["data"]["byteScan"].value("enabled", true) == false);
 
         auto with_bs = bus.execute(
@@ -1632,6 +1744,44 @@ int main() {
         bus.execute("package.close", json{{"sessionId", uid}});
         bus.execute("package.close", json{{"sessionId", nid}});
     }
+
+
+#ifdef SXPE_CLI
+    // PR #49: CLI --instance fills top-level nmap.set / nmap.delete args (one-shot).
+    {
+        auto fresh = bus.execute("package.new", json::object());
+        CHECK(fresh["ok"] == true);
+        const auto sid = fresh["data"]["sessionId"].get<std::string>();
+        const auto pkg = (tmp / "cli-nmap-instance.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", sid}, {"path", pkg}, {"force", true}})["ok"] == true);
+        bus.execute("package.close", json{{"sessionId", sid}});
+
+        const std::string cli = SXPE_CLI;
+        auto run = [&](const std::string& args) {
+            const auto cmd = "\"" + cli + "\" " + args + " --format json";
+            return std::system(cmd.c_str());
+        };
+        CHECK(run("nmap set --package \"" + pkg +
+                  "\" --instance 0x1 --name Foo --force --writable") == 0);
+        CHECK(run("nmap delete --package \"" + pkg +
+                  "\" --instance 0x1 --force --writable") == 0);
+
+        auto reopen = bus.execute("package.open", json{{"path", pkg}});
+        CHECK(reopen["ok"] == true);
+        const auto rid = reopen["data"]["sessionId"].get<std::string>();
+        auto ng = bus.execute("nmap.get", json{{"sessionId", rid}});
+        CHECK(ng["ok"] == true);
+        bool has_foo = false;
+        for (const auto& e : ng["data"]["entries"]) {
+            if (e.value("instance", 0ull) == 1 && e.value("name", "") == "Foo") {
+                has_foo = true;
+            }
+        }
+        CHECK(!has_foo);
+        bus.execute("package.close", json{{"sessionId", rid}});
+    }
+#endif
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";

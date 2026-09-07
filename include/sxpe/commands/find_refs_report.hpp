@@ -34,7 +34,7 @@ inline std::vector<std::string> format_find_refs_summary(const nlohmann::json& d
         }
     }
     if (hits.empty()) {
-        summary.push_back("No references found in REFS / OBJK / VPXY" +
+        summary.push_back("No references found in REFS / OBJK / VPXY / CASP" +
                           std::string(data.value("byteScan", nlohmann::json::object())
                                               .value("enabled", false)
                                           ? " / byte-scan"

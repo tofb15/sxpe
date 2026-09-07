@@ -111,7 +111,8 @@ add_executable(sxpe_commands_test tests/commands_test.cpp)
 target_link_libraries(sxpe_commands_test PRIVATE sxpe_commands)
 target_include_directories(sxpe_commands_test PRIVATE "${SXPE_VENDOR}")
 target_compile_definitions(sxpe_commands_test PRIVATE
-    "SXPE_SYNTHETIC_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic\"")
+    "SXPE_SYNTHETIC_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic\""
+    "SXPE_CLI=\"$<TARGET_FILE:sxpe>\"")
 
 add_executable(sxpe_stbl_test tests/stbl_test.cpp)
 target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)

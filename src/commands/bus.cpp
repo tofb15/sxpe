@@ -1138,14 +1138,15 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId", "path"})),
          env_out, true, false, true, true});
     add({"s3sa.view", "View S3SA",
-         "Export decrypted PE to a temp (or given) path for an external viewer (ILSpy/dnSpy). "
-         "Optional viewer string uses {path}; spawned detached. Never LoadLibrary. "
-         "GUI Settings key ext/s3sa; CLI: sxpe s3sa.view --session-id … --resource-id … "
-         "[--viewer 'ilspy {path}']. Caller/GUI deletes the temp file after the viewer exits.",
+         "Export decrypted PE for an external viewer (ILSpy/dnSpy). Never LoadLibrary. "
+         "Pass path and/or viewer. Without viewer, path is required (or keepTemp:true for GUI "
+         "temp hand-off). With viewer, optional path uses a temp; keepTemp (default true when "
+         "viewer set) leaves the file for the viewer — GUI deletes after exit.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"path", {{"type", "string"}}},
                      {"viewer", {{"type", "string"}}},
+                     {"keepTemp", {{"type", "boolean"}}},
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, true});
@@ -1191,7 +1192,9 @@ std::vector<Tool> make_catalog() {
                      {"resourceId", rid_schema()},
                      {"text", {{"type", "string"}}},
                      {"encoding", {{"type", "string"},
-                                   {"enum", json::array({"utf-8", "utf-8-bom", "utf-16le", "utf-16be"})}}},
+                                   {"enum", json::array({"utf-8", "utf-8-bom", "utf-16le",
+                                                         "utf-16le-bom", "utf-16be",
+                                                         "utf-16be-bom"})}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "text"})),
          env_out, false, true, false, false});
@@ -3268,11 +3271,20 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             ni = *i;
         } else {
-            auto found = ensure_nmap_index(s.pkg);
-            if (!found) {
-                return envelope_err(found.error());
+            // Never create an NMAP from delete — only set/replace/rename may add maps.
+            for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
+                if (s.pkg.entry(i).tgi.type == kNmap) {
+                    ni = i;
+                    break;
+                }
             }
-            ni = *found;
+            if (!ni) {
+                json out{{"instance", inst}, {"removed", 0}};
+                if (dry(args)) {
+                    out["dryRun"] = true;
+                }
+                return envelope_ok(std::move(out));
+            }
         }
         auto body = s.pkg.uncompressed(*ni);
         if (!body) {
@@ -3568,6 +3580,10 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                  {"valueKind", "u32"},
                                  {"value", c->clothing_type},
                                  {"children", json::array()}});
+                json tgi_rows = json::array();
+                for (const auto& t : c->tgis) {
+                    tgi_rows.push_back(tgi_json(t));
+                }
                 return envelope_ok({{"type", "CASP"},
                                     {"version", c->version},
                                     {"name", c->name},
@@ -3583,6 +3599,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"genderFlags", c->gender_flags},
                                     {"genders", genders},
                                     {"clothingCategory", c->clothing_category},
+                                    {"tgiCount", c->tgis.size()},
+                                    {"tgis", tgi_rows},
                                     {"partial", c->partial},
                                     {"rawSize", body->size()},
                                     {"nodes", nodes}});
@@ -3887,8 +3905,20 @@ json Bus::Impl::exec(std::string_view id, json args) {
             return envelope_err(pe.error());
         }
         if (cmd == "s3sa.view") {
+            std::string viewer = args.value("viewer", "");
+            const bool has_path =
+                args.contains("path") && !args.at("path").get<std::string>().empty();
+            const bool keep_temp = args.contains("keepTemp")
+                                       ? args.value("keepTemp", false)
+                                       : !viewer.empty();  // default true when spawning viewer
+            if (!has_path && viewer.empty() && !keep_temp) {
+                return envelope_err(err(
+                    ErrorCode::invalid_argument,
+                    "s3sa.view needs path (CLI/MCP) or viewer, or keepTemp:true for a GUI temp"));
+            }
             std::filesystem::path outp;
-            if (args.contains("path") && !args.at("path").get<std::string>().empty()) {
+            bool used_temp = false;
+            if (has_path) {
                 auto path = check_path(args.at("path").get<std::string>());
                 if (!path) {
                     return envelope_err(path.error());
@@ -3901,6 +3931,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     return envelope_err(path.error());
                 }
                 outp = *path;
+                used_temp = true;
             }
             if (std::filesystem::exists(outp) && !force(args)) {
                 return envelope_err(err(ErrorCode::refused, "exists; pass force"));
@@ -3909,7 +3940,6 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 return envelope_err(w.error());
             }
             bool spawned = false;
-            std::string viewer = args.value("viewer", "");
             if (!viewer.empty()) {
                 const auto native = outp.string();
                 std::string cmd_line = viewer;
@@ -3922,15 +3952,24 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 }
                 spawned = spawn_viewer_detached(cmd_line);
             }
+            // Avoid temp leaks when nobody will clean up (no viewer + keepTemp false).
+            if (used_temp && !keep_temp && viewer.empty()) {
+                std::error_code ec;
+                std::filesystem::remove(outp, ec);
+                return envelope_err(err(
+                    ErrorCode::invalid_argument,
+                    "s3sa.view temp was auto-deleted; pass path or keepTemp:true"));
+            }
             json j{{"path", outp.string()},
                    {"bytes", pe->size()},
                    {"spawned", spawned},
+                   {"keepTemp", keep_temp || !used_temp},
                    {"loadLibrary", false},
                    {"note",
-                    "Temp PE for an external viewer. GUI: Settings → External programs "
-                    "(ext/s3sa) then Editors → View S3SA…. CLI/MCP: pass viewer with {path} "
-                    "or open path yourself. Best-effort delete after the viewer exits "
-                    "(GUI); otherwise delete path when finished. Never LoadLibrary."}};
+                    "PE for an external viewer. GUI: Settings → External programs "
+                    "(ext/s3sa) then Editors → View S3SA… (passes keepTemp). CLI/MCP: pass "
+                    "path and/or viewer with {path}; keepTemp leaves a temp for the viewer. "
+                    "Never LoadLibrary."}};
             return envelope_ok(std::move(j));
         }
         auto path = check_path(args.at("path").get<std::string>());
@@ -4010,7 +4049,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
             auto parsed = sxpe::resources::xml_encoding_from_name(args["encoding"].get<std::string>());
             if (!parsed) {
                 return envelope_err(err(ErrorCode::invalid_argument,
-                                        "encoding must be utf-8, utf-8-bom, utf-16le, or utf-16be"));
+                                        "encoding must be utf-8, utf-8-bom, utf-16le, utf-16le-bom, "
+                                        "utf-16be, or utf-16be-bom"));
             }
             enc = *parsed;
         }
@@ -4069,6 +4109,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         std::uint32_t scanned_refs = 0;
         std::uint32_t scanned_objk = 0;
         std::uint32_t scanned_vpxy = 0;
+        std::uint32_t scanned_casp = 0;
         std::uint32_t bs_scanned = 0;
 
         auto push_hit = [&](std::uint32_t i, const char* reason, std::int64_t index = -1) {
@@ -4095,7 +4136,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 continue;
             }
             if (e.tgi.type != sxpe::resources::kRefs && e.tgi.type != sxpe::resources::kObjk &&
-                e.tgi.type != sxpe::resources::kVpxy) {
+                e.tgi.type != sxpe::resources::kVpxy && e.tgi.type != sxpe::resources::kCasp) {
                 continue;
             }
             if (e.mem_size > sxpe::core::caps::kMaxResourceBytes) {
@@ -4138,6 +4179,17 @@ json Bus::Impl::exec(std::string_view id, json args) {
                         push_hit(i, "vpxy.tgi", static_cast<std::int64_t>(ei));
                     }
                 }
+            } else if (e.tgi.type == sxpe::resources::kCasp) {
+                ++scanned_casp;
+                auto parsed = sxpe::resources::parse_casp(*body);
+                if (!parsed) {
+                    continue;
+                }
+                for (std::size_t ei = 0; ei < parsed->tgis.size() && hits.size() < limit; ++ei) {
+                    if (matches(parsed->tgis[ei])) {
+                        push_hit(i, "casp.tgi", static_cast<std::int64_t>(ei));
+                    }
+                }
             }
         }
 
@@ -4172,7 +4224,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     continue;
                 }
                 if (e.tgi.type == sxpe::resources::kRefs || e.tgi.type == sxpe::resources::kObjk ||
-                    e.tgi.type == sxpe::resources::kVpxy) {
+                    e.tgi.type == sxpe::resources::kVpxy || e.tgi.type == sxpe::resources::kCasp) {
                     continue;
                 }
                 if (e.mem_size == 0 || e.mem_size > bs_max_bytes) {
@@ -4210,12 +4262,12 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json data{{"target", tgi_json(target)},
                   {"hits", hits},
                   {"scanned",
-                   {{"refs", scanned_refs}, {"objk", scanned_objk}, {"vpxy", scanned_vpxy}}},
+                   {{"refs", scanned_refs},
+                    {"objk", scanned_objk},
+                    {"vpxy", scanned_vpxy},
+                    {"casp", scanned_casp}}},
                   {"byteScan", std::move(byte_scan_info)},
-                  {"truncated", truncated},
-                  {"notes",
-                   json::array({"CASP TGI-block scan is a follow-up (parser does not expose "
-                                "key-table fields yet)."})}};
+                  {"truncated", truncated}};
         data["summary"] = find_refs_summary_json(data);
         return envelope_ok(std::move(data));
     }

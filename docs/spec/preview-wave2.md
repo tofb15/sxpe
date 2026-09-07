@@ -14,6 +14,7 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 
 - Best-effort public layout: skip UTF-16LE preset blobs, then 7-string Unicode BE name, sort priority, clothing type, type flags, packed age/species/gender/handedness DWORD, clothing category.
 - Age/species/gender decode follows SimsWiki CAS Part Flags. Unknown clothing types show the numeric id only.
+- TGI refs: I64GT key table at `offset+8` (BYTE count, then instance/group/type). Used by `resource.findRefs` (`casp.tgi`).
 - Later CASP versions may add fields we do not read; Preview labels partial parses honestly.
 
 ## CLIP (`clip.info`)
