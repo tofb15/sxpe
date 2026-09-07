@@ -3,9 +3,6 @@
   "version-string": "0.4.0",
   "dependencies": [
     "nlohmann-json",
-    "cli11",
-    "catch2",
-    "spdlog",
-    "pugixml"
+    "cli11"
   ]
 }
