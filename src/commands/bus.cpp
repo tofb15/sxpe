@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -37,7 +38,20 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <unordered_map>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 #include <unordered_set>
 #include <utility>
 
@@ -256,6 +270,54 @@ Result<std::filesystem::path> check_path(std::string_view raw) {
 
 bool dry(const json& a) { return a.value("dryRun", false); }
 bool force(const json& a) { return a.value("force", false); }
+
+bool spawn_viewer_detached(const std::string& command) {
+    if (command.empty()) {
+        return false;
+    }
+#ifdef _WIN32
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) {
+        return false;
+    }
+    std::wstring wcmd(static_cast<std::size_t>(wlen), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, wcmd.data(), wlen) <= 0) {
+        return false;
+    }
+    // cmd.exe resolves PATH for tools like ILSpy; DETACHED so we do not wait.
+    std::wstring full = L"cmd.exe /c " + wcmd;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, full.data(), nullptr, nullptr, FALSE,
+                        CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS, nullptr, nullptr, &si,
+                        &pi)) {
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+#else
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return false;
+    }
+    if (pid == 0) {
+        setsid();
+        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    return true;
+#endif
+}
+
+std::filesystem::path make_temp_s3sa_dll_path() {
+    const auto dir = std::filesystem::temp_directory_path();
+    const auto stamp =
+        std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    return dir / ("sxpe-s3sa-" + std::to_string(stamp) + ".dll");
+}
+
 
 struct UndoItem {
     std::string kind;
@@ -1004,6 +1066,18 @@ std::vector<Tool> make_catalog() {
                      {"path", {{"type", "string"}}},
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
+         env_out, true, false, true, true});
+    add({"s3sa.view", "View S3SA",
+         "Export decrypted PE to a temp (or given) path for an external viewer (ILSpy/dnSpy). "
+         "Optional viewer string uses {path}; spawned detached. Never LoadLibrary. "
+         "GUI Settings key ext/s3sa; CLI: sxpe s3sa.view --session-id … --resource-id … "
+         "[--viewer 'ilspy {path}']. Caller/GUI deletes the temp file after the viewer exits.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"path", {{"type", "string"}}},
+                     {"viewer", {{"type", "string"}}},
+                     {"force", force_prop()}},
+                    json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, true});
     add({"s3sa.importDll", "Import DLL",
          "Wrap a PE as community S3SA v1 (replace resourceId or add). Never LoadLibrary.",
@@ -3527,7 +3601,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"filename", sxpe::games::sims3::community_filename(
                                              t, name, "CLIP.animation")}});
     }
-    if (cmd == "s3sa.info" || cmd == "s3sa.exportDll" || cmd == "s3sa.importDll") {
+    if (cmd == "s3sa.info" || cmd == "s3sa.exportDll" || cmd == "s3sa.view" ||
+        cmd == "s3sa.importDll") {
         if (cmd == "s3sa.importDll") {
             auto path = check_path(args.at("path").get<std::string>());
             if (!path) {
@@ -3685,16 +3760,63 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             return envelope_ok(j);
         }
+        auto pe = sxpe::resources::export_pe(*body);
+        if (!pe) {
+            return envelope_err(pe.error());
+        }
+        if (cmd == "s3sa.view") {
+            std::filesystem::path outp;
+            if (args.contains("path") && !args.at("path").get<std::string>().empty()) {
+                auto path = check_path(args.at("path").get<std::string>());
+                if (!path) {
+                    return envelope_err(path.error());
+                }
+                outp = *path;
+            } else {
+                outp = make_temp_s3sa_dll_path();
+                auto path = check_path(outp.string());
+                if (!path) {
+                    return envelope_err(path.error());
+                }
+                outp = *path;
+            }
+            if (std::filesystem::exists(outp) && !force(args)) {
+                return envelope_err(err(ErrorCode::refused, "exists; pass force"));
+            }
+            if (auto w = write_file(outp, *pe); !w) {
+                return envelope_err(w.error());
+            }
+            bool spawned = false;
+            std::string viewer = args.value("viewer", "");
+            if (!viewer.empty()) {
+                const auto native = outp.string();
+                std::string cmd_line = viewer;
+                const auto ph = cmd_line.find("{path}");
+                if (ph != std::string::npos) {
+                    cmd_line.replace(ph, 6, native);
+                } else {
+                    cmd_line.push_back(' ');
+                    cmd_line += native;
+                }
+                spawned = spawn_viewer_detached(cmd_line);
+            }
+            json j{{"path", outp.string()},
+                   {"bytes", pe->size()},
+                   {"spawned", spawned},
+                   {"loadLibrary", false},
+                   {"note",
+                    "Temp PE for an external viewer. GUI: Settings → External programs "
+                    "(ext/s3sa) then Editors → View S3SA…. CLI/MCP: pass viewer with {path} "
+                    "or open path yourself. Best-effort delete after the viewer exits "
+                    "(GUI); otherwise delete path when finished. Never LoadLibrary."}};
+            return envelope_ok(std::move(j));
+        }
         auto path = check_path(args.at("path").get<std::string>());
         if (!path) {
             return envelope_err(path.error());
         }
         if (std::filesystem::exists(*path) && !force(args)) {
             return envelope_err(err(ErrorCode::refused, "exists; pass force"));
-        }
-        auto pe = sxpe::resources::export_pe(*body);
-        if (!pe) {
-            return envelope_err(pe.error());
         }
         if (auto w = write_file(*path, *pe); !w) {
             return envelope_err(w.error());
