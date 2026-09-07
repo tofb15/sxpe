@@ -5,6 +5,7 @@
 #include "sxpe/games/sims3/package.hpp"
 #include "sxpe/games/sims3/tgi.hpp"
 #include "sxpe/resources/dds.hpp"
+#include "sxpe/resources/dir.hpp"
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/objk.hpp"
 #include "sxpe/resources/s3sa.hpp"
@@ -1258,7 +1259,50 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (s.pkg.major() != 2) {
             issues.push_back("major");
         }
-        return envelope_ok({{"ok", issues.empty()}, {"issues", issues}, {"indexCount", s.pkg.count()}});
+        json dir = json::object();
+        dir["present"] = false;
+        for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
+            if (s.pkg.entry(i).tgi.type != sxpe::resources::kDir) {
+                continue;
+            }
+            dir["present"] = true;
+            auto body = s.pkg.uncompressed(i);
+            if (!body) {
+                issues.push_back("dir_unreadable");
+                break;
+            }
+            auto parsed = sxpe::resources::parse_dir(*body);
+            if (!parsed) {
+                issues.push_back("dir_corrupt");
+                break;
+            }
+            dir["records"] = parsed->size();
+            dir["recordBytes"] = body->size() % 20 == 0 ? 20 : 16;
+            std::uint32_t missing = 0;
+            for (const auto& d : *parsed) {
+                bool found = false;
+                for (std::uint32_t j = 0; j < s.pkg.count(); ++j) {
+                    const auto& e = s.pkg.entry(j);
+                    if (e.tgi.type == d.tgi.type && e.tgi.group == d.tgi.group &&
+                        e.tgi.instance == d.tgi.instance && e.mem_size == d.mem_size) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    ++missing;
+                }
+            }
+            dir["unmatched"] = missing;
+            if (missing) {
+                issues.push_back("dir_unmatched");
+            }
+            break;
+        }
+        return envelope_ok({{"ok", issues.empty()},
+                            {"issues", issues},
+                            {"indexCount", s.pkg.count()},
+                            {"dir", dir}});
     }
     if (cmd == "package.save" || cmd == "package.compact") {
         if (cmd == "package.compact" && neighborhood_file(s.pkg.path())) {

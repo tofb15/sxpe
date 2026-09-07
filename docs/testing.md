@@ -66,7 +66,7 @@ Surveyed **in place** (mmap/read; no copies into git): Steam `fallback.package` 
 Still open (follow-ups, not blocking this harness):
 
 - On-disk **deleted**: none. Session flag; save omits the row (confirmed: no trash index, no `0xFFE0`, group high byte = EP flags). See [index.md](spec/index.md).
-- DIR record layout — need a package that actually contains a DIR.
+- DIR: **absent** from EA TS3. Record layout (when a tool writes one) is 20-byte TGI64 + mem_size. See [dir.md](spec/dir.md).
 - NMAP name encoding beyond ASCII/UTF-8 without NUL.
 - FNV Unicode rules beyond lowercase ASCII.
 
