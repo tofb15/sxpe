@@ -250,8 +250,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     settings->addSeparator();
     act(settings, tr("&Organise bookmarks…"), {}, [this] { organise_bookmarks(); });
-    act(settings, tr("&Handlers / plugins…"), {},
-        [this] { show_handlers_dialog(this, bus_, plugins_); });
+    act(settings, tr("&Built-in handlers…"), {},
+        [this] { show_handlers_dialog(this, bus_); });
     act(settings, tr("&External programs…"), {},
         [this] { show_external_programs_dialog(this); });
     settings->addSeparator();
