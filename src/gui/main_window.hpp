@@ -72,6 +72,7 @@ private:
     void duplicate_resource();
     void details_resource();
     void open_stbl();
+    void open_xml();
     void export_s3sa();
     void import_s3sa();
     void clip_export();

@@ -18,6 +18,7 @@
 #include "sxpe/resources/s3sa.hpp"
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/stbl.hpp"
+#include "sxpe/resources/xml.hpp"
 #include "sxpe/resources/types.hpp"
 #include "sxpe/resources/vpxy.hpp"
 
@@ -966,6 +967,23 @@ std::vector<Tool> make_catalog() {
                      {"maxBytes", {{"type", "integer"}, {"default", 256}}}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
+    add({"xml.get", "XML get",
+         "Decode `_XML`/`ITUN` (or XML-like) payload to UTF-8 text. Preserves encoding sniff "
+         "(utf-8 / utf-8-bom / utf-16le / utf-16be). Cap: kMaxXmlEditorBytes (4 MiB).",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"xml.set", "XML set",
+         "Replace `_XML`/`ITUN` (or XML-like) payload from UTF-8 text. encoding optional "
+         "(default: sniff existing). dryRun + undo. Cap: kMaxXmlEditorBytes (4 MiB).",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"text", {{"type", "string"}}},
+                     {"encoding", {{"type", "string"},
+                                   {"enum", json::array({"utf-8", "utf-8-bom", "utf-16le", "utf-16be"})}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "text"})),
+         env_out, false, true, false, false});
     add({"text.get", "Text preview", "Uncompressed payload as UTF-8 if valid.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
@@ -1000,7 +1018,7 @@ std::vector<Tool> make_catalog() {
          env_out, true, false, true, false});
     add({"handler.list", "List handlers", "Compiled first-party type handlers.",
          obj_schema({}, json::array()), env_out, true, false, true, false});
-    add({"editor.list", "List editors", "Headless editors (STBL, NMAP, DDS, S3SA, CLIP).",
+    add({"editor.list", "List editors", "Headless editors (STBL, NMAP, DDS, S3SA, CLIP, XML/ITUN).",
          obj_schema({}, json::array()), env_out, true, false, true, false});
     add({"settings.get", "Settings", "Feature flags (no personal paths).",
          obj_schema({}, json::array()), env_out, true, false, true, false});
@@ -3192,6 +3210,80 @@ json Bus::Impl::exec(std::string_view id, json args) {
             hex.push_back(kHex[u & 0xF]);
         }
         return envelope_ok({{"hex", hex}, {"bytes", body->size()}});
+    }
+    if (cmd == "xml.get" || cmd == "xml.set") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        const bool typed = sxpe::resources::is_xml_editor_type(type);
+        const bool like = sxpe::resources::looks_like_xml(*body);
+        if (!typed && !like) {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "resource is not `_XML`/`ITUN` and payload does not look like XML"));
+        }
+        if (body->size() > sxpe::core::caps::kMaxXmlEditorBytes) {
+            return envelope_err(err(ErrorCode::cap_exceeded,
+                                    "XML editor cap exceeded (" +
+                                        std::to_string(sxpe::core::caps::kMaxXmlEditorBytes) +
+                                        " bytes); use resource.export / resource.replace"));
+        }
+        if (cmd == "xml.get") {
+            auto text = sxpe::resources::decode_xml_text(*body);
+            if (!text) {
+                return envelope_err(text.error());
+            }
+            const auto enc = sxpe::resources::sniff_xml_encoding(*body);
+            return envelope_ok({{"text", *text},
+                                {"encoding", std::string(sxpe::resources::xml_encoding_name(enc))},
+                                {"bytes", body->size()},
+                                {"type", type},
+                                {"tag", std::string(sxpe::resources::tag_for(type))}});
+        }
+        // xml.set
+        if (!args.contains("text") || !args["text"].is_string()) {
+            return envelope_err(err(ErrorCode::invalid_argument, "text required"));
+        }
+        const auto text = args["text"].get<std::string>();
+        sxpe::resources::XmlEncoding enc = sxpe::resources::sniff_xml_encoding(*body);
+        if (args.contains("encoding") && args["encoding"].is_string()) {
+            auto parsed = sxpe::resources::xml_encoding_from_name(args["encoding"].get<std::string>());
+            if (!parsed) {
+                return envelope_err(err(ErrorCode::invalid_argument,
+                                        "encoding must be utf-8, utf-8-bom, utf-16le, or utf-16be"));
+            }
+            enc = *parsed;
+        }
+        auto raw = sxpe::resources::encode_xml_text(text, enc);
+        if (!raw) {
+            return envelope_err(raw.error());
+        }
+        if (raw->size() > sxpe::core::caps::kMaxXmlEditorBytes) {
+            return envelope_err(err(ErrorCode::cap_exceeded,
+                                    "XML editor cap exceeded (" +
+                                        std::to_string(sxpe::core::caps::kMaxXmlEditorBytes) +
+                                        " bytes); refuse write"));
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"bytes", raw->size()},
+                                {"encoding", std::string(sxpe::resources::xml_encoding_name(enc))}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *raw, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"bytes", raw->size()},
+                            {"encoding", std::string(sxpe::resources::xml_encoding_name(enc))}});
     }
     if (cmd == "text.get") {
         auto i = need_idx();

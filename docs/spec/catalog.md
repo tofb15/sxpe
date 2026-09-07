@@ -31,6 +31,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `resource.delete` | n | y | |
 | `resource.setFlags` | n | y | `deleted` is session-only; save omits the row |
 | `stbl.get` / `stbl.set` | | | |
+| `xml.get` / `xml.set` | y / n | n / y | `_XML`/`ITUN`; UTF-8/UTF-16 sniff; cap 4 MiB |
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |
 | `objd.get` | y | n | OBJD Common name/desc GUIDs, price, thumb IID |

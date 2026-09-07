@@ -5,6 +5,8 @@
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/xml.hpp"
+#include "sxpe/core/caps.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -929,6 +931,127 @@ int main() {
         CHECK(same["data"]["onlyInB"].empty());
         CHECK(same["data"]["different"].empty());
         CHECK(same["data"]["summary"][0].get<std::string>().find("match") != std::string::npos);
+    }
+
+
+    // Issue #23: xml.get / xml.set — edit `_XML`, encoding round-trip, dryRun/undo, cap.
+    {
+        const std::string xml_body = "<?xml version=\"1.0\"?>\n<root attr=\"a\">hi</root>\n";
+        std::vector<std::byte> xml_bytes;
+        xml_bytes.reserve(xml_body.size());
+        for (unsigned char c : xml_body) {
+            xml_bytes.push_back(static_cast<std::byte>(c));
+        }
+        auto xml_sid_env = bus.execute("package.new", json::object());
+        CHECK(xml_sid_env["ok"] == true);
+        const auto xsid = xml_sid_env["data"]["sessionId"].get<std::string>();
+        json xrid{{"type", sxpe::resources::kXml}, {"group", 0}, {"instance", 99}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", xsid},
+                               {"resourceId", xrid},
+                               {"payloadB64", b64(xml_bytes)}})["ok"] == true);
+
+        auto man = bus.execute("manifest", json::object());
+        bool saw_xml_get = false, saw_xml_set = false;
+        for (const auto& tool : man["data"]["tools"]) {
+            if (tool["name"] == "xml.get") {
+                saw_xml_get = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == true);
+                CHECK(tool["mcpName"] == "xml_get");
+            }
+            if (tool["name"] == "xml.set") {
+                saw_xml_set = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == false);
+                CHECK(tool["mcpName"] == "xml_set");
+            }
+        }
+        CHECK(saw_xml_get);
+        CHECK(saw_xml_set);
+
+        auto got = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", xrid}});
+        CHECK(got["ok"] == true);
+        CHECK(got["data"]["text"].get<std::string>().find("<root") != std::string::npos);
+        CHECK(got["data"]["encoding"] == "utf-8");
+        CHECK(got["data"]["tag"] == "_XML");
+
+        auto dry = bus.execute("xml.set", json{{"sessionId", xsid},
+                                               {"resourceId", xrid},
+                                               {"text", "<?xml version=\"1.0\"?><root>changed</root>"},
+                                               {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"]["dryRun"] == true);
+        auto still = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", xrid}});
+        CHECK(still["data"]["text"].get<std::string>().find("hi") != std::string::npos);
+
+        auto set = bus.execute("xml.set", json{{"sessionId", xsid},
+                                               {"resourceId", xrid},
+                                               {"text", "<?xml version=\"1.0\"?><root>changed</root>"}});
+        CHECK(set["ok"] == true);
+        auto after = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", xrid}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"]["text"].get<std::string>().find("changed") != std::string::npos);
+
+        CHECK(bus.execute("undo", json{{"sessionId", xsid}})["ok"] == true);
+        auto und = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", xrid}});
+        CHECK(und["data"]["text"].get<std::string>().find("hi") != std::string::npos);
+        CHECK(bus.execute("redo", json{{"sessionId", xsid}})["ok"] == true);
+        auto red = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", xrid}});
+        CHECK(red["data"]["text"].get<std::string>().find("changed") != std::string::npos);
+
+        // UTF-16LE round-trip
+        auto enc = sxpe::resources::encode_xml_text("<?xml version=\"1.0\"?><u16>le</u16>",
+                                                    sxpe::resources::XmlEncoding::Utf16Le);
+        CHECK(enc.has_value());
+        json irid{{"type", sxpe::resources::kItun}, {"group", 0}, {"instance", 100}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", xsid},
+                               {"resourceId", irid},
+                               {"payloadB64", b64(*enc)}})["ok"] == true);
+        auto ig = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", irid}});
+        CHECK(ig["ok"] == true);
+        CHECK(ig["data"]["encoding"] == "utf-16le");
+        CHECK(ig["data"]["tag"] == "ITUN");
+        CHECK(ig["data"]["text"].get<std::string>().find("<u16>le</u16>") != std::string::npos);
+        CHECK(bus.execute("xml.set",
+                          json{{"sessionId", xsid},
+                               {"resourceId", irid},
+                               {"text", "<?xml version=\"1.0\"?><u16>ok</u16>"}})["ok"] == true);
+        auto ig2 = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", irid}});
+        CHECK(ig2["data"]["encoding"] == "utf-16le");
+        CHECK(ig2["data"]["text"].get<std::string>().find("<u16>ok</u16>") != std::string::npos);
+
+        // Cap refuse
+        std::string huge(static_cast<std::size_t>(sxpe::core::caps::kMaxXmlEditorBytes) + 8, 'x');
+        huge = "<?xml version=\"1.0\"?><huge>" + huge + "</huge>";
+        auto over = bus.execute("xml.set", json{{"sessionId", xsid},
+                                                {"resourceId", xrid},
+                                                {"text", huge}});
+        CHECK(over["ok"] == false);
+        CHECK(over["error"]["code"] == "cap_exceeded");
+        CHECK(over["error"]["message"].get<std::string>().find("XML editor cap") != std::string::npos);
+
+        // Also refuse get when existing payload is over cap
+        std::vector<std::byte> big;
+        big.reserve(sxpe::core::caps::kMaxXmlEditorBytes + 16);
+        const std::string head = "<?xml version=\"1.0\"?><b>";
+        for (unsigned char c : head) {
+            big.push_back(static_cast<std::byte>(c));
+        }
+        big.resize(sxpe::core::caps::kMaxXmlEditorBytes + 8, std::byte{'Z'});
+        const std::string tail = "</b>";
+        for (unsigned char c : tail) {
+            big.push_back(static_cast<std::byte>(c));
+        }
+        json brid{{"type", sxpe::resources::kXml}, {"group", 0}, {"instance", 101}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", xsid},
+                               {"resourceId", brid},
+                               {"payloadB64", b64(big)}})["ok"] == true);
+        auto bigget = bus.execute("xml.get", json{{"sessionId", xsid}, {"resourceId", brid}});
+        CHECK(bigget["ok"] == false);
+        CHECK(bigget["error"]["code"] == "cap_exceeded");
+
+        bus.execute("package.close", json{{"sessionId", xsid}});
     }
 
     if (g_failed != 0) {

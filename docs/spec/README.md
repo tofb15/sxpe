@@ -9,6 +9,7 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [dir.md](dir.md) | DIR resource `0xE86B1EEF` |
 | [refpack.md](refpack.md) | RefPack/QFS compression |
 | [stbl.md](stbl.md) | String tables |
+| [xml.md](xml.md) | `_XML` / ITUN editor |
 | [nmap.md](nmap.md) | Name map |
 | [s3sa.md](s3sa.md) | S3SA `073FAA07` (format + wrap/import gap vs s3pe) |
 | [merge-manifest.md](merge-manifest.md) | SXPE merge manifest (`SXMM`) |
