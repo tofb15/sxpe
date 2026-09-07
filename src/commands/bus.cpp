@@ -1,4 +1,5 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/validate_report.hpp"
 
 #include "sxpe/core/caps.hpp"
 #include "sxpe/games/sims3/fnv.hpp"
@@ -654,7 +655,9 @@ std::vector<Tool> make_catalog() {
     add({"package.info", "Package info", "Header summary for a session.",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
-    add({"package.validate", "Validate", "Sniff + cap checks on an open session.",
+    add({"package.validate", "Validate",
+         "Sniff + DIR cross-checks on an open session. Returns ok, issues[], indexCount, dir{}, "
+         "and summary[] lines for CLI --format text / GUI.",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
     add({"package.compact", "Compact", "Save dropping session-deleted resources.",
@@ -747,11 +750,16 @@ std::vector<Tool> make_catalog() {
     add({"resource.importPackage", "Import package",
          "Copy resources from one or more TS3 packages. Pass path or paths[]. "
          "Duplicate NMAP TGIs concatenate name records and the name map is moved to index 0 "
-         "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge.",
+         "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge. "
+         "dirPolicy: strip (default with writeMergeManifest), copy-through, or rebuild (not yet; refused). "
+         "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                      {"writeMergeManifest", {{"type", "boolean"}, {"default", false}}},
+                     {"dirPolicy",
+                      {{"type", "string"},
+                       {"description", "strip | copy-through | rebuild (rebuild refused for now)"}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId"})),
@@ -1689,10 +1697,12 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             break;
         }
-        return envelope_ok({{"ok", issues.empty()},
+        const bool valid = issues.empty();
+        return envelope_ok({{"ok", valid},
                             {"issues", issues},
                             {"indexCount", s.pkg.count()},
-                            {"dir", dir}});
+                            {"dir", dir},
+                            {"summary", validate_summary_json(valid, s.pkg.count(), dir, issues)}});
     }
     if (cmd == "package.save" || cmd == "package.compact") {
         if (cmd == "package.compact" && neighborhood_file(s.pkg.path())) {
@@ -2139,6 +2149,21 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json errors = json::array();
         json sources = json::array();
         const bool write_man = args.value("writeMergeManifest", false);
+        std::string dir_policy;
+        if (args.contains("dirPolicy") && args["dirPolicy"].is_string()) {
+            dir_policy = args["dirPolicy"].get<std::string>();
+        } else {
+            dir_policy = write_man ? "strip" : "copy-through";
+        }
+        if (dir_policy != "strip" && dir_policy != "copy-through" && dir_policy != "rebuild") {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "dirPolicy must be strip, copy-through, or rebuild"));
+        }
+        if (dir_policy == "rebuild") {
+            return envelope_err(err(ErrorCode::refused,
+                                    "dirPolicy 'rebuild' is not yet implemented; use 'strip' or "
+                                    "'copy-through'"));
+        }
         std::uint32_t imported = 0;
         std::uint32_t would = 0;
         int src_n = 0;
@@ -2164,7 +2189,10 @@ json Bus::Impl::exec(std::string_view id, json args) {
             ++src_n;
             for (std::uint32_t i = 0; i < src->count(); ++i) {
                 const auto t = src->entry(i).tgi;
-                if (write_man && (t.type == sxpe::resources::kSxmm || t.type == sxpe::resources::kDir)) {
+                if (write_man && t.type == sxpe::resources::kSxmm) {
+                    continue;
+                }
+                if (t.type == sxpe::resources::kDir && dir_policy == "strip") {
                     continue;
                 }
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
@@ -2229,7 +2257,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                      {"sources", sources},
                      {"notes",
                       {{"forceOverwriteOnDuplicateTgi", force(args)},
-                       {"dirPolicy", "strip"},
+                       {"dirPolicy", dir_policy},
                        {"nmapPolicy", "concat"}}}};
             const auto dumped = man.dump();
             std::vector<std::byte> mb(dumped.size());
@@ -2265,7 +2293,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                  {"packages", packages.size()},
                  {"failed", errors.size()},
                  {"errors", errors},
-                 {"mergeManifest", write_man}};
+                 {"mergeManifest", write_man},
+                 {"dirPolicy", dir_policy}};
         if (imported == 0 && !errors.empty()) {
             return envelope_err(err(ErrorCode::refused, errors[0].value("message", "import failed")),
                                 false);
