@@ -15,6 +15,7 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [merge-manifest.md](merge-manifest.md) | SXPE merge manifest (`SXMM`) |
 | [hashing.md](hashing.md) | FNV-1 and CLIP instance |
 | [catalog.md](catalog.md) | Command catalog (CLI/MCP) sketch |
+| [sims3pack.md](sims3pack.md) | `.sims3pack` TS3Pack inspect (list/extract; no DRM) |
 | [preview.md](../preview.md) | Inspector preview inventory (what can be shown, difficulty, priority) |
 | [preview-wave2.md](preview-wave2.md) | Wave 2 OBJD/CASP/CLIP/RCOL layout assumptions |
 | [tags.md](../tags.md) | What each Tag means and what bytes the resource holds |

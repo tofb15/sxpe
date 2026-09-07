@@ -58,5 +58,9 @@ void show_find_refs_dialog(
 void show_folder_scan_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,
     const std::function<void(const QString& path)>& open_path);
+/// Read-only Sims3Pack inspect / extract. open_package opens an extracted .package.
+void show_sims3pack_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path)>& open_package);
 
 }  // namespace sxpe::gui

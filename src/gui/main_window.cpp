@@ -91,6 +91,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(file, tr("&New"), QKeySequence::New, [this] { new_package(); });
     act(file, tr("&Open…"), QKeySequence::Open, [this] { open_dialog(); });
     act(file, tr("Open &read-only…"), {}, [this] { open_readonly_dialog(); });
+    act(file, tr("Open &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
     act(file, tr("&Save"), QKeySequence::Save, [this] { save(false, false); });
     act(file, tr("Save &As…"), QKeySequence::SaveAs, [this] { save(false, true); });
     act(file, tr("Save &Copy As…"), {}, [this] { save(true, true); });
@@ -217,6 +218,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("&Compare packages…"), {}, [this] { compare_packages(); });
     act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
     act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
+    act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -389,6 +391,16 @@ void MainWindow::scan_folder() {
         }
     });
 }
+
+void MainWindow::inspect_sims3pack() {
+    show_sims3pack_dialog(this, bus_, [this](const QString& path) {
+        if (!open_path(path, true)) {
+            QMessageBox::warning(this, tr("Open Sims3Pack"),
+                                 tr("Could not open extracted package:\n%1").arg(path));
+        }
+    });
+}
+
 
 void MainWindow::compare_packages() {
     show_package_diff_dialog(this, bus_, [this](const QString& path, std::uint32_t type,

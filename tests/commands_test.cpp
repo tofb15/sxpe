@@ -8,6 +8,10 @@
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/core/caps.hpp"
 
+#ifndef SXPE_SYNTHETIC_DIR
+#error "SXPE_SYNTHETIC_DIR required for sims3pack fixture tests"
+#endif
+
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -1479,6 +1483,79 @@ int main() {
     }
 
 
+
+
+    // Issue #30: sims3pack.info / list / extract (synthetic TS3Pack fixture).
+    {
+        const auto pack =
+            std::filesystem::path(SXPE_SYNTHETIC_DIR) / "minimal.sims3pack";
+        CHECK(std::filesystem::exists(pack));
+
+        auto man = bus.execute("manifest", json::object());
+        bool saw_info = false, saw_list = false, saw_extract = false;
+        for (const auto& t : man["data"]["tools"]) {
+            if (t["name"] == "sims3pack.info") {
+                saw_info = true;
+                CHECK(t["annotations"]["readOnlyHint"] == true);
+                CHECK(t["mcpName"] == "sims3pack_info");
+            }
+            if (t["name"] == "sims3pack.list") {
+                saw_list = true;
+                CHECK(t["mcpName"] == "sims3pack_list");
+            }
+            if (t["name"] == "sims3pack.extract") {
+                saw_extract = true;
+                CHECK(t["mcpName"] == "sims3pack_extract");
+                CHECK(t["annotations"]["openWorldHint"] == true);
+            }
+        }
+        CHECK(saw_info);
+        CHECK(saw_list);
+        CHECK(saw_extract);
+
+        auto refused = bus.execute("sims3pack.list", json{{"path", "../nope.sims3pack"}});
+        CHECK(refused["ok"] == false);
+        CHECK(refused["error"]["code"] == "refused");
+
+        auto info = bus.execute("sims3pack.info", json{{"path", pack.string()}});
+        CHECK(info["ok"] == true);
+        CHECK(info["data"].value("displayName", "") == "SXPE Synthetic");
+        CHECK(info["data"].value("entryCount", 0u) == 1);
+        CHECK(info["data"].contains("summary"));
+        CHECK(info["data"].contains("limitations"));
+
+        auto listed = bus.execute("sims3pack.list", json{{"path", pack.string()}});
+        CHECK(listed["ok"] == true);
+        CHECK(listed["data"]["entries"].is_array());
+        CHECK(listed["data"]["entries"].size() == 1);
+        CHECK(listed["data"]["entries"][0].value("looksLikePackage", false) == true);
+
+        const auto out = tmp / "sims3pack-extract";
+        std::filesystem::remove_all(out);
+        auto dry = bus.execute("sims3pack.extract",
+                               json{{"path", pack.string()},
+                                    {"outDir", out.string()},
+                                    {"index", 0},
+                                    {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"].value("dryRun", false) == true);
+        CHECK(!std::filesystem::exists(out));
+
+        auto extracted = bus.execute("sims3pack.extract",
+                                     json{{"path", pack.string()},
+                                          {"outDir", out.string()},
+                                          {"index", 0},
+                                          {"force", true}});
+        CHECK(extracted["ok"] == true);
+        const auto written = extracted["data"].value("writtenPath", "");
+        CHECK(!written.empty());
+        CHECK(std::filesystem::exists(written));
+
+        // Extracted payload opens as ordinary DBPF.
+        auto opened = bus.execute("package.open", json{{"path", written}, {"writable", false}});
+        CHECK(opened["ok"] == true);
+        bus.execute("package.close", json{{"sessionId", opened["data"]["sessionId"]}});
+    }
 
     // Issue #27: neighborhood / world layout lock honesty (info + validate + refuse).
     {

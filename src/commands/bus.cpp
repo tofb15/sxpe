@@ -3,11 +3,13 @@
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
+#include "sxpe/commands/sims3pack_report.hpp"
 #include "sxpe/core/sha256.hpp"
 
 #include "sxpe/core/caps.hpp"
 #include "sxpe/games/sims3/fnv.hpp"
 #include "sxpe/games/sims3/package.hpp"
+#include "sxpe/games/sims3/sims3pack.hpp"
 #include "sxpe/games/sims3/tgi.hpp"
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/dir.hpp"
@@ -60,6 +62,7 @@ namespace {
 
 using nlohmann::json;
 using sxpe::games::sims3::Package;
+using sxpe::games::sims3::Sims3PackMeta;
 using sxpe::games::sims3::Tgi;
 using sxpe::resources::kNmap;
 using sxpe::resources::kS3sa;
@@ -226,6 +229,50 @@ json rid_json(Tgi t, std::uint32_t ord) {
     auto j = tgi_json(t);
     j["ordinal"] = ord;
     return j;
+}
+
+
+json sims3pack_entry_json(const sxpe::games::sims3::Sims3PackEntry& e) {
+    return json{{"index", e.index},
+                {"name", e.name},
+                {"length", e.length},
+                {"offset", e.offset},
+                {"crc", e.crc},
+                {"guid", e.guid},
+                {"contentType", e.content_type},
+                {"looksLikePackage", e.looks_like_package}};
+}
+
+json sims3pack_meta_json(const Sims3PackMeta& m, bool include_entries) {
+    json limitations = json::array({
+        "TS3Pack-framed SimsWiki layout only (not bare XML+DBPF, not DBPP/DRM)",
+        "PackagedFile XML scrape is best-effort (no full DOM); CRC not verified",
+        "No Store download",
+    });
+    json out{{"path", m.path},
+             {"headerVersion", m.header_version},
+             {"xmlLength", m.xml_length},
+             {"archiveOffset", m.archive_offset},
+             {"archiveSize", m.archive_size},
+             {"fileSize", m.file_size},
+             {"packageType", m.package_type},
+             {"packageSubType", m.package_subtype},
+             {"archiveVersion", m.archive_version},
+             {"displayName", m.display_name},
+             {"description", m.description},
+             {"packageId", m.package_id},
+             {"entryCount", static_cast<std::uint32_t>(m.entries.size())},
+             {"readOnly", true},
+             {"limitations", limitations}};
+    if (include_entries) {
+        json arr = json::array();
+        for (const auto& e : m.entries) {
+            arr.push_back(sims3pack_entry_json(e));
+        }
+        out["entries"] = std::move(arr);
+    }
+    out["summary"] = sims3pack_summary_json(out);
+    return out;
 }
 
 Result<std::filesystem::path> check_path(std::string_view raw) {
@@ -757,6 +804,29 @@ std::vector<Tool> make_catalog() {
                      {"maxPathsPerDuplicate", {{"type", "integer"}}}},
                     json::array({"path"})),
          env_out, true, false, true, true});
+
+    add({"sims3pack.info", "Sims3Pack info",
+         "Read-only inspect of a .sims3pack (SimsWiki TS3Pack header + XML metadata + entry "
+         "count). No Store download / DRM. Example: {\"path\":\"mod.sims3pack\"}.",
+         obj_schema({{"path", {{"type", "string"}}}}, json::array({"path"})),
+         env_out, true, false, true, true});
+    add({"sims3pack.list", "Sims3Pack list",
+         "List <PackagedFile> entries (name, length, offset, guid, contentType, looksLikePackage). "
+         "Read-only. Example: {\"path\":\"mod.sims3pack\"}.",
+         obj_schema({{"path", {{"type", "string"}}}}, json::array({"path"})),
+         env_out, true, false, true, true});
+    add({"sims3pack.extract", "Sims3Pack extract",
+         "Extract one packaged payload by index into outDir (basename only). Pass force to "
+         "overwrite. Read-only of the sims3pack; writes extracted files (openWorld). No DRM. "
+         "Example: {\"path\":\"mod.sims3pack\",\"outDir\":\"/tmp/out\",\"index\":0,\"force\":true}.",
+         obj_schema({{"path", {{"type", "string"}}},
+                     {"outDir", {{"type", "string"}}},
+                     {"index", {{"type", "integer"}}},
+                     {"force", force_prop()},
+                     {"dryRun", dry_prop()}},
+                    json::array({"path", "outDir", "index"})),
+         env_out, true, false, false, true});
+
     add({"package.compact", "Compact", "Save dropping session-deleted resources.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
@@ -1697,6 +1767,58 @@ json Bus::Impl::exec(std::string_view id, json args) {
         data["summary"] = package_diff_summary_json(data);
         return envelope_ok(std::move(data));
     }
+
+    if (cmd == "sims3pack.info" || cmd == "sims3pack.list" || cmd == "sims3pack.extract") {
+        auto path = check_path(args.at("path").get<std::string>());
+        if (!path) {
+            return envelope_err(path.error());
+        }
+        auto opened = sxpe::games::sims3::open_sims3pack(*path);
+        if (!opened) {
+            return envelope_err(opened.error());
+        }
+        if (cmd == "sims3pack.info") {
+            return envelope_ok(sims3pack_meta_json(*opened, false));
+        }
+        if (cmd == "sims3pack.list") {
+            return envelope_ok(sims3pack_meta_json(*opened, true));
+        }
+        // extract
+        auto out_dir = check_path(args.at("outDir").get<std::string>());
+        if (!out_dir) {
+            return envelope_err(out_dir.error());
+        }
+        const auto index = static_cast<std::uint32_t>(as_u64(args.at("index")));
+        if (dry(args)) {
+            json data = sims3pack_meta_json(*opened, false);
+            if (index >= opened->entries.size()) {
+                return envelope_err(err(ErrorCode::not_found, "entry index out of range"));
+            }
+            const auto& e = opened->entries[index];
+            data["dryRun"] = true;
+            data["index"] = index;
+            data["name"] = e.name;
+            data["outDir"] = out_dir->string();
+            data["wouldWrite"] = (*out_dir / (e.name.empty() ? ("entry-" + std::to_string(index) + ".bin")
+                                                             : std::filesystem::path(e.name).filename().string()))
+                                     .string();
+            data["summary"] = sims3pack_summary_json(data);
+            return envelope_ok(std::move(data));
+        }
+        auto written = sxpe::games::sims3::extract_sims3pack_entry(*opened, index, *out_dir, force(args));
+        if (!written) {
+            return envelope_err(written.error());
+        }
+        json data = sims3pack_meta_json(*opened, false);
+        data["index"] = index;
+        data["name"] = opened->entries[index].name;
+        data["outDir"] = out_dir->string();
+        data["writtenPath"] = written->string();
+        data["written"] = json::array({written->string()});
+        data["summary"] = sims3pack_summary_json(data);
+        return envelope_ok(std::move(data));
+    }
+
     if (cmd == "folder.scan") {
         auto root = check_path(args.at("path").get<std::string>());
         if (!root) {

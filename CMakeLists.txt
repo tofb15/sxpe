@@ -55,6 +55,7 @@ add_library(sxpe_games_sims3
     src/games_sims3/package.cpp
     src/games_sims3/refpack.cpp
     src/games_sims3/fnv.cpp
+    src/games_sims3/sims3pack.cpp
 )
 target_link_libraries(sxpe_games_sims3 PUBLIC sxpe_core)
 
@@ -109,6 +110,8 @@ target_link_libraries(sxpe_fnv_test PRIVATE sxpe_games_sims3)
 add_executable(sxpe_commands_test tests/commands_test.cpp)
 target_link_libraries(sxpe_commands_test PRIVATE sxpe_commands)
 target_include_directories(sxpe_commands_test PRIVATE "${SXPE_VENDOR}")
+target_compile_definitions(sxpe_commands_test PRIVATE
+    "SXPE_SYNTHETIC_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic\"")
 
 add_executable(sxpe_stbl_test tests/stbl_test.cpp)
 target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
@@ -127,6 +130,11 @@ target_link_libraries(sxpe_s3sa_test PRIVATE sxpe_resources)
 
 add_executable(sxpe_dir_test tests/dir_test.cpp)
 target_link_libraries(sxpe_dir_test PRIVATE sxpe_resources)
+
+add_executable(sxpe_sims3pack_test tests/sims3pack_test.cpp)
+target_link_libraries(sxpe_sims3pack_test PRIVATE sxpe_games_sims3)
+target_compile_definitions(sxpe_sims3pack_test PRIVATE
+    "SXPE_SYNTHETIC_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic\"")
 
 set(_sxpe_qt_hint "${CMAKE_CURRENT_SOURCE_DIR}/../qt/6.8.2/msvc2022_64")
 if(EXISTS "${_sxpe_qt_hint}/lib/cmake/Qt6/Qt6Config.cmake")
@@ -175,6 +183,7 @@ add_test(NAME refs COMMAND sxpe_refs_test)
 add_test(NAME preview_wave2 COMMAND sxpe_preview_wave2_test)
 add_test(NAME s3sa COMMAND sxpe_s3sa_test)
 add_test(NAME dir COMMAND sxpe_dir_test)
+add_test(NAME sims3pack COMMAND sxpe_sims3pack_test)
 add_test(NAME cli_manifest COMMAND sxpe manifest --format json)
 add_test(NAME cli_hash COMMAND sxpe hash fnv --text a --width 32 --format json)
 add_test(NAME cli_list COMMAND sxpe resource list --package
@@ -199,6 +208,13 @@ set_tests_properties(cli_rename PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true"
 add_test(NAME cli_folder_scan COMMAND sxpe folder scan --path
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic" --format json)
 set_tests_properties(cli_folder_scan PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_sims3pack_list COMMAND sxpe sims3pack list --path
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/minimal.sims3pack" --format json)
+set_tests_properties(cli_sims3pack_list PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_sims3pack_extract COMMAND sxpe sims3pack extract --path
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/minimal.sims3pack"
+    --out-dir "${CMAKE_BINARY_DIR}/sims3pack-extract-cli" --index 0 --force --format json)
+set_tests_properties(cli_sims3pack_extract PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
 if(TARGET sxpe_gui)
     add_test(NAME gui_smoke COMMAND sxpe_gui --smoke
         "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin")
