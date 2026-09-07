@@ -9,7 +9,7 @@ jobs:
     name: Linux CLI/MCP (no Qt)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install ninja and CMake 3.28
         run: |
@@ -33,9 +33,9 @@ jobs:
     name: Windows GUI smoke
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: jurplel/install-qt-action@v4
+      - uses: jurplel/install-qt-action@v4.3.1
         with:
           version: "6.8.2"
           host: windows
@@ -44,9 +44,9 @@ jobs:
           cache: true
           archives: qtbase
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
-          arch: amd64
+          arch: x64
 
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
