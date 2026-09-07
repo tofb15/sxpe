@@ -206,6 +206,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* tools = menuBar()->addMenu(tr("&Tools"));
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
     act(tools, tr("&Compare packages…"), {}, [this] { compare_packages(); });
+    act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -337,6 +338,29 @@ void MainWindow::unmerge_package() {
             tr("Wrote %1 package(s). Only SXPE-manifest merges can be un-merged.")
                 .arg(env["data"].value("packagesWritten", 0)));
     }
+}
+
+
+void MainWindow::find_refs() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        QMessageBox::information(this, tr("Find references"),
+                                 tr("Select a resource to find references to."));
+        return;
+    }
+    show_find_refs_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal,
+                          [this](std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                                 std::uint32_t ordinal) {
+                              if (auto* tab = current_tab()) {
+                                  if (!tab->select_resource(type, group, instance, ordinal)) {
+                                      QMessageBox::information(
+                                          this, tr("Find references"),
+                                          tr("Hit listed, but the resource was not found in the "
+                                             "index."));
+                                  }
+                              }
+                          });
 }
 
 void MainWindow::compare_packages() {
@@ -1475,6 +1499,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         dds->setEnabled(false);
         snap->setEnabled(false);
     }
+    m.addAction(tr("Find &references…"), this, [this] { find_refs(); })->setEnabled(r != nullptr);
     m.addAction(tr("Open in &hex editor"), this, [this] { open_external(true); });
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });
     m.addAction(tr("&Delete"), this, [this] { delete_resource(); });

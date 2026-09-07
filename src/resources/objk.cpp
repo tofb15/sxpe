@@ -1,4 +1,5 @@
 #include "sxpe/resources/objk.hpp"
+#include "sxpe/resources/key_table.hpp"
 
 #include "sxpe/core/caps.hpp"
 
@@ -105,7 +106,13 @@ Result<Objk> parse_objk(std::span<const std::byte> bytes) {
         o.visibility = static_cast<std::uint8_t>(bytes[p]);
     }
     if (tgi_at < bytes.size() && tgi_size > 0) {
-        o.tgi_count = static_cast<std::uint8_t>(bytes[tgi_at]);
+        const auto span = bytes.subspan(tgi_at, std::min<std::size_t>(tgi_size, bytes.size() - tgi_at));
+        if (auto tgis = parse_key_table_tgis(span); tgis) {
+            o.tgis = std::move(*tgis);
+            o.tgi_count = static_cast<std::uint32_t>(o.tgis.size());
+        } else {
+            o.tgi_count = static_cast<std::uint8_t>(bytes[tgi_at]);
+        }
     }
     return o;
 }

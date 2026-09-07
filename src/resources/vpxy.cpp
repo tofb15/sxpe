@@ -1,4 +1,5 @@
 #include "sxpe/resources/vpxy.hpp"
+#include "sxpe/resources/key_table.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -113,7 +114,13 @@ Result<Vpxy> parse_vpxy(std::span<const std::byte> bytes) {
         }
     }
     if (tgi_at < bytes.size() && tgi_size > 0) {
-        v.tgi_count = static_cast<std::uint8_t>(bytes[tgi_at]);
+        const auto span = bytes.subspan(tgi_at, std::min<std::size_t>(tgi_size, bytes.size() - tgi_at));
+        if (auto tgis = parse_key_table_tgis(span); tgis) {
+            v.tgis = std::move(*tgis);
+            v.tgi_count = static_cast<std::uint32_t>(v.tgis.size());
+        } else {
+            v.tgi_count = static_cast<std::uint8_t>(bytes[tgi_at]);
+        }
     }
     return v;
 }

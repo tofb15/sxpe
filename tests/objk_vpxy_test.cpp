@@ -58,6 +58,10 @@ int main() {
         CHECK(p->data[0].text == "My.Class");
         CHECK(p->visibility == 1);
         CHECK(p->tgi_count == 1);
+        CHECK(p->tgis.size() == 1);
+        CHECK(p->tgis[0].type == 0x736884F1u);
+        CHECK(p->tgis[0].group == 0);
+        CHECK(p->tgis[0].instance == 1);
     }
 
     {

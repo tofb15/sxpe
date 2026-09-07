@@ -34,6 +34,7 @@ private:
     void merge_dropped_packages(const QStringList& paths);
     void unmerge_package();
     void compare_packages();
+    void find_refs();
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);

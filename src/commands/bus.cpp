@@ -1,6 +1,7 @@
 #include "sxpe/commands/bus.hpp"
 #include "sxpe/commands/validate_report.hpp"
 #include "sxpe/commands/package_diff_report.hpp"
+#include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/core/sha256.hpp"
 
 #include "sxpe/core/caps.hpp"
@@ -21,9 +22,11 @@
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/resources/types.hpp"
 #include "sxpe/resources/vpxy.hpp"
+#include "sxpe/resources/refs.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -689,6 +692,18 @@ std::vector<Tool> make_catalog() {
                      {"resourceId", rid_schema()},
                      {"includePayload", {{"type", "boolean"}, {"default", false}}},
                      {"maxBytes", {{"type", "integer"}, {"default", 0}}}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"resource.findRefs", "Find references",
+         "Scan REFS + OBJK/VPXY TGI lists for resources that point at a target TGI. "
+         "Optional byteScan:true does a capped uncompressed payload scan (slow). "
+         "CLI: sxpe resource find-refs --package X --type --group --instance.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"limit", {{"type", "integer"}, {"default", 200}}},
+                     {"byteScan", {{"type", "boolean"}, {"default", false}}},
+                     {"byteScanMaxBytes", {{"type", "integer"}, {"default", 1048576}}},
+                     {"byteScanMaxResources", {{"type", "integer"}, {"default", 500}}}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"resource.export", "Export to file", "Write uncompressed (or raw) bytes to a path.",
@@ -3490,6 +3505,174 @@ json Bus::Impl::exec(std::string_view id, json args) {
         std::string t(reinterpret_cast<const char*>(body->data()), body->size());
         return envelope_ok({{"text", t}, {"bytes", body->size()}});
     }
+
+    if (cmd == "resource.findRefs") {
+        if (!args.contains("resourceId")) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId required"));
+        }
+        const Tgi target = tgi_from(args["resourceId"]);
+        const auto limit = static_cast<std::size_t>(args.value("limit", 200));
+        const bool byte_scan = args.value("byteScan", false);
+        const auto bs_max_bytes =
+            static_cast<std::uint32_t>(args.value("byteScanMaxBytes", 1u << 20));
+        const auto bs_max_res =
+            static_cast<std::uint32_t>(args.value("byteScanMaxResources", 500));
+        auto names = name_index(s.pkg);
+        json hits = json::array();
+        std::uint32_t scanned_refs = 0;
+        std::uint32_t scanned_objk = 0;
+        std::uint32_t scanned_vpxy = 0;
+        std::uint32_t bs_scanned = 0;
+
+        auto push_hit = [&](std::uint32_t i, const char* reason, std::int64_t index = -1) {
+            if (hits.size() >= limit) {
+                return;
+            }
+            json h;
+            h["source"] = item_meta(s.pkg, i, names);
+            h["reason"] = reason;
+            if (index >= 0) {
+                h["index"] = index;
+            }
+            hits.push_back(std::move(h));
+        };
+
+        auto matches = [&](const Tgi& t) {
+            return t.type == target.type && t.group == target.group && t.instance == target.instance;
+        };
+
+        for (std::uint32_t i = 0; i < s.pkg.count() && hits.size() < limit; ++i) {
+            const auto& e = s.pkg.entry(i);
+            if (e.tgi.type == target.type && e.tgi.group == target.group &&
+                e.tgi.instance == target.instance) {
+                continue;
+            }
+            if (e.tgi.type != sxpe::resources::kRefs && e.tgi.type != sxpe::resources::kObjk &&
+                e.tgi.type != sxpe::resources::kVpxy) {
+                continue;
+            }
+            if (e.mem_size > sxpe::core::caps::kMaxResourceBytes) {
+                continue;
+            }
+            auto body = s.pkg.uncompressed(i);
+            if (!body) {
+                continue;
+            }
+            if (e.tgi.type == sxpe::resources::kRefs) {
+                ++scanned_refs;
+                auto parsed = sxpe::resources::parse_refs(*body);
+                if (!parsed) {
+                    continue;
+                }
+                for (std::size_t ei = 0; ei < parsed->entries.size() && hits.size() < limit; ++ei) {
+                    if (matches(parsed->entries[ei].tgi)) {
+                        push_hit(i, "refs.entry", static_cast<std::int64_t>(ei));
+                    }
+                }
+            } else if (e.tgi.type == sxpe::resources::kObjk) {
+                ++scanned_objk;
+                auto parsed = sxpe::resources::parse_objk(*body);
+                if (!parsed) {
+                    continue;
+                }
+                for (std::size_t ei = 0; ei < parsed->tgis.size() && hits.size() < limit; ++ei) {
+                    if (matches(parsed->tgis[ei])) {
+                        push_hit(i, "objk.tgi", static_cast<std::int64_t>(ei));
+                    }
+                }
+            } else if (e.tgi.type == sxpe::resources::kVpxy) {
+                ++scanned_vpxy;
+                auto parsed = sxpe::resources::parse_vpxy(*body);
+                if (!parsed) {
+                    continue;
+                }
+                for (std::size_t ei = 0; ei < parsed->tgis.size() && hits.size() < limit; ++ei) {
+                    if (matches(parsed->tgis[ei])) {
+                        push_hit(i, "vpxy.tgi", static_cast<std::int64_t>(ei));
+                    }
+                }
+            }
+        }
+
+        json byte_scan_info{{"enabled", byte_scan},
+                            {"maxBytesPerResource", bs_max_bytes},
+                            {"maxResources", bs_max_res},
+                            {"resourcesScanned", 0}};
+        if (byte_scan && hits.size() < limit) {
+            std::vector<std::byte> needle(16);
+            auto put_u32 = [&](std::size_t o, std::uint32_t v) {
+                std::memcpy(needle.data() + o, &v, 4);
+            };
+            auto put_u64 = [&](std::size_t o, std::uint64_t v) {
+                std::memcpy(needle.data() + o, &v, 8);
+            };
+            put_u32(0, target.type);
+            put_u32(4, target.group);
+            put_u64(8, target.instance);
+            std::vector<std::byte> needle_hi(16);
+            std::memcpy(needle_hi.data(), needle.data(), 8);
+            const auto hi = static_cast<std::uint32_t>(target.instance >> 32);
+            const auto lo = static_cast<std::uint32_t>(target.instance);
+            std::memcpy(needle_hi.data() + 8, &hi, 4);
+            std::memcpy(needle_hi.data() + 12, &lo, 4);
+
+            for (std::uint32_t i = 0; i < s.pkg.count() && hits.size() < limit &&
+                                     bs_scanned < bs_max_res;
+                 ++i) {
+                const auto& e = s.pkg.entry(i);
+                if (e.tgi.type == target.type && e.tgi.group == target.group &&
+                    e.tgi.instance == target.instance) {
+                    continue;
+                }
+                if (e.tgi.type == sxpe::resources::kRefs || e.tgi.type == sxpe::resources::kObjk ||
+                    e.tgi.type == sxpe::resources::kVpxy) {
+                    continue;
+                }
+                if (e.mem_size == 0 || e.mem_size > bs_max_bytes) {
+                    continue;
+                }
+                auto body = s.pkg.uncompressed(i);
+                if (!body) {
+                    continue;
+                }
+                ++bs_scanned;
+                auto it = std::search(body->begin(), body->end(), needle.begin(), needle.end());
+                const char* reason = "byteScan";
+                std::int64_t off = -1;
+                if (it != body->end()) {
+                    off = static_cast<std::int64_t>(it - body->begin());
+                } else {
+                    it = std::search(body->begin(), body->end(), needle_hi.begin(), needle_hi.end());
+                    if (it != body->end()) {
+                        off = static_cast<std::int64_t>(it - body->begin());
+                        reason = "byteScan.hiLo";
+                    }
+                }
+                if (off >= 0) {
+                    json h;
+                    h["source"] = item_meta(s.pkg, i, names);
+                    h["reason"] = reason;
+                    h["offset"] = off;
+                    hits.push_back(std::move(h));
+                }
+            }
+            byte_scan_info["resourcesScanned"] = bs_scanned;
+        }
+
+        const bool truncated = hits.size() >= limit;
+        json data{{"target", tgi_json(target)},
+                  {"hits", hits},
+                  {"scanned",
+                   {{"refs", scanned_refs}, {"objk", scanned_objk}, {"vpxy", scanned_vpxy}}},
+                  {"byteScan", std::move(byte_scan_info)},
+                  {"truncated", truncated},
+                  {"notes",
+                   json::array({"CASP TGI-block scan is a follow-up (parser does not expose "
+                                "key-table fields yet)."})}};
+        data["summary"] = find_refs_summary_json(data);
+        return envelope_ok(std::move(data));
+    }
+
     if (cmd == "search.bytes") {
         std::vector<std::byte> needle;
         if (args.contains("hex")) {
