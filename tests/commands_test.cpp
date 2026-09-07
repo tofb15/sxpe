@@ -333,6 +333,139 @@ int main() {
                               json{{"path", ma_path}, {"outDir", outdir}, {"force", true}});
     CHECK(refuse["ok"] == false);
 
+    // Traversal rejection: craft a merged package with a malicious SXMM name.
+    {
+        auto evil = bus.execute("package.new", json::object());
+        CHECK(evil["ok"] == true);
+        const auto eid = evil["data"]["sessionId"].get<std::string>();
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", eid},
+                               {"resourceId", json{{"type", 21}, {"group", 0}, {"instance", 21}}},
+                               {"payloadB64", b64(*raw)},
+                               {"compress", true}})["ok"] == true);
+        json evil_man{{"format", "sxpe.mergeManifest"},
+                      {"version", 1},
+                      {"sources",
+                       json::array({json{{"id", "src-1"},
+                                         {"originalFileName", "../escape.package"},
+                                         {"resources",
+                                          json::array({json{{"type", 21},
+                                                            {"group", 0},
+                                                            {"instance", 21},
+                                                            {"ordinal", 0}}})}}})}};
+        const auto dumped = evil_man.dump();
+        std::vector<std::byte> mb(dumped.size());
+        for (std::size_t i = 0; i < dumped.size(); ++i) {
+            mb[i] = static_cast<std::byte>(static_cast<unsigned char>(dumped[i]));
+        }
+        auto b64evil = b64(mb);
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", eid},
+                               {"resourceId",
+                                json{{"type", static_cast<int>(sxpe::resources::kSxmm)},
+                                     {"group", 0},
+                                     {"instance", 1}}},
+                               {"payloadB64", b64evil}})["ok"] == true);
+        auto evil_path = (tmp / "evil-merged.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", eid}, {"path", evil_path}, {"force", true}})["ok"] ==
+              true);
+        bus.execute("package.close", json{{"sessionId", eid}});
+        auto trav = bus.execute("package.unmerge",
+                                json{{"path", evil_path},
+                                     {"outDir", (tmp / "unmerged-evil").string()},
+                                     {"force", true}});
+        CHECK(trav["ok"] == false);
+        CHECK(trav["error"]["message"].get<std::string>().find("basename") != std::string::npos ||
+              trav["error"]["message"].get<std::string>().find("..") != std::string::npos);
+    }
+
+    // Compressed merge → unmerge preserves on-disk sizes (copy-through).
+    {
+        auto ca = bus.execute("package.new", json::object());
+        auto cb = bus.execute("package.new", json::object());
+        const auto ca_id = ca["data"]["sessionId"].get<std::string>();
+        const auto cb_id = cb["data"]["sessionId"].get<std::string>();
+        std::vector<std::byte> bulky;
+        const char pat[] = "merge-compress-pattern-AAAA-BBBB-CCCC-DDDD";
+        for (int i = 0; i < 80; ++i) {
+            for (std::size_t j = 0; j + 1 < sizeof(pat); ++j) {
+                bulky.push_back(static_cast<std::byte>(static_cast<unsigned char>(pat[j])));
+            }
+        }
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", ca_id},
+                               {"resourceId", json{{"type", 31}, {"group", 0}, {"instance", 31}}},
+                               {"payloadB64", b64(bulky)},
+                               {"compress", true}})["ok"] == true);
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", cb_id},
+                               {"resourceId", json{{"type", 32}, {"group", 0}, {"instance", 32}}},
+                               {"payloadB64", b64(bulky)},
+                               {"compress", true}})["ok"] == true);
+        auto ca_path = (tmp / "cmerge-a.package").string();
+        auto cb_path = (tmp / "cmerge-b.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", ca_id}, {"path", ca_path}, {"force", true}})["ok"] ==
+              true);
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", cb_id}, {"path", cb_path}, {"force", true}})["ok"] ==
+              true);
+        auto la = bus.execute("resource.list", json{{"sessionId", ca_id}, {"limit", 5}});
+        auto lb = bus.execute("resource.list", json{{"sessionId", cb_id}, {"limit", 5}});
+        CHECK(la["ok"] == true && lb["ok"] == true);
+        const auto a_fs = la["data"]["items"][0]["fileSize"].get<int>();
+        const auto b_fs = lb["data"]["items"][0]["fileSize"].get<int>();
+        CHECK(a_fs * 4 < static_cast<int>(bulky.size()));
+        bus.execute("package.close", json{{"sessionId", ca_id}});
+        bus.execute("package.close", json{{"sessionId", cb_id}});
+
+        auto cm = bus.execute("package.new", json::object());
+        const auto cm_id = cm["data"]["sessionId"].get<std::string>();
+        CHECK(bus.execute("resource.importPackage",
+                          json{{"sessionId", cm_id},
+                               {"paths", json::array({ca_path, cb_path})},
+                               {"force", true},
+                               {"writeMergeManifest", true}})["ok"] == true);
+        auto lm = bus.execute("resource.list", json{{"sessionId", cm_id}, {"limit", 20}});
+        CHECK(lm["ok"] == true);
+        int saw_a = -1;
+        int saw_b = -1;
+        for (const auto& it : lm["data"]["items"]) {
+            if (it["type"] == 31) {
+                saw_a = it["fileSize"].get<int>();
+                CHECK(it.value("compressed", false) == true);
+            }
+            if (it["type"] == 32) {
+                saw_b = it["fileSize"].get<int>();
+                CHECK(it.value("compressed", false) == true);
+            }
+        }
+        CHECK(saw_a == a_fs);
+        CHECK(saw_b == b_fs);
+        auto cm_path = (tmp / "cmerged.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", cm_id}, {"path", cm_path}, {"force", true}})["ok"] ==
+              true);
+        bus.execute("package.close", json{{"sessionId", cm_id}});
+
+        auto cout = (tmp / "cunmerged").string();
+        std::filesystem::create_directories(cout);
+        auto cum = bus.execute("package.unmerge",
+                               json{{"path", cm_path}, {"outDir", cout}, {"force", true}});
+        CHECK(cum["ok"] == true);
+        CHECK(cum["data"].value("packagesWritten", 0) == 2);
+        auto oa = bus.execute("package.open",
+                              json{{"path", (std::filesystem::path(cout) / "cmerge-a.package").string()}});
+        CHECK(oa["ok"] == true);
+        auto oaid = oa["data"]["sessionId"].get<std::string>();
+        auto ola = bus.execute("resource.list", json{{"sessionId", oaid}, {"limit", 5}});
+        CHECK(ola["ok"] == true);
+        CHECK(ola["data"]["items"][0]["fileSize"].get<int>() == a_fs);
+        CHECK(ola["data"]["items"][0].value("compressed", false) == true);
+        bus.execute("package.close", json{{"sessionId", oaid}});
+    }
+
     auto us = bus.execute("package.new", json::object());
     CHECK(us["ok"] == true);
     const auto uid = us["data"]["sessionId"].get<std::string>();
@@ -403,7 +536,17 @@ int main() {
     auto impd = bus.execute("s3sa.importDll", json{{"sessionId", s3id}, {"path", dllp}});
     CHECK(impd["ok"] == true);
     CHECK(impd["data"].value("loadLibrary", true) == false);
+    CHECK(impd["data"].value("nmapName", "") == "mod.dll");
     auto s3rid = impd["data"]["resourceId"];
+    auto nmap_after = bus.execute("nmap.get", json{{"sessionId", s3id}});
+    CHECK(nmap_after["ok"] == true);
+    bool saw_mod = false;
+    for (const auto& e : nmap_after["data"]["entries"]) {
+        if (e.value("name", "") == "mod.dll") {
+            saw_mod = true;
+        }
+    }
+    CHECK(saw_mod);
     auto s3info = bus.execute("s3sa.info", json{{"sessionId", s3id}, {"resourceId", s3rid}});
     CHECK(s3info["ok"] == true);
     CHECK(s3info["data"].value("parsed", false) == true);
@@ -419,6 +562,30 @@ int main() {
     in_dll.read(mz2, 2);
     CHECK(in_dll.gcount() == 2 && mz2[0] == 'M' && mz2[1] == 'Z');
     bus.execute("package.close", json{{"sessionId", s3id}});
+
+
+    // Issue #13: clip.exportAs uses frozen fnv64_clip("a_walk") = 0x11a06ab91bca6bde
+    // (SimsWiki age-letter rules; constant pasted — not recomputed in the assert).
+    {
+        auto cs = bus.execute("package.new", json::object());
+        CHECK(cs["ok"] == true);
+        const auto cid = cs["data"]["sessionId"].get<std::string>();
+        const auto clip_rid =
+            json{{"type", sxpe::resources::kClip}, {"group", 0}, {"instance", 1}};
+        std::vector<std::byte> clip_body{std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", cid},
+                               {"resourceId", clip_rid},
+                               {"payloadB64", b64(clip_body)}})["ok"] == true);
+        auto exp = bus.execute(
+            "clip.exportAs",
+            json{{"sessionId", cid}, {"resourceId", clip_rid}, {"name", "a_walk"}});
+        CHECK(exp["ok"] == true);
+        constexpr std::uint64_t kFrozenAWalk = 0x11a06ab91bca6bdeull;
+        CHECK(exp["data"]["resourceId"]["instance"].get<std::uint64_t>() == kFrozenAWalk);
+        CHECK(exp["data"]["resourceId"]["type"].get<std::uint32_t>() == sxpe::resources::kClip);
+        bus.execute("package.close", json{{"sessionId", cid}});
+    }
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";

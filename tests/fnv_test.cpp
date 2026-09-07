@@ -23,16 +23,12 @@ int main() {
     CHECK(fnv1_32("Hello", true) == fnv1_32("HELLO", true));
     CHECK(fnv64_clip("walk") == fnv1_64("walk", true));
 
-    const auto a_walk = fnv1_64("a_walk", true) & ~(1ull << 63);
-    CHECK(fnv64_clip("a_walk") == a_walk);
-    CHECK(fnv64_clip("A_WALK") == a_walk);
-    auto t_walk = fnv1_64("a_walk", true) | (1ull << 63);
-    {
-        auto hi = static_cast<std::uint8_t>(t_walk >> 56);
-        hi = static_cast<std::uint8_t>(hi ^ 0x04);
-        t_walk = (t_walk & 0x00FFFFFFFFFFFFFFull) | (static_cast<std::uint64_t>(hi) << 56);
-    }
-    CHECK(fnv64_clip("t_walk") == t_walk);
+    // Frozen vectors from docs/spec/hashing.md (not recomputed in the assert).
+    constexpr std::uint64_t kFrozenAWalk = 0x11a06ab91bca6bdeull;
+    constexpr std::uint64_t kFrozenTWalk = 0x95a06ab91bca6bdeull;
+    CHECK(fnv64_clip("a_walk") == kFrozenAWalk);
+    CHECK(fnv64_clip("A_WALK") == kFrozenAWalk);
+    CHECK(fnv64_clip("t_walk") == kFrozenTWalk);
     CHECK(fnv64_clip("t_walk") != fnv64_clip("a_walk"));
 
     const auto a2a = fnv1_64("a2a_sit", true) & ~(1ull << 63);

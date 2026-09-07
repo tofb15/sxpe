@@ -25,6 +25,7 @@
 #include <optional>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace sxpe::commands {
@@ -332,6 +333,50 @@ Result<std::vector<std::byte>> read_file(const std::filesystem::path& p) {
         o[i] = static_cast<std::byte>(static_cast<unsigned char>(raw[i]));
     }
     return o;
+}
+
+
+Result<std::string> sanitize_unmerge_basename(std::string fname, int nsrc) {
+    if (fname.empty()) {
+        return "source-" + std::to_string(nsrc) + ".package";
+    }
+    if (fname.find('/') != std::string::npos || fname.find('\\') != std::string::npos) {
+        return std::unexpected(err(ErrorCode::refused, "originalFileName must be basename-only"));
+    }
+    if (fname == "." || fname == "..") {
+        return std::unexpected(err(ErrorCode::refused, "originalFileName rejects . and .."));
+    }
+    // Reject absolute Windows drive paths and Unix absolute (leading separator already caught).
+    if (fname.size() >= 2 && std::isalpha(static_cast<unsigned char>(fname[0])) && fname[1] == ':') {
+        return std::unexpected(err(ErrorCode::refused, "originalFileName rejects absolute paths"));
+    }
+    if (fname.find("..") != std::string::npos) {
+        return std::unexpected(err(ErrorCode::refused, "originalFileName rejects .."));
+    }
+    const auto as_path = std::filesystem::path(fname);
+    if (as_path.has_parent_path() || as_path.is_absolute() || as_path.filename() != as_path) {
+        return std::unexpected(err(ErrorCode::refused, "originalFileName must be basename-only"));
+    }
+    return fname;
+}
+
+Result<std::uint32_t> copy_resource_through(Package& dest, const Package& src, std::uint32_t src_i) {
+    auto disk = src.raw(src_i);
+    if (!disk) {
+        return std::unexpected(disk.error());
+    }
+    const auto& e = src.entry(src_i);
+    return dest.add_raw(e.tgi, *disk, e.mem_size, e.compressed, e.unknown2);
+}
+
+VoidResult replace_resource_through(Package& dest, std::uint32_t dest_i, const Package& src,
+                                    std::uint32_t src_i) {
+    auto disk = src.raw(src_i);
+    if (!disk) {
+        return std::unexpected(disk.error());
+    }
+    const auto& e = src.entry(src_i);
+    return dest.set_raw(dest_i, *disk, e.mem_size, e.compressed, e.unknown2);
 }
 
 Result<std::vector<std::byte>> payload_from_args(const json& args) {
@@ -1182,13 +1227,23 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json written = json::array();
         json warnings = json::array();
+        json orphans = json::array();
+        std::unordered_set<std::uint64_t> listed;
+        auto pack_key = [](Tgi t, std::uint32_t ord) -> std::uint64_t {
+            // Enough for tests/manifest ordinals; collisions across type are fine for orphan scan.
+            return (static_cast<std::uint64_t>(t.type) << 32) ^
+                   (static_cast<std::uint64_t>(t.group) << 16) ^ t.instance ^
+                   (static_cast<std::uint64_t>(ord) << 48);
+        };
         int nsrc = 0;
         for (const auto& srcj : man["sources"]) {
             ++nsrc;
-            auto fname = srcj.value("originalFileName", "source-" + std::to_string(nsrc) + ".package");
-            if (fname.empty()) {
-                fname = "source-" + std::to_string(nsrc) + ".package";
+            auto raw_name = srcj.value("originalFileName", "source-" + std::to_string(nsrc) + ".package");
+            auto fname_r = sanitize_unmerge_basename(std::move(raw_name), nsrc);
+            if (!fname_r) {
+                return envelope_err(fname_r.error());
             }
+            const auto fname = *fname_r;
             auto dest = *outd / fname;
             if (std::filesystem::exists(dest) && !force(args)) {
                 dest = *outd / (dest.stem().string() + "-" + std::to_string(nsrc) + dest.extension().string());
@@ -1200,27 +1255,28 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 for (const auto& r : srcj["resources"]) {
                     Tgi t = tgi_from(r);
                     std::uint32_t ord = r.contains("ordinal") ? static_cast<std::uint32_t>(as_u64(r["ordinal"])) : 0;
+                    listed.insert(pack_key(t, ord));
                     auto idx = src->find(t, ord);
                     if (!idx) {
                         ++skipped;
-                        warnings.push_back({{"file", fname}, {"message", "resource missing"}});
+                        warnings.push_back({{"file", fname},
+                                            {"message", "listed TGI missing from merged package"},
+                                            {"type", t.type},
+                                            {"group", t.group},
+                                            {"instance", t.instance},
+                                            {"ordinal", ord}});
                         continue;
                     }
                     if (src->entry(*idx).tgi.type == sxpe::resources::kSxmm) {
                         continue;
                     }
-                    auto bytes = src->uncompressed(*idx);
-                    if (!bytes) {
-                        ++skipped;
-                        warnings.push_back({{"file", fname}, {"message", bytes.error().message}});
-                        continue;
-                    }
-                    auto add = child.add(t, *bytes, src->entry(*idx).compressed == 0xFFFF);
+                    auto add = copy_resource_through(child, *src, *idx);
                     if (!add) {
                         ++skipped;
                         warnings.push_back({{"file", fname}, {"message", add.error().message}});
                         continue;
                     }
+                    (void)*add;
                     ++copied;
                 }
             }
@@ -1230,9 +1286,24 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             written.push_back({{"path", dest.string()}, {"copied", copied}, {"skipped", skipped}});
         }
+        for (std::uint32_t i = 0; i < src->count(); ++i) {
+            const auto& e = src->entry(i);
+            if (e.tgi.type == sxpe::resources::kSxmm || e.tgi.type == sxpe::resources::kDir) {
+                continue;
+            }
+            if (!listed.count(pack_key(e.tgi, e.ordinal))) {
+                orphans.push_back(rid_json(e.tgi, e.ordinal));
+            }
+        }
+        if (!orphans.empty()) {
+            warnings.push_back({{"message", "orphan resources not listed in SXMM"},
+                                {"count", orphans.size()},
+                                {"resources", orphans}});
+        }
         return envelope_ok({{"packagesWritten", written.size()},
                             {"packages", written},
-                            {"warnings", warnings}});
+                            {"warnings", warnings},
+                            {"orphans", orphans}});
     }
     if (cmd == "s3sa.wrap") {
         auto path = check_path(args.at("path").get<std::string>());
@@ -1883,12 +1954,6 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 if (write_man && (t.type == sxpe::resources::kSxmm || t.type == sxpe::resources::kDir)) {
                     continue;
                 }
-                auto body = src->uncompressed(i);
-                if (!body) {
-                    errors.push_back({{"path", path->string()}, {"message", body.error().message}});
-                    file_ok = false;
-                    break;
-                }
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
                 if (ex && !force(args)) {
                     errors.push_back({{"path", path->string()},
@@ -1897,7 +1962,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     break;
                 }
                 if (ex) {
-                    auto wr = s.pkg.set_uncompressed(*ex, *body, src->entry(i).compressed == 0xFFFF);
+                    auto wr = replace_resource_through(s.pkg, *ex, *src, i);
                     if (!wr) {
                         errors.push_back(
                             {{"path", path->string()}, {"message", wr.error().message}});
@@ -1906,7 +1971,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     }
                     recs.push_back(rid_json(s.pkg.entry(*ex).tgi, s.pkg.entry(*ex).ordinal));
                 } else {
-                    auto r = s.pkg.add(t, *body, src->entry(i).compressed == 0xFFFF);
+                    auto r = copy_resource_through(s.pkg, *src, i);
                     if (!r) {
                         errors.push_back(
                             {{"path", path->string()}, {"message", r.error().message}});
@@ -1979,10 +2044,6 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!path) {
             return envelope_err(path.error());
         }
-        auto body = s.pkg.uncompressed(*i);
-        if (!body) {
-            return envelope_err(body.error());
-        }
         if (dry(args)) {
             return envelope_ok({{"dryRun", true}, {"path", path->string()}});
         }
@@ -1994,7 +2055,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             dest = std::move(*o);
         }
-        auto r = dest.add(s.pkg.entry(*i).tgi, *body, s.pkg.entry(*i).compressed == 0xFFFF);
+        auto r = copy_resource_through(dest, s.pkg, *i);
         if (!r) {
             return envelope_err(r.error());
         }
@@ -2405,10 +2466,25 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             json nmap_args{{"sessionId", s.id}, {"instance", s.pkg.entry(idx).tgi.instance},
                            {"name", fname}};
-            exec("nmap.set", nmap_args);
+            auto nm = exec("nmap.set", nmap_args);
+            if (!nm.value("ok", false)) {
+                const std::string detail =
+                    nm.contains("error") && nm["error"].contains("message")
+                        ? nm["error"]["message"].get<std::string>()
+                        : "nmap.set failed";
+                if (!replace) {
+                    (void)s.pkg.remove(idx);
+                    if (!s.undo.empty() && s.undo.back().kind == "remove" &&
+                        s.undo.back().index == idx) {
+                        s.undo.pop_back();
+                    }
+                }
+                return envelope_err(err(ErrorCode::io, "S3SA imported but NMAP update failed: " + detail));
+            }
             return envelope_ok({{"resourceId", rid_json(s.pkg.entry(idx).tgi, s.pkg.entry(idx).ordinal)},
                                 {"bytes", wrapped->size()},
                                 {"name", fname},
+                                {"nmapName", fname},
                                 {"loadLibrary", false}});
         }
         auto i = need_idx();
