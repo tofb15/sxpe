@@ -61,6 +61,8 @@ public:
                        std::uint16_t compressed, std::uint16_t unknown2 = 1,
                        bool file_size_high_bit = true);
     VoidResult remove(std::uint32_t i);
+    /// Reorder index rows. `to` is the destination index after removal of `from`.
+    VoidResult move(std::uint32_t from, std::uint32_t to);
     Result<std::uint32_t> duplicate(std::uint32_t i);
     VoidResult rekey(std::uint32_t i, Tgi tgi);
     VoidResult set_deleted(std::uint32_t i, bool deleted);

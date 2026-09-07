@@ -26,3 +26,4 @@ Read for display; rewrite when renaming resources if we own the NMAP. Do not inv
 - First NMAP is copy-through (keeps on-disk RefPack if present).
 - Later NMAPs with the same TGI are decompressed, appended in import order, and written uncompressed (same as `nmap.set`).
 - Duplicate instance ids are kept as extra rows; the Name column uses last-wins (`name_index`).
+- After import the (single) NMAP row is moved to package index 0, matching s3pe merge order. SXMM stays at the end.
