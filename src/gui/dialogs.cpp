@@ -31,6 +31,16 @@
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QTextBrowser>
+#include <QTimer>
+#include <QEventLoop>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QCoreApplication>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QNetworkAccessManager>
 
 #include <algorithm>
 #include <span>
@@ -926,7 +936,7 @@ void show_contents_dialog(QWidget* parent) {
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
         "built-in handlers, external programs (hex/text/S3SA viewer), save settings.</p>"
         "<h3>Help</h3>"
-        "<p>Contents (this window), About, Warranty, Licence.</p>"
+        "<p>Contents (this window), Check for update (GitHub Releases; never auto-downloads), About, Warranty, Licence.</p>"
         "<h3>Context menus</h3>"
         "<p>Right-click the resource list for Resource actions. Right-click a package tab "
         "to save, close (this / others / left / right), or bookmark. Right-click column "
@@ -1772,6 +1782,182 @@ void show_sims3pack_dialog(
         extract_selected();
     });
 
+    dlg.exec();
+}
+
+
+
+void show_check_for_update_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Check for update"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* status = new QLabel(QObject::tr("Checking GitHub Releases…"));
+    status->setWordWrap(true);
+    status->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    status->setOpenExternalLinks(true);
+    lay->addWidget(status);
+
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto* open_btn = box->addButton(QObject::tr("Open releases page"), QDialogButtonBox::ActionRole);
+    open_btn->setEnabled(false);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+
+    const QString current = QCoreApplication::applicationVersion();
+    const QUrl api(QStringLiteral("https://api.github.com/repos/tofb15/sxpe/releases/latest"));
+    const QUrl releases_page(QStringLiteral("https://github.com/tofb15/sxpe/releases"));
+
+    auto* nam = new QNetworkAccessManager(&dlg);
+    QNetworkRequest req(api);
+    req.setHeader(QNetworkRequest::UserAgentHeader,
+                  QStringLiteral("SXPE/%1 (check-for-update)").arg(current));
+    req.setRawHeader("Accept", "application/vnd.github+json");
+    // Avoid hanging forever on offline networks.
+    req.setTransferTimeout(15000);
+
+    QNetworkReply* reply = nam->get(req);
+
+    auto normalize = [](QString v) {
+        v = v.trimmed();
+        if (v.startsWith(QLatin1Char('v')) || v.startsWith(QLatin1Char('V'))) {
+            v = v.mid(1);
+        }
+        // Drop pre-release / build metadata for a simple compare.
+        const int plus = v.indexOf(QLatin1Char('+'));
+        if (plus >= 0) {
+            v = v.left(plus);
+        }
+        const int dash = v.indexOf(QLatin1Char('-'));
+        if (dash >= 0) {
+            v = v.left(dash);
+        }
+        return v;
+    };
+
+    auto parse_parts = [](const QString& v) {
+        QList<int> parts;
+        for (const QString& p : v.split(QLatin1Char('.'))) {
+            bool ok = false;
+            const int n = p.toInt(&ok);
+            parts.push_back(ok ? n : 0);
+        }
+        while (parts.size() < 3) {
+            parts.push_back(0);
+        }
+        return parts;
+    };
+
+    auto cmp_ver = [&](const QString& a, const QString& b) {
+        const auto pa = parse_parts(normalize(a));
+        const auto pb = parse_parts(normalize(b));
+        const int n = qMax(pa.size(), pb.size());
+        for (int i = 0; i < n; ++i) {
+            const int x = i < pa.size() ? pa[i] : 0;
+            const int y = i < pb.size() ? pb[i] : 0;
+            if (x < y) {
+                return -1;
+            }
+            if (x > y) {
+                return 1;
+            }
+        }
+        return 0;
+    };
+
+    QObject::connect(reply, &QNetworkReply::finished, &dlg, [=, &dlg]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (http == 404) {
+                status->setText(QObject::tr(
+                    "No GitHub Releases yet for this project.\n"
+                    "You are running SXPE %1.\n"
+                    "Releases page: <a href=\"%2\">%2</a>")
+                                    .arg(current, releases_page.toString()));
+                open_btn->setEnabled(true);
+                QObject::connect(open_btn, &QPushButton::clicked, &dlg, [releases_page] {
+                    QDesktopServices::openUrl(releases_page);
+                });
+                return;
+            }
+            status->setText(QObject::tr(
+                "Could not check for updates (network or GitHub error).\n"
+                "You are running SXPE %1.\n"
+                "Error: %2\n"
+                "Try again later, or open <a href=\"%3\">%3</a> in a browser.")
+                                .arg(current, reply->errorString(), releases_page.toString()));
+            open_btn->setEnabled(true);
+            QObject::connect(open_btn, &QPushButton::clicked, &dlg, [releases_page] {
+                QDesktopServices::openUrl(releases_page);
+            });
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (!doc.isObject()) {
+            status->setText(QObject::tr(
+                "GitHub returned an unexpected response.\n"
+                "You are running SXPE %1.\n"
+                "Releases: <a href=\"%2\">%2</a>")
+                                .arg(current, releases_page.toString()));
+            open_btn->setEnabled(true);
+            QObject::connect(open_btn, &QPushButton::clicked, &dlg, [releases_page] {
+                QDesktopServices::openUrl(releases_page);
+            });
+            return;
+        }
+
+        const QJsonObject obj = doc.object();
+        const QString tag = obj.value(QStringLiteral("tag_name")).toString();
+        QString html = obj.value(QStringLiteral("html_url")).toString();
+        if (html.isEmpty()) {
+            html = releases_page.toString();
+        }
+        if (tag.isEmpty()) {
+            status->setText(QObject::tr(
+                "No release tag found yet.\n"
+                "You are running SXPE %1.\n"
+                "Releases: <a href=\"%2\">%2</a>")
+                                .arg(current, releases_page.toString()));
+            open_btn->setEnabled(true);
+            QObject::connect(open_btn, &QPushButton::clicked, &dlg, [releases_page] {
+                QDesktopServices::openUrl(releases_page);
+            });
+            return;
+        }
+
+        const int cmp = cmp_ver(current, tag);
+        const QUrl release_url(html);
+        open_btn->setEnabled(true);
+        QObject::connect(open_btn, &QPushButton::clicked, &dlg, [release_url] {
+            QDesktopServices::openUrl(release_url);
+        });
+
+        if (cmp < 0) {
+            status->setText(QObject::tr(
+                "A newer release is available.\n"
+                "You have SXPE %1; latest is %2.\n"
+                "SXPE does not download updates automatically — open the release page "
+                "and install when you choose.\n"
+                "<a href=\"%3\">%3</a>")
+                                .arg(current, tag, html));
+        } else if (cmp == 0) {
+            status->setText(QObject::tr(
+                "You are up to date.\n"
+                "Running SXPE %1 (matches latest release %2).\n"
+                "Releases: <a href=\"%3\">%3</a>")
+                                .arg(current, tag, html));
+        } else {
+            status->setText(QObject::tr(
+                "You appear newer than the latest GitHub Release "
+                "(dev or local build).\n"
+                "Running SXPE %1; latest published is %2.\n"
+                "Releases: <a href=\"%3\">%3</a>")
+                                .arg(current, tag, html));
+        }
+    });
+
+    dlg.resize(480, 220);
     dlg.exec();
 }
 

@@ -115,3 +115,20 @@ QT_QPA_PLATFORM=offscreen ./build/sxpe_gui --smoke fixtures/synthetic/single-blo
 ```
 
 All of the above were run successfully while implementing #31 (26/26 ctest, including `gui_smoke`).
+
+## Releases / packaging
+
+Windows portable zip (GUI + CLI + MCP, Qt plugins, MSVC runtime):
+
+```text
+package.bat
+```
+
+Same as `scripts/package.ps1`. Output: `dist/sxpe/` and `dist/sxpe-<version>-windows-x64.zip`. Use `-SkipBuild` to package the current `build/` tree. The zip includes `SXPE.bat`, `sxpe-cli.bat`, and `sxpe-mcp.bat`.
+
+### GitHub Actions release workflow
+
+Preferred path: `.github/workflows/release.yml` (runs on `v*` tags, builds the portable zip via `package.ps1`).
+
+If the pushing token lacks the GitHub `workflow` scope, OAuth cannot update files under `.github/workflows/`. In that case a paste-ready copy lives at [`docs/ci/release.yml`](ci/release.yml) — add it in the GitHub UI or with a token that has `workflow` scope. Tagging and attaching the zip asset is a separate coordinator step after merge.
+

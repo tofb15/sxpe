@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(sxpe VERSION 0.5.0 LANGUAGES CXX)
+project(sxpe VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -140,7 +140,7 @@ set(_sxpe_qt_hint "${CMAKE_CURRENT_SOURCE_DIR}/../qt/6.8.2/msvc2022_64")
 if(EXISTS "${_sxpe_qt_hint}/lib/cmake/Qt6/Qt6Config.cmake")
     list(PREPEND CMAKE_PREFIX_PATH "${_sxpe_qt_hint}")
 endif()
-find_package(Qt6 6.5 COMPONENTS Widgets QUIET)
+find_package(Qt6 6.5 COMPONENTS Widgets Network QUIET)
 if(Qt6_FOUND)
     qt_standard_project_setup()
     add_executable(sxpe_gui WIN32
@@ -157,7 +157,7 @@ if(Qt6_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/gui"
         "${SXPE_VENDOR}"
         "${SXPE_GENERATED_INCLUDE_DIR}")
-    target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
+    target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets Qt6::Network sxpe_commands)
     set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
     find_program(SXPE_WINDEPLOYQT windeployqt HINTS "${_qt_prefix}/bin")
