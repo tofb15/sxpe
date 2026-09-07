@@ -1,5 +1,7 @@
 #include "main_window.hpp"
 
+#include "sxpe/version.hpp"
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QPalette>
@@ -35,7 +37,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     app.setApplicationName("SXPE");
     app.setOrganizationName("SXPE");
-    app.setApplicationVersion("0.5.0");
+    app.setApplicationVersion(QStringLiteral(SXPE_VERSION));
     apply_theme(app);
 
     sxpe::gui::MainWindow w;
