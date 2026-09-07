@@ -1,5 +1,6 @@
 #include "dialogs.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
+#include "sxpe/commands/folder_scan_report.hpp"
 
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/types.hpp"
@@ -904,7 +905,7 @@ void show_contents_dialog(QWidget* parent) {
         "<li><b>Delete</b> — Delete</li>"
         "</ul>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, compare packages, find references, un-merge package, byte search, validate, compact / save.</p>"
+        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), un-merge package, byte search, validate, compact / save.</p>"
         "<ul>"
         "<li><b>Search…</b> — Ctrl+F</li>"
         "</ul>"
@@ -1401,5 +1402,187 @@ void show_find_refs_dialog(
     run_find();
     dlg.exec();
 }
+
+void show_folder_scan_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path)>& open_path) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Scan folder"));
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* form = new QFormLayout;
+    auto* path_edit = new QLineEdit;
+    auto* browse = new QPushButton(QObject::tr("Browse…"));
+    auto* row = new QHBoxLayout;
+    row->addWidget(path_edit, 1);
+    row->addWidget(browse);
+    form->addRow(QObject::tr("Folder"), row);
+    lay->addLayout(form);
+
+    auto* summary = new QPlainTextEdit;
+    summary->setReadOnly(true);
+    summary->setMaximumHeight(140);
+    lay->addWidget(summary);
+
+    auto* table = new QTableWidget(0, 4);
+    table->setHorizontalHeaderLabels({QObject::tr("Kind"), QObject::tr("Path"),
+                                      QObject::tr("Detail"), QObject::tr("TGI / note")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    lay->addWidget(table, 1);
+
+    auto* hint = new QLabel(
+        QObject::tr("Read-only scan of *.package (recursive). Never deletes or renames. "
+                    "Double-click or Open to load a path in SXPE when it is a valid Sims 3 "
+                    "package. Duplicate TGI rows list a sample of conflicting files."));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    nlohmann::json last_env = nlohmann::json::object();
+
+    auto fill = [&](const nlohmann::json& env) {
+        last_env = env;
+        table->setRowCount(0);
+        QStringList lines;
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Command failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            lines << msg;
+            summary->setPlainText(lines.join(QLatin1Char('\n')));
+            return;
+        }
+        const auto& data = env["data"];
+        if (data.contains("summary") && data["summary"].is_array()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines << QString::fromStdString(line.get<std::string>());
+                }
+            }
+        } else {
+            for (const auto& line : sxpe::commands::format_folder_scan_summary(data)) {
+                lines << QString::fromStdString(line);
+            }
+        }
+        summary->setPlainText(lines.join(QLatin1Char('\n')));
+
+        auto add_row = [&](const QString& kind, const QString& path, const QString& detail,
+                           const QString& note) {
+            const int r = table->rowCount();
+            table->insertRow(r);
+            auto put = [&](int c, const QString& s) {
+                auto* item = new QTableWidgetItem(s);
+                item->setData(Qt::UserRole, path);
+                table->setItem(r, c, item);
+            };
+            put(0, kind);
+            put(1, path);
+            put(2, detail);
+            put(3, note);
+        };
+
+        if (data.contains("issues") && data["issues"].is_array()) {
+            for (const auto& it : data["issues"]) {
+                add_row(QString::fromStdString(it.value("kind", std::string{"issue"})),
+                        QString::fromStdString(it.value("path", std::string{})),
+                        QString::fromStdString(it.value("message", std::string{})),
+                        QObject::tr("%1 bytes").arg(
+                            static_cast<qulonglong>(it.value("bytes", 0ull))));
+            }
+        }
+        if (data.contains("duplicates") && data["duplicates"].is_array()) {
+            for (const auto& d : data["duplicates"]) {
+                QString tgi = QString::fromStdString(d.value("typeHex", std::string{})) +
+                              QLatin1Char(' ') +
+                              QString::fromStdString(d.value("groupHex", std::string{})) +
+                              QLatin1Char(' ') +
+                              QString::fromStdString(d.value("instanceHex", std::string{}));
+                QString first_path;
+                if (d.contains("paths") && d["paths"].is_array() && !d["paths"].empty() &&
+                    d["paths"][0].is_string()) {
+                    first_path = QString::fromStdString(d["paths"][0].get<std::string>());
+                }
+                add_row(QObject::tr("duplicate"), first_path,
+                        QObject::tr("in %1 file(s)")
+                            .arg(static_cast<qulonglong>(d.value("fileCount", 0u))),
+                        tgi);
+                if (d.contains("paths") && d["paths"].is_array()) {
+                    for (const auto& p : d["paths"]) {
+                        if (!p.is_string()) {
+                            continue;
+                        }
+                        const auto ps = QString::fromStdString(p.get<std::string>());
+                        if (ps == first_path) {
+                            continue;
+                        }
+                        add_row(QObject::tr("duplicate"), ps, QObject::tr("same TGI"), tgi);
+                    }
+                }
+            }
+        }
+    };
+
+    auto run_scan = [&] {
+        const auto p = path_edit->text().trimmed();
+        if (p.isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("Scan folder"),
+                                 QObject::tr("Choose a folder to scan."));
+            return;
+        }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto env = bus.execute("folder.scan", {{"path", p.toStdString()}});
+        QApplication::restoreOverrideCursor();
+        fill(env);
+    };
+
+    auto open_selected = [&] {
+        const auto rows = table->selectionModel() ? table->selectionModel()->selectedRows()
+                                                  : QModelIndexList{};
+        if (rows.isEmpty() || !open_path) {
+            return;
+        }
+        const auto* item = table->item(rows.first().row(), 0);
+        if (!item) {
+            return;
+        }
+        const auto path = item->data(Qt::UserRole).toString();
+        if (path.isEmpty()) {
+            return;
+        }
+        open_path(path);
+    };
+
+    QObject::connect(browse, &QPushButton::clicked, &dlg, [path_edit, &dlg] {
+        const auto p = QFileDialog::getExistingDirectory(&dlg, QObject::tr("Scan folder"),
+                                                         path_edit->text());
+        if (!p.isEmpty()) {
+            path_edit->setText(p);
+        }
+    });
+    QObject::connect(table, &QTableWidget::cellDoubleClicked, &dlg,
+                     [&](int, int) { open_selected(); });
+
+    auto* box = new QDialogButtonBox;
+    auto* scan = box->addButton(QObject::tr("Scan"), QDialogButtonBox::ActionRole);
+    auto* open_btn = box->addButton(QObject::tr("Open in SXPE"), QDialogButtonBox::ActionRole);
+    auto* copy = box->addButton(QObject::tr("Copy JSON"), QDialogButtonBox::ActionRole);
+    box->addButton(QDialogButtonBox::Close);
+    lay->addWidget(box);
+    QObject::connect(scan, &QPushButton::clicked, &dlg, run_scan);
+    QObject::connect(open_btn, &QPushButton::clicked, &dlg, open_selected);
+    QObject::connect(copy, &QPushButton::clicked, &dlg, [&] {
+        QGuiApplication::clipboard()->setText(
+            QString::fromStdString(last_env.dump(2)));
+    });
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    dlg.resize(860, 520);
+    dlg.exec();
+}
+
 
 }  // namespace sxpe::gui

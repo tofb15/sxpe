@@ -2,6 +2,7 @@
 #include "sxpe/commands/validate_report.hpp"
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
+#include "sxpe/commands/folder_scan_report.hpp"
 #include "sxpe/core/sha256.hpp"
 
 #include "sxpe/core/caps.hpp"
@@ -29,6 +30,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -674,6 +676,20 @@ std::vector<Tool> make_catalog() {
          obj_schema({{"pathA", {{"type", "string"}}},
                      {"pathB", {{"type", "string"}}}},
                     json::array({"pathA", "pathB"})),
+         env_out, true, false, true, true});
+    add({"folder.scan", "Scan folder",
+         "Read-only recursive scan of *.package under path for empty/zero-byte, unreadable or "
+         "corrupt DBPF, wrong-game sniff (non-TS3), and duplicate TGI (type+group+instance) across "
+         "files. Never deletes or moves. Caps: maxFiles (default 5000), maxTotalBytes (default 8 GiB), "
+         "maxDuplicateSamples (default 100), maxPathsPerDuplicate (default 8). Path refuses '..' "
+         "(and SXPE_ALLOW_PATHS when set). Returns files[], issues[], duplicates[] (sample), "
+         "summary[] for CLI --format text / GUI. Example: {\"path\":\"Mods\"}.",
+         obj_schema({{"path", {{"type", "string"}}},
+                     {"maxFiles", {{"type", "integer"}}},
+                     {"maxTotalBytes", {{"type", "integer"}}},
+                     {"maxDuplicateSamples", {{"type", "integer"}}},
+                     {"maxPathsPerDuplicate", {{"type", "integer"}}}},
+                    json::array({"path"})),
          env_out, true, false, true, true});
     add({"package.compact", "Compact", "Save dropping session-deleted resources.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
@@ -1598,6 +1614,281 @@ json Bus::Impl::exec(std::string_view id, json args) {
                   {"onlyInB", only_b},
                   {"different", different}};
         data["summary"] = package_diff_summary_json(data);
+        return envelope_ok(std::move(data));
+    }
+    if (cmd == "folder.scan") {
+        auto root = check_path(args.at("path").get<std::string>());
+        if (!root) {
+            return envelope_err(root.error());
+        }
+        std::error_code ec;
+        if (!std::filesystem::exists(*root, ec) || ec) {
+            return envelope_err(err(ErrorCode::not_found, "path does not exist"));
+        }
+        if (!std::filesystem::is_directory(*root, ec) || ec) {
+            return envelope_err(err(ErrorCode::invalid_argument, "path is not a directory"));
+        }
+
+        auto as_u32 = [&](const char* key, std::uint32_t def) -> std::uint32_t {
+            if (!args.contains(key)) {
+                return def;
+            }
+            const auto v = as_u64(args.at(key));
+            if (v == 0 || v > 0xffffffffu) {
+                return def;
+            }
+            return static_cast<std::uint32_t>(v);
+        };
+        auto as_u64_opt = [&](const char* key, std::uint64_t def) -> std::uint64_t {
+            if (!args.contains(key)) {
+                return def;
+            }
+            const auto v = as_u64(args.at(key));
+            return v == 0 ? def : v;
+        };
+
+        const auto max_files = as_u32("maxFiles", sxpe::core::caps::kFolderScanMaxFiles);
+        const auto max_bytes =
+            as_u64_opt("maxTotalBytes", sxpe::core::caps::kFolderScanMaxTotalBytes);
+        const auto max_dup_samples =
+            as_u32("maxDuplicateSamples", sxpe::core::caps::kFolderScanMaxDuplicateSamples);
+        const auto max_paths_per_dup =
+            as_u32("maxPathsPerDuplicate", sxpe::core::caps::kFolderScanMaxPathsPerDuplicate);
+
+        auto is_package_ext = [](const std::filesystem::path& p) {
+            auto e = p.extension().string();
+            for (char& c : e) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return e == ".package";
+        };
+
+        auto sniff_wrong_game = [](const std::filesystem::path& p) -> std::string {
+            std::ifstream in(p, std::ios::binary);
+            if (!in) {
+                return {};
+            }
+            unsigned char hdr[8]{};
+            in.read(reinterpret_cast<char*>(hdr), 8);
+            if (in.gcount() < 4) {
+                return {};
+            }
+            if (!(hdr[0] == 'D' && hdr[1] == 'B' && hdr[2] == 'P' && hdr[3] == 'F')) {
+                return "not DBPF";
+            }
+            if (in.gcount() < 8) {
+                return "DBPF truncated header";
+            }
+            const std::uint32_t major = static_cast<std::uint32_t>(hdr[4]) |
+                                       (static_cast<std::uint32_t>(hdr[5]) << 8) |
+                                       (static_cast<std::uint32_t>(hdr[6]) << 16) |
+                                       (static_cast<std::uint32_t>(hdr[7]) << 24);
+            if (major == 1) {
+                return "DBPF major 1 (likely Sims 2 / older)";
+            }
+            if (major != 2) {
+                return "DBPF major " + std::to_string(major) + " (not Sims 3)";
+            }
+            return "DBPF major 2 but not a Sims 3 package SXPE can open";
+        };
+
+        struct DupKey {
+            std::uint32_t type{0};
+            std::uint32_t group{0};
+            std::uint64_t instance{0};
+            bool operator==(const DupKey&) const = default;
+        };
+        struct DupHash {
+            std::size_t operator()(const DupKey& k) const noexcept {
+                std::size_t h = k.type;
+                h ^= static_cast<std::size_t>(k.group) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.instance) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.instance >> 32) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+
+        json files_arr = json::array();
+        json issues_arr = json::array();
+        std::unordered_map<DupKey, std::vector<std::string>, DupHash> tgi_files;
+        std::uint32_t files_scanned = 0;
+        std::uint64_t bytes_scanned = 0;
+        std::uint32_t ok_count = 0;
+        bool capped = false;
+        std::string cap_reason;
+
+        const auto opts = std::filesystem::directory_options::skip_permission_denied;
+        std::filesystem::recursive_directory_iterator it(*root, opts, ec);
+        std::filesystem::recursive_directory_iterator end;
+        if (ec) {
+            return envelope_err(err(ErrorCode::io, "cannot iterate directory: " + ec.message()), true);
+        }
+        for (; it != end; it.increment(ec)) {
+            if (ec) {
+                ec.clear();
+                continue;
+            }
+            const auto& entry = *it;
+            std::error_code fec;
+            if (!entry.is_regular_file(fec) || fec) {
+                continue;
+            }
+            if (!is_package_ext(entry.path())) {
+                continue;
+            }
+
+            // Refuse escaped relative display paths (defense in depth; check_path already
+            // refused ".." on the root).
+            const auto abs = entry.path().lexically_normal();
+            for (const auto& part : abs) {
+                if (part == "..") {
+                    return envelope_err(err(ErrorCode::refused, "path contains .."));
+                }
+            }
+
+            if (files_scanned >= max_files) {
+                capped = true;
+                cap_reason = "maxFiles";
+                break;
+            }
+
+            std::error_code sz_ec;
+            const auto sz = std::filesystem::file_size(entry.path(), sz_ec);
+            const std::uint64_t file_bytes = sz_ec ? 0ull : static_cast<std::uint64_t>(sz);
+            if (bytes_scanned + file_bytes > max_bytes) {
+                capped = true;
+                cap_reason = "maxTotalBytes";
+                break;
+            }
+
+            ++files_scanned;
+            bytes_scanned += file_bytes;
+            const auto path_s = entry.path().string();
+
+            json file_row{{"path", path_s}, {"bytes", file_bytes}};
+
+            if (file_bytes == 0) {
+                file_row["status"] = "empty";
+                file_row["message"] = "zero-byte package";
+                files_arr.push_back(file_row);
+                issues_arr.push_back({{"path", path_s},
+                                      {"kind", "empty"},
+                                      {"message", "zero-byte package"},
+                                      {"bytes", file_bytes}});
+                continue;
+            }
+
+            auto opened = Package::open(entry.path(), false);
+            if (!opened) {
+                std::string kind = "unreadable";
+                std::string message = opened.error().message;
+                if (opened.error().code == ErrorCode::corrupt ||
+                    opened.error().code == ErrorCode::refpack) {
+                    kind = "corrupt";
+                } else if (opened.error().code == ErrorCode::unsupported_game_or_format ||
+                           opened.error().code == ErrorCode::protected_or_encrypted) {
+                    kind = "wrong_game";
+                    auto hint = sniff_wrong_game(entry.path());
+                    if (!hint.empty()) {
+                        message = hint;
+                        file_row["gameHint"] = hint;
+                    }
+                } else if (opened.error().code == ErrorCode::io) {
+                    kind = "unreadable";
+                } else {
+                    kind = "unreadable";
+                }
+                file_row["status"] = kind;
+                file_row["message"] = message;
+                files_arr.push_back(file_row);
+                json issue{{"path", path_s},
+                           {"kind", kind},
+                           {"message", message},
+                           {"bytes", file_bytes}};
+                if (file_row.contains("gameHint")) {
+                    issue["gameHint"] = file_row["gameHint"];
+                }
+                issues_arr.push_back(std::move(issue));
+                continue;
+            }
+
+            ++ok_count;
+            file_row["status"] = "ok";
+            file_row["resourceCount"] = opened->count();
+            files_arr.push_back(file_row);
+
+            std::unordered_set<DupKey, DupHash> seen_in_file;
+            for (std::uint32_t i = 0; i < opened->count(); ++i) {
+                const auto& e = opened->entry(i);
+                DupKey key{e.tgi.type, e.tgi.group, e.tgi.instance};
+                if (!seen_in_file.insert(key).second) {
+                    continue;  // same TGI twice in one file is legal (ordinals)
+                }
+                tgi_files[key].push_back(path_s);
+            }
+        }
+
+        std::vector<std::pair<DupKey, std::vector<std::string>>> dup_list;
+        for (auto& [key, paths] : tgi_files) {
+            if (paths.size() >= 2) {
+                dup_list.emplace_back(key, std::move(paths));
+            }
+        }
+        std::sort(dup_list.begin(), dup_list.end(),
+                  [](const auto& a, const auto& b) {
+                      if (a.first.type != b.first.type) {
+                          return a.first.type < b.first.type;
+                      }
+                      if (a.first.group != b.first.group) {
+                          return a.first.group < b.first.group;
+                      }
+                      return a.first.instance < b.first.instance;
+                  });
+
+        const std::uint32_t dup_total = static_cast<std::uint32_t>(dup_list.size());
+        const bool dups_truncated = dup_total > max_dup_samples;
+        json duplicates = json::array();
+        const std::size_t sample_n =
+            std::min<std::size_t>(dup_list.size(), static_cast<std::size_t>(max_dup_samples));
+        for (std::size_t i = 0; i < sample_n; ++i) {
+            const auto& key = dup_list[i].first;
+            const auto& paths = dup_list[i].second;
+            Tgi tgi{key.type, key.group, key.instance};
+            auto row = tgi_json(tgi);
+            row["fileCount"] = paths.size();
+            json path_arr = json::array();
+            const bool paths_trunc = paths.size() > max_paths_per_dup;
+            const std::size_t path_n =
+                std::min(paths.size(), static_cast<std::size_t>(max_paths_per_dup));
+            for (std::size_t p = 0; p < path_n; ++p) {
+                path_arr.push_back(paths[p]);
+            }
+            row["paths"] = std::move(path_arr);
+            row["pathsTruncated"] = paths_trunc;
+            duplicates.push_back(std::move(row));
+        }
+
+        json data{{"path", root->string()},
+                  {"filesScanned", files_scanned},
+                  {"bytesScanned", bytes_scanned},
+                  {"okCount", ok_count},
+                  {"issueCount", issues_arr.size()},
+                  {"capped", capped},
+                  {"files", files_arr},
+                  {"issues", issues_arr},
+                  {"duplicates", duplicates},
+                  {"duplicateTgiCount", dup_total},
+                  {"duplicatesTruncated", dups_truncated},
+                  {"limits",
+                   {{"maxFiles", max_files},
+                    {"maxTotalBytes", max_bytes},
+                    {"maxDuplicateSamples", max_dup_samples},
+                    {"maxPathsPerDuplicate", max_paths_per_dup}}},
+                  {"readOnly", true}};
+        if (capped) {
+            data["capReason"] = cap_reason;
+        }
+        data["summary"] = folder_scan_summary_json(data);
         return envelope_ok(std::move(data));
     }
     if (cmd == "package.unmerge") {

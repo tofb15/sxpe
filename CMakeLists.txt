@@ -188,6 +188,9 @@ add_test(NAME cli_rename COMMAND sxpe resource rename --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin"
     --type 0 --group 0 --instance 1 --name TestName --dry-run --format json)
 set_tests_properties(cli_rename PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_folder_scan COMMAND sxpe folder scan --path
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic" --format json)
+set_tests_properties(cli_folder_scan PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
 if(TARGET sxpe_gui)
     add_test(NAME gui_smoke COMMAND sxpe_gui --smoke
         "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin")

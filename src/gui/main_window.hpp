@@ -35,6 +35,7 @@ private:
     void unmerge_package();
     void compare_packages();
     void find_refs();
+    void scan_folder();
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);

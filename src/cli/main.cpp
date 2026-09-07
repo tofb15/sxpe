@@ -2,6 +2,7 @@
 #include "sxpe/commands/validate_report.hpp"
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
+#include "sxpe/commands/folder_scan_report.hpp"
 
 #include <CLI11.hpp>
 #include <nlohmann/json.hpp>
@@ -193,6 +194,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "Examples:\n";
     std::cout << "  sxpe package info --package mod.package\n";
     std::cout << "  sxpe package diff --path-a stock.package --path-b override.package\n";
+    std::cout << "  sxpe folder scan --path Mods --format text\n";
     std::cout << "  sxpe resource find-refs --package mod.package --type 0x0333406C --group 0 --instance 0x1 --format text\n";
     std::cout << "  sxpe resource list --package mod.package --limit 20\n";
     std::cout << "  sxpe resource export --package mod.package --type 0x0333406C --group 0 "
@@ -407,6 +409,23 @@ void print_package_diff_text(const json& data) {
     }
 }
 
+
+void print_folder_scan_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            }
+        }
+    } else {
+        lines = sxpe::commands::format_folder_scan_summary(data);
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
 void print_object_text(const json& data) {
     if (data.contains("issues") && data.contains("dir") && data.contains("indexCount")) {
         print_validate_text(data);
@@ -419,6 +438,11 @@ void print_object_text(const json& data) {
     }
     if (data.contains("hits") && data.contains("target") && data.contains("scanned")) {
         print_find_refs_text(data);
+        return;
+    }
+    if (data.contains("duplicates") && data.contains("filesScanned") && data.contains("readOnly") &&
+        data.value("readOnly", false)) {
+        print_folder_scan_text(data);
         return;
     }
     for (auto it = data.begin(); it != data.end(); ++it) {
@@ -538,7 +562,7 @@ bool is_list(const std::string& id) {
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
            id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "package.diff" ||
-           id == "help";
+           id == "folder.scan" || id == "help";
 }
 
 json make_resource_id(const std::string& type_s, const std::string& group_s,

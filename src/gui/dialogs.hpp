@@ -54,5 +54,9 @@ void show_find_refs_dialog(
     std::uint32_t type, std::uint32_t group, std::uint64_t instance, std::uint32_t ordinal,
     const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal)>& select_hit);
+/// Read-only folder.scan hygiene. open_path opens a package path in SXPE.
+void show_folder_scan_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path)>& open_path);
 
 }  // namespace sxpe::gui

@@ -1302,6 +1302,138 @@ int main() {
         bus.execute("package.close", json{{"sessionId", fsid}});
     }
 
+
+    // Issue #26: folder.scan — empty / wrong-game / corrupt / duplicate TGI (fixture folder).
+    {
+        const auto scan_root = tmp / "folder-scan-fixture";
+        std::filesystem::create_directories(scan_root);
+        const auto sub = scan_root / "sub";
+        std::filesystem::create_directories(sub);
+
+        // Empty / zero-byte.
+        {
+            std::ofstream((scan_root / "empty.package").string(), std::ios::binary);
+        }
+        // Wrong-game sniff: DBPF major 1 (Sims 2-ish).
+        {
+            std::ofstream out((scan_root / "sims2ish.package").string(), std::ios::binary);
+            const unsigned char hdr[8] = {'D', 'B', 'P', 'F', 1, 0, 0, 0};
+            out.write(reinterpret_cast<const char*>(hdr), 8);
+        }
+        // Corrupt: DBPF major 2 but truncated (not a valid TS3 index).
+        {
+            std::ofstream out((scan_root / "corrupt.package").string(), std::ios::binary);
+            std::vector<unsigned char> buf(96, 0);
+            buf[0] = 'D';
+            buf[1] = 'B';
+            buf[2] = 'P';
+            buf[3] = 'F';
+            buf[4] = 2;  // major
+            // claim resources / index that do not exist
+            buf[0x24] = 1;
+            buf[0x3C] = 3;  // index version
+            buf[0x40] = 96; // index pos past EOF for tiny file — actually file is 96 bytes
+            out.write(reinterpret_cast<const char*>(buf.data()),
+                      static_cast<std::streamsize>(buf.size()));
+        }
+        // Two OK packages sharing a TGI (duplicate across files).
+        auto make_pkg = [&](const std::filesystem::path& dest, int type, int group,
+                            std::uint64_t inst, const std::string& payload) {
+            auto created = bus.execute("package.new", json::object());
+            CHECK(created["ok"] == true);
+            const auto sid = created["data"]["sessionId"].get<std::string>();
+            std::vector<std::byte> bytes(payload.size());
+            for (std::size_t i = 0; i < payload.size(); ++i) {
+                bytes[i] = static_cast<std::byte>(payload[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", type}, {"group", group}, {"instance", inst}}},
+                                   {"payloadB64", b64(bytes)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid},
+                                   {"path", dest.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        };
+        make_pkg(scan_root / "a.package", 0x11, 0, 0xABC, "alpha");
+        make_pkg(sub / "b.package", 0x11, 0, 0xABC, "beta");  // same TGI, different payload
+        make_pkg(scan_root / "unique.package", 0x22, 0, 0x1, "solo");
+
+        auto man = bus.execute("manifest", json::object());
+        bool saw_scan = false;
+        for (const auto& t : man["data"]["tools"]) {
+            if (t["name"] == "folder.scan") {
+                saw_scan = true;
+                CHECK(t["annotations"]["readOnlyHint"] == true);
+                CHECK(t["annotations"]["destructiveHint"] == false);
+                CHECK(t["mcpName"] == "folder_scan");
+            }
+        }
+        CHECK(saw_scan);
+
+        // Relative ".." survives lexically_normal; absolute ".../fixture/.." does not.
+        auto refused = bus.execute("folder.scan", json{{"path", "../sxpe-folder-scan-refuse"}});
+        CHECK(refused["ok"] == false);
+        CHECK(refused["error"]["code"] == "refused");
+
+        auto scanned = bus.execute("folder.scan", json{{"path", scan_root.string()}});
+        CHECK(scanned["ok"] == true);
+        const auto& d = scanned["data"];
+        CHECK(d.value("readOnly", false) == true);
+        CHECK(d.value("filesScanned", 0u) >= 5);
+        CHECK(d["issues"].is_array());
+        CHECK(d["duplicates"].is_array());
+        CHECK(d.contains("summary"));
+        CHECK(d["summary"].is_array());
+        CHECK(!d["summary"].empty());
+
+        bool saw_empty = false, saw_wrong = false, saw_corrupt = false;
+        for (const auto& issue : d["issues"]) {
+            const auto kind = issue.value("kind", "");
+            if (kind == "empty") {
+                saw_empty = true;
+            }
+            if (kind == "wrong_game") {
+                saw_wrong = true;
+            }
+            if (kind == "corrupt" || kind == "unreadable") {
+                // truncated major-2 may surface as corrupt or unreadable/wrong_game
+                if (issue.value("path", std::string{}).find("corrupt.package") != std::string::npos) {
+                    saw_corrupt = true;
+                }
+            }
+            if (issue.value("path", std::string{}).find("corrupt.package") != std::string::npos) {
+                saw_corrupt = true;
+            }
+        }
+        CHECK(saw_empty);
+        CHECK(saw_wrong);
+        CHECK(saw_corrupt);
+
+        CHECK(d.value("duplicateTgiCount", 0u) >= 1);
+        bool saw_dup = false;
+        for (const auto& dup : d["duplicates"]) {
+            if (dup.value("type", 0u) == 0x11u && dup.value("instance", 0ull) == 0xABCull) {
+                saw_dup = true;
+                CHECK(dup.value("fileCount", 0u) >= 2);
+                CHECK(dup["paths"].is_array());
+                CHECK(dup["paths"].size() >= 2);
+            }
+        }
+        CHECK(saw_dup);
+
+        // Caps: maxFiles=1 stops early.
+        auto capped = bus.execute(
+            "folder.scan", json{{"path", scan_root.string()}, {"maxFiles", 1}});
+        CHECK(capped["ok"] == true);
+        CHECK(capped["data"].value("capped", false) == true);
+        CHECK(capped["data"].value("filesScanned", 0u) == 1);
+        CHECK(capped["data"].value("capReason", "") == "maxFiles");
+    }
+
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;
