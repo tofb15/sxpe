@@ -46,7 +46,17 @@ Names: `x_anim` (one actor) or `x2y_anim` (two actors). `a` and `o` are defaults
 
 Names without an `x_` / `x2y_` prefix hash as plain FNV-1 64 lowercase (no top-bit change).
 
-Vectors (lowercase): `walk` = FNV-1 64(`walk`); `a_walk` = FNV-1 64(`a_walk`) with bit 63 clear; `t_walk` = FNV-1 64(`a_walk`) with bit 63 set and high byte XOR `0x04`. See `tests/fnv_test.cpp`.
+Frozen test vectors (paste into tests; do not recompute in the assert helper):
+
+| Name | Instance (hex) | Notes |
+| --- | --- | --- |
+| `walk` | plain FNV-1 64(`walk`) | no `x_` prefix → no age masks |
+| `a_walk` | `0x11a06ab91bca6bde` | default age `a`; bit 63 clear |
+| `t_walk` | `0x95a06ab91bca6bde` | hash as `a_walk`, set bit 63, XOR high byte with `0x04` |
+| `a2a_sit` | `0x3b27e4eac9eb9af8` | defaults; bit 63 clear |
+| `t2c_sit` | `0xbf24e4eac9eb9af8` | two-actor; XOR high/`0x04` and mid/`0x03` |
+
+Source algorithm: [SimsWiki CLIP `0x6B20C4F3`](https://simswiki.info/wiki.php?title=Sims_3:0x6B20C4F3) + public FNV-1. `clip.exportAs` must set `resourceId.instance` to these values (`tests/commands_test.cpp`).
 
 Community filename:
 

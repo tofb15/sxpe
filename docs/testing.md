@@ -40,7 +40,7 @@ Checklist the script runs per package (work copy under `%TEMP%`, never the insta
 2. `package.saveAs` to a temp path (`force`) — compact/rebuild
 3. Reopen the copy; compare the fields above
 4. `resource.list` (paged) — every TGI + `memSize` + compressed flag must match (order-independent)
-5. Optional `-Payloads`: SHA-256 of uncompressed bodies for packages under 32 MiB (skip FullBuild)
+5. Optional `-Payloads`: SHA-256 of **uncompressed** bodies (via `resource.export` to a temp dir) for packages under 32 MiB by default (`-PayloadMaxBytes`). Slow on huge packages; skip FullBuild. Do not commit hash logs that embed EA content.
 
 Exit code 0 = all compared packages matched. Failures print the field diffs. The original install
 files are not written.

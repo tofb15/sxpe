@@ -184,9 +184,59 @@ foreach ($src in $targets) {
     }
 
     $size = (Get-Item $src).Length
-    if ($Payloads -and $size -le $PayloadMaxBytes) {
-        # Hash via list+export would be slow; compare memSize already in the key.
-        Write-Host "  payloads skipped (TGI+memSize compared; full body hash is CLI-heavy)"
+    if ($Payloads) {
+        if ($size -gt $PayloadMaxBytes) {
+            Write-Host ("  payloads skipped (package {0} bytes > -PayloadMaxBytes {1})" -f $size, $PayloadMaxBytes)
+        } else {
+            Write-Host "  hashing uncompressed payloads (SHA-256 via resource.export)…"
+            function Get-PayloadHashes([string]$PackagePath, $Items) {
+                $map = @{}
+                $dir = Join-Path $Work ("payloads-" + [Guid]::NewGuid().ToString("n"))
+                New-Item -ItemType Directory -Force -Path $dir | Out-Null
+                try {
+                    foreach ($it in $Items) {
+                        $key = Get-ListKey $it
+                        $dest = Join-Path $dir ($key + ".bin")
+                        Invoke-Sxpe @(
+                            "resource", "export", "--package", $PackagePath,
+                            "--type", ([uint32]$it.type).ToString(),
+                            "--group", ([uint32]$it.group).ToString(),
+                            "--instance", ([uint64]$it.instance).ToString(),
+                            "--ordinal", ([int]$it.ordinal).ToString(),
+                            "--path", $dest, "--force"
+                        ) | Out-Null
+                        $sha = Get-FileHash -Algorithm SHA256 -LiteralPath $dest
+                        $map[$key] = $sha.Hash.ToLowerInvariant()
+                    }
+                } finally {
+                    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                return $map
+            }
+            try {
+                $hb = Get-PayloadHashes $copy $listBefore
+                $ha = Get-PayloadHashes $out $listAfter
+            } catch {
+                Write-Host "  FAIL payload hash: $_"
+                $failed++
+                $hb = $null
+            }
+            if ($null -ne $hb) {
+                $mismatch = 0
+                foreach ($k in $hb.Keys) {
+                    if (-not $ha.ContainsKey($k) -or $ha[$k] -ne $hb[$k]) { $mismatch++ }
+                }
+                foreach ($k in $ha.Keys) {
+                    if (-not $hb.ContainsKey($k)) { $mismatch++ }
+                }
+                if ($mismatch -gt 0) {
+                    Write-Host "  FAIL $mismatch payload hash mismatch(es)"
+                    $failed++
+                } else {
+                    Write-Host "  payloads ok ($($hb.Count) resource(s))"
+                }
+            }
+        }
     }
 
     Write-Host ("  ok indexCount={0} compressed={1} listed={2}" -f $after.indexCount, $after.compressedCount, $listAfter.Count)
