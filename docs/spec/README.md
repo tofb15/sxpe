@@ -1,5 +1,7 @@
 # SXPE format specs (M1)
 
+Agent/CLI overview: [cli-mcp.md](../cli-mcp.md). Human GUI: [user-guide.md](../user-guide.md).
+
 Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/s3pe C# as the spec.
 
 | File | Topic |

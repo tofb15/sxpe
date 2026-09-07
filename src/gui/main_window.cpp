@@ -278,6 +278,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* help = menuBar()->addMenu(tr("&Help"));
     act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
+    act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this); });
     help->addSeparator();
     act(help, tr("&About SXPE"), {}, [this] {
         QMessageBox::about(

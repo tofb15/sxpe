@@ -42,6 +42,8 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                               std::uint32_t ordinal, std::uint32_t max_bytes);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
 void show_contents_dialog(QWidget* parent);
+/// Query GitHub Releases API; never downloads. Graceful offline / no-release.
+void show_check_for_update_dialog(QWidget* parent);
 void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
 /// Compare two packages via package.diff. open_hit opens a path and selects a resource.
 void show_package_diff_dialog(
