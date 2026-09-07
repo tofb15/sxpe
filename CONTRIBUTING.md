@@ -28,8 +28,8 @@ Do not commit:
 
 ## Tests
 
-CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and runs `ctest --output-on-failure`
-on **synthetic** fixtures. Optional local FullBuild/CC round-trip: `docs/testing.md` and
+CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and a Windows job with Qt that runs
+`gui_smoke`. Synthetic fixtures only. Optional local FullBuild/CC round-trip: `docs/testing.md` and
 `scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
 
 ## Commands

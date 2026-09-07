@@ -28,3 +28,31 @@ jobs:
 
       - name: Test
         run: ctest --preset default --output-on-failure
+
+  windows-gui:
+    name: Windows GUI smoke
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.2"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+          archives: qtbase
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
