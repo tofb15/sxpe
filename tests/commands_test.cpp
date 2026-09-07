@@ -563,9 +563,39 @@ int main() {
     CHECK(in_dll.gcount() == 2 && mz2[0] == 'M' && mz2[1] == 'Z');
     bus.execute("package.close", json{{"sessionId", s3id}});
 
+    {
+        auto bad = bus.execute("package.new", json::object());
+        CHECK(bad["ok"] == true);
+        const auto bid = bad["data"]["sessionId"].get<std::string>();
+        auto bad_nmap = bus.execute(
+            "resource.add",
+            json{{"sessionId", bid},
+                 {"resourceId", json{{"type", sxpe::resources::kNmap}, {"group", 0}, {"instance", 1}}},
+                 {"payloadB64", b64(std::vector<std::byte>{std::byte{'x'}})}});
+        CHECK(bad_nmap["ok"] == true);
+        auto dll_bad = (tmp / "roll.dll").string();
+        {
+            std::ofstream df(dll_bad, std::ios::binary);
+            df.write("MZ\x00\x00", 4);
+        }
+        auto before = bus.execute("resource.list", json{{"sessionId", bid}, {"limit", 50}});
+        CHECK(before["ok"] == true);
+        const auto before_n = before["data"]["items"].size();
+        auto fail_imp = bus.execute("s3sa.importDll", json{{"sessionId", bid}, {"path", dll_bad}});
+        CHECK(fail_imp["ok"] == false);
+        auto after = bus.execute("resource.list", json{{"sessionId", bid}, {"limit", 50}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"]["items"].size() == before_n);
+        bool saw_s3sa = false;
+        for (const auto& it : after["data"]["items"]) {
+            if (it.value("type", 0) == sxpe::resources::kS3sa) {
+                saw_s3sa = true;
+            }
+        }
+        CHECK(!saw_s3sa);
+        bus.execute("package.close", json{{"sessionId", bid}});
+    }
 
-    // Issue #13: clip.exportAs uses frozen fnv64_clip("a_walk") = 0x11a06ab91bca6bde
-    // (SimsWiki age-letter rules; constant pasted — not recomputed in the assert).
     {
         auto cs = bus.execute("package.new", json::object());
         CHECK(cs["ok"] == true);

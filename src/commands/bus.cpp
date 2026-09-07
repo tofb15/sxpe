@@ -366,7 +366,7 @@ Result<std::uint32_t> copy_resource_through(Package& dest, const Package& src, s
         return std::unexpected(disk.error());
     }
     const auto& e = src.entry(src_i);
-    return dest.add_raw(e.tgi, *disk, e.mem_size, e.compressed, e.unknown2);
+    return dest.add_raw(e.tgi, *disk, e.mem_size, e.compressed, e.unknown2, e.file_size_high_bit);
 }
 
 VoidResult replace_resource_through(Package& dest, std::uint32_t dest_i, const Package& src,
@@ -376,7 +376,7 @@ VoidResult replace_resource_through(Package& dest, std::uint32_t dest_i, const P
         return std::unexpected(disk.error());
     }
     const auto& e = src.entry(src_i);
-    return dest.set_raw(dest_i, *disk, e.mem_size, e.compressed, e.unknown2);
+    return dest.set_raw(dest_i, *disk, e.mem_size, e.compressed, e.unknown2, e.file_size_high_bit);
 }
 
 Result<std::vector<std::byte>> payload_from_args(const json& args) {
@@ -1228,12 +1228,26 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json written = json::array();
         json warnings = json::array();
         json orphans = json::array();
-        std::unordered_set<std::uint64_t> listed;
-        auto pack_key = [](Tgi t, std::uint32_t ord) -> std::uint64_t {
-            // Enough for tests/manifest ordinals; collisions across type are fine for orphan scan.
-            return (static_cast<std::uint64_t>(t.type) << 32) ^
-                   (static_cast<std::uint64_t>(t.group) << 16) ^ t.instance ^
-                   (static_cast<std::uint64_t>(ord) << 48);
+        struct ListedKey {
+            std::uint32_t type{0};
+            std::uint32_t group{0};
+            std::uint64_t instance{0};
+            std::uint32_t ordinal{0};
+            bool operator==(const ListedKey&) const = default;
+        };
+        struct ListedHash {
+            std::size_t operator()(const ListedKey& k) const noexcept {
+                std::size_t h = k.type;
+                h ^= static_cast<std::size_t>(k.group) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.ordinal) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.instance) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.instance >> 32) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+        std::unordered_set<ListedKey, ListedHash> listed;
+        auto pack_key = [](Tgi t, std::uint32_t ord) {
+            return ListedKey{t.type, t.group, t.instance, ord};
         };
         int nsrc = 0;
         for (const auto& srcj : man["sources"]) {
@@ -1267,7 +1281,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                             {"ordinal", ord}});
                         continue;
                     }
-                    if (src->entry(*idx).tgi.type == sxpe::resources::kSxmm) {
+                    const auto typ = src->entry(*idx).tgi.type;
+                    if (typ == sxpe::resources::kSxmm || typ == sxpe::resources::kDir) {
+                        ++skipped;
                         continue;
                     }
                     auto add = copy_resource_through(child, *src, *idx);
@@ -2443,11 +2459,41 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"bytes", wrapped->size()},
                                     {"name", fname}});
             }
+            bool had_nmap = false;
+            for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
+                if (s.pkg.entry(i).tgi.type == kNmap) {
+                    had_nmap = true;
+                    break;
+                }
+            }
+            std::optional<std::vector<std::byte>> prev_s3sa;
+            std::uint16_t prev_s3sa_comp = 0;
+            if (replace) {
+                auto prev = s.pkg.uncompressed(*replace);
+                if (!prev) {
+                    return envelope_err(prev.error());
+                }
+                prev_s3sa = std::move(*prev);
+                prev_s3sa_comp = s.pkg.entry(*replace).compressed;
+            }
+            std::optional<std::vector<std::byte>> prev_nmap;
+            std::optional<std::uint32_t> nmap_idx_before;
+            if (had_nmap) {
+                for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
+                    if (s.pkg.entry(i).tgi.type == kNmap) {
+                        nmap_idx_before = i;
+                        auto b = s.pkg.uncompressed(i);
+                        if (!b) {
+                            return envelope_err(b.error());
+                        }
+                        prev_nmap = std::move(*b);
+                        break;
+                    }
+                }
+            }
+
             std::uint32_t idx = 0;
             if (replace) {
-                if (auto u = snapshot(s, *replace); !u) {
-                    return envelope_err(u.error());
-                }
                 auto r = s.pkg.set_uncompressed(*replace, *wrapped, false);
                 if (!r) {
                     return envelope_err(r.error());
@@ -2458,28 +2504,40 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 if (!r) {
                     return envelope_err(r.error());
                 }
-                UndoItem u;
-                u.kind = "remove";
-                u.index = *r;
-                push_undo(s, std::move(u));
                 idx = *r;
             }
+
             json nmap_args{{"sessionId", s.id}, {"instance", s.pkg.entry(idx).tgi.instance},
                            {"name", fname}};
+            // Apply nmap.set, then drop any undo it pushed so failure rollback stays clean.
+            const auto undo_sz = s.undo.size();
             auto nm = exec("nmap.set", nmap_args);
+            while (s.undo.size() > undo_sz) {
+                s.undo.pop_back();
+            }
+            s.redo.clear();
             if (!nm.value("ok", false)) {
                 const std::string detail =
                     nm.contains("error") && nm["error"].contains("message")
                         ? nm["error"]["message"].get<std::string>()
                         : "nmap.set failed";
-                if (!replace) {
+                if (replace) {
+                    (void)s.pkg.set_uncompressed(idx, *prev_s3sa, prev_s3sa_comp == 0xFFFF);
+                } else {
                     (void)s.pkg.remove(idx);
-                    if (!s.undo.empty() && s.undo.back().kind == "remove" &&
-                        s.undo.back().index == idx) {
-                        s.undo.pop_back();
-                    }
                 }
-                return envelope_err(err(ErrorCode::io, "S3SA imported but NMAP update failed: " + detail));
+                if (!had_nmap) {
+                    for (std::uint32_t i = s.pkg.count(); i-- > 0;) {
+                        if (s.pkg.entry(i).tgi.type == kNmap) {
+                            (void)s.pkg.remove(i);
+                        }
+                    }
+                } else if (prev_nmap && nmap_idx_before && *nmap_idx_before < s.pkg.count() &&
+                           s.pkg.entry(*nmap_idx_before).tgi.type == kNmap) {
+                    (void)s.pkg.set_uncompressed(*nmap_idx_before, *prev_nmap, false);
+                }
+                return envelope_err(
+                    err(ErrorCode::io, "S3SA import rolled back; NMAP update failed: " + detail));
             }
             return envelope_ok({{"resourceId", rid_json(s.pkg.entry(idx).tgi, s.pkg.entry(idx).ordinal)},
                                 {"bytes", wrapped->size()},

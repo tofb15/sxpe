@@ -55,9 +55,11 @@ public:
     Result<std::uint32_t> add(Tgi tgi, std::span<const std::byte> data, bool compress);
     /// Copy on-disk bytes as-is (no decompress/recompress). Preserves compression flags.
     Result<std::uint32_t> add_raw(Tgi tgi, std::span<const std::byte> disk, std::uint32_t mem_size,
-                                  std::uint16_t compressed, std::uint16_t unknown2 = 1);
+                                  std::uint16_t compressed, std::uint16_t unknown2 = 1,
+                                  bool file_size_high_bit = true);
     VoidResult set_raw(std::uint32_t i, std::span<const std::byte> disk, std::uint32_t mem_size,
-                       std::uint16_t compressed, std::uint16_t unknown2 = 1);
+                       std::uint16_t compressed, std::uint16_t unknown2 = 1,
+                       bool file_size_high_bit = true);
     VoidResult remove(std::uint32_t i);
     Result<std::uint32_t> duplicate(std::uint32_t i);
     VoidResult rekey(std::uint32_t i, Tgi tgi);

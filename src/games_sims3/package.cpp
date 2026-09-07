@@ -555,7 +555,8 @@ Result<std::uint32_t> Package::add(Tgi tgi, std::span<const std::byte> data, boo
 
 
 VoidResult Package::set_raw(std::uint32_t i, std::span<const std::byte> disk, std::uint32_t mem_size,
-                            std::uint16_t compressed, std::uint16_t unknown2) {
+                            std::uint16_t compressed, std::uint16_t unknown2,
+                            bool file_size_high_bit) {
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
@@ -583,6 +584,7 @@ VoidResult Package::set_raw(std::uint32_t i, std::span<const std::byte> disk, st
         entries_[i].file_size = static_cast<std::uint32_t>(disk.size());
         entries_[i].mem_size = mem_size;
         entries_[i].unknown2 = unknown2;
+        entries_[i].file_size_high_bit = file_size_high_bit;
     } else {
         entries_[i].mem_size = mem_size;
     }
@@ -591,7 +593,8 @@ VoidResult Package::set_raw(std::uint32_t i, std::span<const std::byte> disk, st
 }
 
 Result<std::uint32_t> Package::add_raw(Tgi tgi, std::span<const std::byte> disk, std::uint32_t mem_size,
-                                       std::uint16_t compressed, std::uint16_t unknown2) {
+                                       std::uint16_t compressed, std::uint16_t unknown2,
+                                       bool file_size_high_bit) {
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
@@ -610,7 +613,7 @@ Result<std::uint32_t> Package::add_raw(Tgi tgi, std::span<const std::byte> disk,
     overrides_.push_back(std::nullopt);
     deleted_.push_back(0);
     const auto idx = static_cast<std::uint32_t>(entries_.size() - 1);
-    if (auto r = set_raw(idx, disk, mem_size, compressed, unknown2); !r) {
+    if (auto r = set_raw(idx, disk, mem_size, compressed, unknown2, file_size_high_bit); !r) {
         entries_.pop_back();
         overrides_.pop_back();
         deleted_.pop_back();
@@ -907,7 +910,7 @@ Result<std::uint32_t> Package::duplicate(std::uint32_t i) {
         return std::unexpected(disk.error());
     }
     const auto& e = entries_[i];
-    return add_raw(e.tgi, *disk, e.mem_size, e.compressed, e.unknown2);
+    return add_raw(e.tgi, *disk, e.mem_size, e.compressed, e.unknown2, e.file_size_high_bit);
 }
 
 VoidResult Package::rekey(std::uint32_t i, Tgi tgi) {
