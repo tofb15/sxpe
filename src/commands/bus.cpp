@@ -379,6 +379,40 @@ VoidResult replace_resource_through(Package& dest, std::uint32_t dest_i, const P
     return dest.set_raw(dest_i, *disk, e.mem_size, e.compressed, e.unknown2, e.file_size_high_bit);
 }
 
+// s3pe concatenates NameMap records on merge. Duplicate TGI 0166038C:0:0 is a table
+// union, not last-wins payload replace — otherwise later packages wipe earlier names.
+VoidResult merge_nmap_from(Package& dest, std::uint32_t dest_i, const Package& src,
+                           std::uint32_t src_i) {
+    auto a = dest.uncompressed(dest_i);
+    if (!a) {
+        return std::unexpected(a.error());
+    }
+    auto b = src.uncompressed(src_i);
+    if (!b) {
+        return std::unexpected(b.error());
+    }
+    auto na = sxpe::resources::parse_nmap(*a);
+    if (!na) {
+        return std::unexpected(na.error());
+    }
+    auto nb = sxpe::resources::parse_nmap(*b);
+    if (!nb) {
+        return std::unexpected(nb.error());
+    }
+    if (na->entries.size() + nb->entries.size() > sxpe::core::caps::kMaxTableEntries) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "nmap merge count"));
+    }
+    na->entries.insert(na->entries.end(), nb->entries.begin(), nb->entries.end());
+    if (na->version == 0) {
+        na->version = nb->version != 0 ? nb->version : 1;
+    }
+    auto out = sxpe::resources::write_nmap(*na);
+    if (!out) {
+        return std::unexpected(out.error());
+    }
+    return dest.set_uncompressed(dest_i, *out, false);
+}
+
 Result<std::vector<std::byte>> payload_from_args(const json& args) {
     if (args.contains("payloadB64") && args["payloadB64"].is_string()) {
         const auto s = args["payloadB64"].get<std::string>();
@@ -598,6 +632,7 @@ std::vector<Tool> make_catalog() {
          env_out, false, true, false, true});
     add({"resource.importPackage", "Import package",
          "Copy resources from one or more TS3 packages. Pass path or paths[]. "
+         "Duplicate NMAP TGIs concatenate name records (s3pe merge). "
          "writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
@@ -1971,6 +2006,18 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     continue;
                 }
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
+                if (ex && t.type == kNmap) {
+                    auto wr = merge_nmap_from(s.pkg, *ex, *src, i);
+                    if (!wr) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", wr.error().message}});
+                        file_ok = false;
+                        break;
+                    }
+                    recs.push_back(rid_json(s.pkg.entry(*ex).tgi, s.pkg.entry(*ex).ordinal));
+                    ++n;
+                    continue;
+                }
                 if (ex && !force(args)) {
                     errors.push_back({{"path", path->string()},
                                       {"message", "duplicate TGI; pass force"}});
