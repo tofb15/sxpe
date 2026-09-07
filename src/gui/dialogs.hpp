@@ -1,8 +1,6 @@
 #pragma once
 
 #include "sxpe/commands/bus.hpp"
-#include "plugin_host.hpp"
-
 #include <QDialog>
 #include <QString>
 
@@ -18,7 +16,7 @@ void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QStrin
 void show_search_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session);
 void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                         bool dbc);
-void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus, PluginHost& host);
+void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus);
 void show_external_programs_dialog(QWidget* parent);
 bool show_add_resource_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                               bool replace, std::uint32_t type, std::uint32_t group,

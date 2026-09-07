@@ -195,9 +195,9 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
     }
 }
 
-void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus, PluginHost& host) {
+void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("Handlers and plugins"));
+    dlg.setWindowTitle(QObject::tr("Built-in handlers"));
     auto* lay = new QVBoxLayout(&dlg);
     auto* list = new QListWidget;
     auto env = bus.execute("handler.list", nlohmann::json::object());
@@ -208,12 +208,11 @@ void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus, PluginHost&
                               .arg(QString::fromStdString(h.value("name", ""))));
         }
     }
-    host.scan();
-    for (const auto& p : host.plugins()) {
-        list->addItem(QObject::tr("plugin: %1 (%2)").arg(p.label, p.kind));
-    }
-    lay->addWidget(new QLabel(QObject::tr("First-party handlers are always on. GUI plugins load only from the plugins folders.")));
+    lay->addWidget(new QLabel(QObject::tr(
+        "Compiled first-party type handlers (always on).")));
     lay->addWidget(list);
+    lay->addWidget(new QLabel(QObject::tr(
+        "Third-party GUI plugins are not supported in this build.")));
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     lay->addWidget(box);
@@ -699,7 +698,7 @@ void show_contents_dialog(QWidget* parent) {
         "</ul>"
         "<h3>Settings</h3>"
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
-        "handlers / plugins, external programs, save settings.</p>"
+        "built-in handlers, external programs, save settings.</p>"
         "<h3>Help</h3>"
         "<p>Contents (this window), About, Warranty, Licence.</p>"
         "<h3>Context menus</h3>"

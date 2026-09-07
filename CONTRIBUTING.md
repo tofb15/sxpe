@@ -46,3 +46,7 @@ See [DESIGN.md](DESIGN.md).
 ## Safety
 
 Untrusted package bytes: use `std::span` and size caps. Do not `memcpy` from the index without checking. Fuzz codecs when they exist.
+
+## Plugins
+
+Third-party GUI plugins are not supported in this build.
