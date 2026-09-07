@@ -111,8 +111,7 @@ add_executable(sxpe_commands_test tests/commands_test.cpp)
 target_link_libraries(sxpe_commands_test PRIVATE sxpe_commands)
 target_include_directories(sxpe_commands_test PRIVATE "${SXPE_VENDOR}")
 target_compile_definitions(sxpe_commands_test PRIVATE
-    "SXPE_SYNTHETIC_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic\""
-    "SXPE_CLI=\"$<TARGET_FILE:sxpe>\"")
+    "SXPE_SYNTHETIC_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic\"")
 
 add_executable(sxpe_stbl_test tests/stbl_test.cpp)
 target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
@@ -206,6 +205,16 @@ add_test(NAME cli_rename COMMAND sxpe resource rename --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin"
     --type 0 --group 0 --instance 1 --name TestName --dry-run --format json)
 set_tests_properties(cli_rename PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+# PR #49: --instance must reach top-level nmap.set / nmap.delete (ctest argv, not shell).
+add_test(NAME cli_nmap_pkg COMMAND sxpe package new --package
+    "${CMAKE_BINARY_DIR}/cli-nmap.package" --force --format json)
+set_tests_properties(cli_nmap_pkg PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_nmap_set COMMAND sxpe nmap set --package
+    "${CMAKE_BINARY_DIR}/cli-nmap.package" --instance 0x1 --name Foo --force --format json)
+set_tests_properties(cli_nmap_set PROPERTIES DEPENDS cli_nmap_pkg PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_nmap_delete COMMAND sxpe nmap delete --package
+    "${CMAKE_BINARY_DIR}/cli-nmap.package" --instance 0x1 --force --format json)
+set_tests_properties(cli_nmap_delete PROPERTIES DEPENDS cli_nmap_set PASS_REGULAR_EXPRESSION "\"ok\":true")
 add_test(NAME cli_folder_scan COMMAND sxpe folder scan --path
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic" --format json)
 set_tests_properties(cli_folder_scan PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
