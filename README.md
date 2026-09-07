@@ -22,7 +22,7 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs that on Linux without Qt. GUI is skipped when Qt is missing; CLI and MCP still build. Optional local FullBuild/CC checks are not CI.
+GitHub Actions (`.github/workflows/ci.yml`) runs Linux CLI/MCP without Qt, and a Windows job that installs Qt and runs `gui_smoke`. Optional local FullBuild/CC checks are not CI.
 
 On Windows with Visual Studio 2022/2026 (MSVC):
 
