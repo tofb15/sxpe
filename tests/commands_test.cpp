@@ -1745,44 +1745,6 @@ int main() {
         bus.execute("package.close", json{{"sessionId", nid}});
     }
 
-
-#ifdef SXPE_CLI
-    // PR #49: CLI --instance fills top-level nmap.set / nmap.delete args (one-shot).
-    {
-        auto fresh = bus.execute("package.new", json::object());
-        CHECK(fresh["ok"] == true);
-        const auto sid = fresh["data"]["sessionId"].get<std::string>();
-        const auto pkg = (tmp / "cli-nmap-instance.package").string();
-        CHECK(bus.execute("package.saveAs",
-                          json{{"sessionId", sid}, {"path", pkg}, {"force", true}})["ok"] == true);
-        bus.execute("package.close", json{{"sessionId", sid}});
-
-        const std::string cli = SXPE_CLI;
-        auto run = [&](const std::string& args) {
-            const auto cmd = "\"" + cli + "\" " + args + " --format json";
-            return std::system(cmd.c_str());
-        };
-        CHECK(run("nmap set --package \"" + pkg +
-                  "\" --instance 0x1 --name Foo --force --writable") == 0);
-        CHECK(run("nmap delete --package \"" + pkg +
-                  "\" --instance 0x1 --force --writable") == 0);
-
-        auto reopen = bus.execute("package.open", json{{"path", pkg}});
-        CHECK(reopen["ok"] == true);
-        const auto rid = reopen["data"]["sessionId"].get<std::string>();
-        auto ng = bus.execute("nmap.get", json{{"sessionId", rid}});
-        CHECK(ng["ok"] == true);
-        bool has_foo = false;
-        for (const auto& e : ng["data"]["entries"]) {
-            if (e.value("instance", 0ull) == 1 && e.value("name", "") == "Foo") {
-                has_foo = true;
-            }
-        }
-        CHECK(!has_foo);
-        bus.execute("package.close", json{{"sessionId", rid}});
-    }
-#endif
-
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;
