@@ -34,5 +34,7 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                               std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                               std::uint32_t ordinal, std::uint32_t max_bytes);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
+void show_contents_dialog(QWidget* parent);
+void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
 
 }  // namespace sxpe::gui
