@@ -170,6 +170,30 @@ int main() {
         CHECK(again->count() == 1);
         auto body = again->uncompressed(0);
         CHECK(body.has_value() && as_text(*body) == "Hello SXPE\n");
+        CHECK(again->deleted_count() == 0);
+        CHECK(!again->deleted(0));
+    }
+
+    auto dropped = tmp / "deleted-omit.bin";
+    {
+        auto created = Package::create_new();
+        const char keep[] = "keep";
+        const char gone[] = "gone";
+        CHECK(created.add(Tgi{1, 0, 1}, std::as_bytes(std::span{keep, 4}), false).has_value());
+        CHECK(created.add(Tgi{2, 0, 2}, std::as_bytes(std::span{gone, 4}), false).has_value());
+        CHECK(created.set_deleted(1, true).has_value());
+        CHECK(created.deleted_count() == 1);
+        CHECK(created.count() == 2);
+        CHECK(created.save_as(dropped).has_value());
+    }
+    auto after_del = Package::open(dropped, false);
+    CHECK(after_del.has_value());
+    if (after_del) {
+        CHECK(after_del->count() == 1);
+        CHECK(after_del->deleted_count() == 0);
+        CHECK(after_del->entry(0).tgi.instance == 1);
+        auto body = after_del->uncompressed(0);
+        CHECK(body.has_value() && as_text(*body) == "keep");
     }
 
     auto inplace = tmp / "inplace.bin";

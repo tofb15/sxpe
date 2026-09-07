@@ -576,7 +576,8 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
          env_out, false, true, false, true});
-    add({"resource.setFlags", "Set flags", "compressed and/or session deleted.",
+    add({"resource.setFlags", "Set flags",
+         "compressed WORD and/or session deleted (deleted is RAM-only; save omits the row).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"compressed", {{"type", "boolean"}}},

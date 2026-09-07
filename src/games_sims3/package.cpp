@@ -559,6 +559,8 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
     std::vector<IndexEntry> out_e;
     std::uint32_t off = kHeaderSize;
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        // TS3 DBPF 2.0 has no on-disk deleted bit (no trash index; CompressedFlags
+        // is 0 or 0xFFFF; group high byte is EP/product flags). Save omits the row.
         if (deleted(i)) {
             continue;
         }
@@ -811,6 +813,7 @@ VoidResult Package::set_deleted(std::uint32_t i, bool del) {
     if (i >= entries_.size()) {
         return std::unexpected(err(ErrorCode::not_found, "index"));
     }
+    // Session flag only. The game never stores this in the index; compact/save drops the row.
     deleted_[i] = del ? 1 : 0;
     dirty_ = true;
     return ok();
