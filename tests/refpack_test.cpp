@@ -57,6 +57,44 @@ int main() {
         }
     }
 
+    // Real compressor: repetitive payload must shrink materially and round-trip.
+    {
+        std::vector<std::byte> rep;
+        const char chunk[] = "SXPE-RefPack-pattern-0123456789abcdef";
+        const std::size_t chunk_n = sizeof(chunk) - 1;
+        rep.reserve(chunk_n * 100);
+        for (int i = 0; i < 100; ++i) {
+            for (std::size_t j = 0; j < chunk_n; ++j) {
+                rep.push_back(static_cast<std::byte>(static_cast<unsigned char>(chunk[j])));
+            }
+        }
+        auto enc2 = refpack_compress(rep);
+        CHECK(enc2.has_value());
+        if (enc2) {
+            CHECK(enc2->size() * 4 < rep.size());  // compressed << uncompressed
+            CHECK((*enc2)[0] == std::byte{0x10} && (*enc2)[1] == std::byte{0xFB});
+            auto back2 = refpack_decompress(*enc2, static_cast<std::uint32_t>(rep.size()));
+            CHECK(back2.has_value());
+            if (back2) {
+                CHECK(*back2 == rep);
+            }
+        }
+    }
+
+    // Incompressible / short still round-trips.
+    {
+        std::vector<std::byte> rnd(64);
+        for (std::size_t i = 0; i < rnd.size(); ++i) {
+            rnd[i] = std::byte{static_cast<unsigned char>(i * 37 + 11)};
+        }
+        auto enc3 = refpack_compress(rnd);
+        CHECK(enc3.has_value());
+        if (enc3) {
+            auto back3 = refpack_decompress(*enc3, static_cast<std::uint32_t>(rnd.size()));
+            CHECK(back3.has_value() && *back3 == rnd);
+        }
+    }
+
     std::vector<std::byte> bomb{std::byte{0x10}, std::byte{0xFB}, std::byte{0xFF}, std::byte{0xFF},
                                 std::byte{0xFF}};
     auto boom = refpack_decompress(bomb);

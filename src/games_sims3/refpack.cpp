@@ -5,6 +5,7 @@
 #include "sxpe/games/sims3/sims3_game_profile.hpp"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace sxpe::games::sims3 {
 namespace {
@@ -144,30 +145,216 @@ Result<std::vector<std::byte>> refpack_compress(std::span<const std::byte> input
     if (input.size() > kMaxResourceBytes) {
         return std::unexpected(err(ErrorCode::cap_exceeded, "compress input cap"));
     }
+    // TS3 uses the 3-byte big-endian uncompressed size form after 10 FB.
+    if (input.size() > 0x00FFFFFFu) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "refpack 3-byte size limit"));
+    }
+
+    constexpr std::size_t kMinMatch = 3;
+    constexpr std::size_t kMaxMatch = 1028;
+    constexpr std::size_t kMaxDist = 131072;
+    constexpr std::size_t kHashBits = 15;
+    constexpr std::size_t kHashSize = std::size_t{1} << kHashBits;
+    constexpr std::size_t kMaxChain = 128;
+    constexpr std::size_t kNiceLen = 128;
+
+    const std::size_t n = input.size();
     std::vector<std::byte> out;
-    out.reserve(input.size() + 16);
+    out.reserve(n / 2 + 64);
     out.push_back(std::byte{0x10});
     out.push_back(std::byte{0xFB});
-    const auto n = static_cast<std::uint32_t>(input.size());
-    out.push_back(std::byte{(n >> 16) & 0xFF});
-    out.push_back(std::byte{(n >> 8) & 0xFF});
-    out.push_back(std::byte{n & 0xFF});
+    const auto uncomp = static_cast<std::uint32_t>(n);
+    out.push_back(std::byte{(uncomp >> 16) & 0xFF});
+    out.push_back(std::byte{(uncomp >> 8) & 0xFF});
+    out.push_back(std::byte{uncomp & 0xFF});
 
-    std::size_t p = 0;
-    while (input.size() - p >= 4) {
-        std::size_t lit = std::min<std::size_t>(112, (input.size() - p) & ~std::size_t{3});
-        if (lit < 4) {
-            break;
+    auto push_bytes = [&](std::size_t from, std::size_t count) {
+        out.insert(out.end(), input.begin() + static_cast<std::ptrdiff_t>(from),
+                   input.begin() + static_cast<std::ptrdiff_t>(from + count));
+    };
+
+    auto emit_long_literals = [&](std::size_t from, std::size_t count) -> std::size_t {
+        std::size_t p = from;
+        std::size_t left = count;
+        while (left >= 4) {
+            const std::size_t block = std::min<std::size_t>(112, left & ~std::size_t{3});
+            out.push_back(std::byte{static_cast<std::uint8_t>(0xE0 + (block / 4 - 1))});
+            push_bytes(p, block);
+            p += block;
+            left -= block;
         }
-        const auto chunks = lit / 4;
-        out.push_back(std::byte{static_cast<std::uint8_t>(0xE0 + (chunks - 1))});
-        out.insert(out.end(), input.begin() + static_cast<std::ptrdiff_t>(p),
-                   input.begin() + static_cast<std::ptrdiff_t>(p + lit));
-        p += lit;
+        return left;
+    };
+
+    auto emit_match = [&](std::size_t lit_from, std::size_t lit_count, std::size_t match_len,
+                          std::size_t dist) {
+        std::size_t from = lit_from;
+        std::size_t lit = lit_count;
+        if (lit > 3) {
+            const std::size_t flush = lit - (lit & 3);
+            emit_long_literals(from, flush);
+            from += flush;
+            lit -= flush;
+        }
+        const std::size_t d = dist - 1;
+        if (match_len <= 10 && dist <= 1024) {
+            out.push_back(std::byte{static_cast<std::uint8_t>(((d >> 8) << 5) |
+                                                              ((match_len - 3) << 2) | lit)});
+            out.push_back(std::byte{static_cast<std::uint8_t>(d & 0xFF)});
+        } else if (match_len <= 67 && dist <= 16384) {
+            out.push_back(std::byte{static_cast<std::uint8_t>(0x80 | (match_len - 4))});
+            out.push_back(std::byte{static_cast<std::uint8_t>((lit << 6) | ((d >> 8) & 0x3F))});
+            out.push_back(std::byte{static_cast<std::uint8_t>(d & 0xFF)});
+        } else {
+            out.push_back(std::byte{static_cast<std::uint8_t>(
+                0xC0 | (((d >> 16) & 1) << 4) | (((match_len - 5) >> 8) << 2) | lit)});
+            out.push_back(std::byte{static_cast<std::uint8_t>((d >> 8) & 0xFF)});
+            out.push_back(std::byte{static_cast<std::uint8_t>(d & 0xFF)});
+            out.push_back(std::byte{static_cast<std::uint8_t>((match_len - 5) & 0xFF)});
+        }
+        if (lit != 0) {
+            push_bytes(from, lit);
+        }
+    };
+
+    if (n < kMinMatch) {
+        const std::size_t rem = emit_long_literals(0, n);
+        out.push_back(std::byte{static_cast<std::uint8_t>(0xFC | rem)});
+        if (rem != 0) {
+            push_bytes(n - rem, rem);
+        }
+        return out;
     }
-    const std::size_t rest = input.size() - p;
-    out.push_back(std::byte{static_cast<std::uint8_t>(0xFC | rest)});
-    out.insert(out.end(), input.begin() + static_cast<std::ptrdiff_t>(p), input.end());
+
+    std::vector<std::int32_t> head(kHashSize, -1);
+    std::vector<std::int32_t> prev(n, -1);
+
+    auto hash_at = [&](std::size_t i) -> std::size_t {
+        const auto a = static_cast<std::uint32_t>(u8(input[i]));
+        const auto b = static_cast<std::uint32_t>(u8(input[i + 1]));
+        const auto c = static_cast<std::uint32_t>(u8(input[i + 2]));
+        return static_cast<std::size_t>((a << 10) ^ (b << 5) ^ c) & (kHashSize - 1);
+    };
+
+    // Insert pos into the hash chain; return previous head (candidates before pos).
+    auto insert_get_prev = [&](std::size_t i) -> std::int32_t {
+        if (i + kMinMatch > n) {
+            return -1;
+        }
+        const auto h = hash_at(i);
+        const std::int32_t older = head[h];
+        prev[i] = older;
+        head[h] = static_cast<std::int32_t>(i);
+        return older;
+    };
+
+    auto find_match = [&](std::int32_t cur, std::size_t pos, std::size_t& out_dist) -> std::size_t {
+        out_dist = 0;
+        std::size_t best_len = 0;
+        std::size_t best_dist = 0;
+        std::size_t chain = kMaxChain;
+        const std::size_t max_len = std::min(kMaxMatch, n - pos);
+        const std::size_t oldest = pos > kMaxDist ? pos - kMaxDist : 0;
+
+        while (cur >= 0 && chain-- > 0) {
+            const std::size_t mpos = static_cast<std::size_t>(cur);
+            if (mpos < oldest) {
+                break;
+            }
+            const std::size_t dist = pos - mpos;
+            if (dist == 0 || dist > kMaxDist) {
+                cur = prev[mpos];
+                continue;
+            }
+            if (input[mpos] != input[pos] || input[mpos + 1] != input[pos + 1]) {
+                cur = prev[mpos];
+                continue;
+            }
+            std::size_t len = 2;
+            while (len < max_len && input[mpos + len] == input[pos + len]) {
+                ++len;
+            }
+            if (len < kMinMatch) {
+                cur = prev[mpos];
+                continue;
+            }
+
+            std::size_t enc = len;
+            if (dist > 16384) {
+                if (len < 5) {
+                    cur = prev[mpos];
+                    continue;
+                }
+                enc = std::min(len, kMaxMatch);
+            } else if (dist > 1024) {
+                if (len < 4) {
+                    cur = prev[mpos];
+                    continue;
+                }
+                enc = std::min(len, std::size_t{67});
+            }
+
+            if (enc > best_len) {
+                best_len = enc;
+                best_dist = dist;
+                if (best_len >= kNiceLen) {
+                    break;
+                }
+            }
+            cur = prev[mpos];
+        }
+
+        if (best_len >= kMinMatch && best_dist > 0) {
+            out_dist = best_dist;
+            return best_len;
+        }
+        return 0;
+    };
+
+    std::size_t pos = 0;
+    std::size_t lit_start = 0;
+
+    while (pos < n) {
+        std::size_t dist = 0;
+        std::size_t match_len = 0;
+        std::int32_t chain_head = -1;
+        if (pos + kMinMatch <= n) {
+            chain_head = insert_get_prev(pos);
+            match_len = find_match(chain_head, pos, dist);
+        }
+
+        if (match_len >= kMinMatch) {
+            if (match_len < kNiceLen && pos + 1 + kMinMatch <= n) {
+                // Probe without inserting so a taken match does not double-hash pos+1.
+                std::size_t dist2 = 0;
+                const std::size_t next_len = find_match(head[hash_at(pos + 1)], pos + 1, dist2);
+                if (next_len > match_len) {
+                    ++pos;
+                    continue;
+                }
+            }
+
+            emit_match(lit_start, pos - lit_start, match_len, dist);
+            const std::size_t end = pos + match_len;
+            ++pos;
+            while (pos < end) {
+                if (pos + kMinMatch <= n) {
+                    (void)insert_get_prev(pos);
+                }
+                ++pos;
+            }
+            lit_start = pos;
+            continue;
+        }
+
+        ++pos;
+    }
+
+    const std::size_t left = emit_long_literals(lit_start, n - lit_start);
+    out.push_back(std::byte{static_cast<std::uint8_t>(0xFC | left)});
+    if (left != 0) {
+        push_bytes(n - left, left);
+    }
     return out;
 }
 

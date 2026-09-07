@@ -35,9 +35,11 @@ GUI drop-merge and `resource.importPackage --writeMergeManifest` write this afte
 `package.unmerge --package merged.package --outDir DIR`
 
 - Require `format` + `version` ≥ 1 + `sources`.
-- Write one child package per source (basename only).
-- Copy listed TGIs as they are now; warn if missing.
-- Do not copy SXMM into children.
+- Write one child package per source using **basename-only** `originalFileName`.
+  Reject path separators, `..`, and absolute paths (traversal hardening).
+- Copy listed TGIs via **on-disk blob copy-through** (preserves RefPack sizes/flags).
+- Warn when a listed TGI is missing; report orphan resources present in the merge but not listed in SXMM.
+- Do not copy SXMM (or source DIR) into children.
 
 ## Non-goals
 
