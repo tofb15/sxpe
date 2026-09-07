@@ -672,7 +672,8 @@ std::vector<Tool> make_catalog() {
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
-    add({"clip.exportAs", "CLIP export as new name", "Copy CLIP with instance = FNV-1 64 of the new name.",
+    add({"clip.exportAs", "CLIP export as new name",
+         "Copy CLIP with instance = fnv64_clip (age-letter masks, SimsWiki 0x6B20C4F3).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"name", {{"type", "string"}}},
@@ -739,7 +740,8 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "nodeId"})),
          env_out, false, true, false, false});
-    add({"hash.fnv", "FNV-1", "FNV-1 32/64 or CLIP (FNV-1 64 lowercase). Example: {\"text\":\"a\",\"width\":32}.",
+    add({"hash.fnv", "FNV-1",
+         "FNV-1 32/64 or CLIP (fnv64_clip age-letter masks). Example: {\"text\":\"a\",\"width\":32}.",
          obj_schema({{"text", {{"type", "string"}}},
                      {"width", {{"type", "integer"}, {"enum", json::array({32, 64})}}},
                      {"clip", {{"type", "boolean"}, {"default", false}}}},
