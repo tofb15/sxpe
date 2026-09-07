@@ -28,7 +28,8 @@ Do not commit:
 
 ## Tests
 
-CI uses **synthetic** fixtures. Optional local tests against a user-owned game directory stay gitignored.
+CI uses **synthetic** fixtures. Optional local FullBuild/CC round-trip: `docs/testing.md` and
+`scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
 
 ## Commands
 

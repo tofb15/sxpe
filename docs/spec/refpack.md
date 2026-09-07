@@ -12,7 +12,7 @@ Sources:
 
 Common: byte0 `0x10`, byte1 `0xFB`, then **3-byte big-endian** uncompressed size (Niotso).
 
-Variant **TBC-game**: 4-byte size prefix then `10 FB`. Confirm first bytes of a compressed resource in FullBuild0.
+FullBuild0 survey (first 200 compressed blobs, 2026-09-07): every sample starts `10 FB` then a **3-byte big-endian** uncompressed size equal to index `mem_size`. No 4-byte size-prefix variant observed. See [testing.md](../testing.md).
 
 ## Opcodes (after the header)
 

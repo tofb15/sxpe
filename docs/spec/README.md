@@ -16,6 +16,6 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [preview.md](../preview.md) | Inspector preview inventory (what can be shown, difficulty, priority) |
 | [tags.md](../tags.md) | What each Tag means and what bytes the resource holds |
 
-**TBC-game:** confirm on this machine’s Steam install (`FullBuild0.package`, mmap in place). See workspace `LOCAL.md` (not in this repo).
+**TBC-game:** confirm on a local Steam install (`FullBuild0.package`, mmap in place). Optional harness: [testing.md](../testing.md). Do not copy EA files into git.
 
 Synthetic bytes: `fixtures/synthetic/` (not EA content).
