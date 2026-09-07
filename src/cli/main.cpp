@@ -186,7 +186,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --type --group --instance --ordinal\n";
     std::cout << "                     Alternative to --id (hex 0xAABB is ok); do not mix with --id\n";
     std::cout << "  --name TEXT        NMAP display name (resource.rename / nmap.set)\n";
-    std::cout << "  --text TEXT        hash.fnv / search.bytes\n";
+    std::cout << "  --text TEXT        hash.fnv / search.bytes / xml.set\n";
     std::cout << "  --force --dry-run --writable --include-payload --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
@@ -200,6 +200,8 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe resource rename --package door.package --type 0x0333406C --group 0 "
                  "--instance 0x1 --name NRaas.NoCD --force\n";
     std::cout << "  sxpe nmap set --package mod.package --instance 0x1 --name NRaas.NoCD --force\n";
+    std::cout << "  sxpe xml get --package mod.package --type 0x0333406C --group 0 --instance 0x1\n";
+    std::cout << "  sxpe xml set --package mod.package --type 0x0333406C --group 0 --instance 0x1 --text '<root/>' --force\n";
     std::cout << "  sxpe package new --package new.package --force\n";
     std::cout << "  sxpe help resource\n";
     std::cout << "  sxpe resource rename --help\n\n";
@@ -502,7 +504,7 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "stbl.get" || id == "nmap.get";
+           id == "search.bytes" || id == "stbl.get" || id == "nmap.get" || id == "xml.get";
 }
 
 bool skip_oneshot_open(const std::string& id) {

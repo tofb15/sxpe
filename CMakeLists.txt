@@ -62,6 +62,7 @@ add_library(sxpe_resources
     src/resources/clip.cpp
     src/resources/rcol.cpp
     src/resources/dir.cpp
+    src/resources/xml.cpp
 )
 target_link_libraries(sxpe_resources PUBLIC sxpe_games_sims3)
 

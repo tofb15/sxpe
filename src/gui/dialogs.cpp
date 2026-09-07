@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QColor>
 #include <QImage>
 #include <QFormLayout>
@@ -359,6 +360,51 @@ bool show_stbl_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
     return dlg.exec() == QDialog::Accepted;
 }
 
+bool show_xml_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                     std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                     std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("xml.get", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(
+            parent, QObject::tr("SXPE"),
+            QString::fromStdString(got.contains("error")
+                                       ? got["error"].value("message", "Not an XML / ITUN resource.")
+                                       : "Not an XML / ITUN resource."));
+        return false;
+    }
+    QDialog dlg(parent);
+    const auto tag = QString::fromStdString(got["data"].value("tag", std::string{"XML"}));
+    const auto encoding = QString::fromStdString(got["data"].value("encoding", std::string{"utf-8"}));
+    dlg.setWindowTitle(QObject::tr("XML editor — %1 (%2)").arg(tag, encoding));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* info = new QLabel(QObject::tr("Encoding on save: %1 (sniffed; write preserves UTF-8 / UTF-16).")
+                                .arg(encoding));
+    info->setWordWrap(true);
+    lay->addWidget(info);
+    auto* edit = new QPlainTextEdit;
+    edit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    edit->setPlainText(QString::fromStdString(got["data"].value("text", std::string{})));
+    lay->addWidget(edit, 1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        auto env = bus.execute("xml.set", {{"sessionId", session.toStdString()},
+                                           {"resourceId", rid},
+                                           {"text", edit->toPlainText().toStdString()},
+                                           {"encoding", encoding.toStdString()}});
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(720, 520);
+    return dlg.exec() == QDialog::Accepted;
+}
+
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal) {
@@ -683,7 +729,7 @@ void show_contents_dialog(QWidget* parent) {
         "column cannot be hidden.</p>"
         "<h3>Resource</h3>"
         "<p>Add, copy, paste, duplicate, replace; compression and deleted flags; details; "
-        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, S3SA DLL, "
+        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, XML/ITUN, S3SA DLL, "
         "CLIP, DDS, SNAP PNG, VID); open in hex/text editor; delete.</p>"
         "<ul>"
         "<li><b>Add…</b> — Ctrl+I</li>"

@@ -190,6 +190,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     res->addSeparator();
     auto* editors = res->addMenu(tr("E&ditors"));
     act(editors, tr("&String table…"), {}, [this] { open_stbl(); });
+    act(editors, tr("&XML…"), {}, [this] { open_xml(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
@@ -1128,6 +1129,17 @@ void MainWindow::open_stbl() {
     }
 }
 
+void MainWindow::open_xml() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_xml_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::import_s3sa() {
     auto* t = current_tab();
     if (!t) {
@@ -1374,6 +1386,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addSeparator();
     auto* editors = m.addMenu(tr("E&ditors"));
     auto* stbl = editors->addAction(tr("&String table…"), this, [this] { open_stbl(); });
+    auto* xml = editors->addAction(tr("&XML…"), this, [this] { open_xml(); });
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
@@ -1382,6 +1395,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     editors->addAction(tr("Export &VID…"), this, [this] { export_vid(); });
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
+        xml->setEnabled(r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         s3sa_in->setEnabled(true);
         clip->setEnabled(r->type == sxpe::resources::kClip);
