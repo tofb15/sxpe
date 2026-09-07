@@ -78,7 +78,7 @@ No pixels. A few decoded fields beat hex.
 
 | Tag | Types | Preview | Difficulty | Priority |
 | --- | --- | --- | --- | --- |
-| `S3SA` | `073FAA07` | Size, PE/`MZ` offset, module hint from NMAP (`s3sa.info`). Never `LoadLibrary`. | S | **P0** |
+| `S3SA` | `073FAA07` | **Today:** size, first `MZ` in the raw blob, NMAP hint (`s3sa.info`). **Later:** decrypt + wrapper fields + `mscorlib` version — [spec/s3sa.md](spec/s3sa.md). Never `LoadLibrary`. | S (card done) / M (codec) | **P0** card, **P1** wrap |
 | `OBJK` | `02DC343F` | Graph of known fields (`objk.get` already exists, thin) | S–M | P1 |
 | `VPXY` | `736884F1` | Chunk list (`vpxy.get`) | S–M | P1 |
 | `OBJD` | `319E4F1D` | Catalog name/desc GUIDs, price, thumbnail IID (public catalog header) | M | P1 |
@@ -155,7 +155,7 @@ Do **not** start with 3D. Fill the Preview tab so a click always answers “what
 2. **STBL** — first ~20 strings.  
 3. **NMAP** — first ~20 names.  
 4. **XML family** (`_XML`, `ITUN`) — pretty first ~4 KiB.  
-5. **S3SA** — `s3sa.info` card (PE / module hint).  
+5. **S3SA** — `s3sa.info` card (PE / module hint). Wrap/import is **not** in Wave 1; see [spec/s3sa.md](spec/s3sa.md).  
 6. Keep **PNG/DDS** as now; add **JPEG** magic (`IMAG` `2F7D0002`).
 
 ### Wave 2 — P1 (modder daily drivers)
@@ -165,7 +165,8 @@ Do **not** start with 3D. Fill the Preview tab so a click always answers “what
 9. **OBJK** / **VPXY** (extend existing graph commands into Preview).  
 10. **CLIP** duration / tracks (no playback).  
 11. **MODL/MLOD/GEOM** counts only.  
-12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`).
+12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`).  
+13. **S3SA codec** — decrypt/export, community v1 `importDll`, Preview wrapper fields (`spec/s3sa.md`). Not a 3D item; this is the s3pe Import/Export DLL gap.
 
 ### Wave 3 — P2 / P3
 
@@ -175,7 +176,7 @@ Audio metadata, VID header, full catalog family, then optional GL mesh / CLIP pl
 
 ## Out of scope for Preview
 
-- Executing S3SA (no `LoadLibrary`).  
+- Executing S3SA (no `LoadLibrary`). Wrap/import lives in [spec/s3sa.md](spec/s3sa.md), not Preview.  
 - Writing neighbourhood SNAPs (encode rules stay on File → Save).  
 - Pixel-perfect s3pe wrapper parity.  
 - Shipping EA packages as fixtures; use synthetic PNG/DDS/STBL/NMAP only.
