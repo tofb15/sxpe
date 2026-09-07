@@ -71,6 +71,7 @@ private:
     void details_resource();
     void open_stbl();
     void export_s3sa();
+    void import_s3sa();
     void clip_export();
     void replace_dds();
     void replace_snap();

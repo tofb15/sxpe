@@ -679,16 +679,34 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "name"})),
          env_out, false, true, false, false});
-    add({"s3sa.info", "S3SA info", "Size, PE offset if MZ found, ManifestModule hint from NMAP. Never LoadLibrary.",
+    add({"s3sa.info", "S3SA info",
+         "Wrapper fields and decrypted PE offset. Never LoadLibrary.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
-    add({"s3sa.exportDll", "Export DLL", "Write the PE blob (or full payload) using the module hint name unless path is set.",
+    add({"s3sa.exportDll", "Export DLL",
+         "Decrypt the S3SA and write the PE. Never LoadLibrary.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"path", {{"type", "string"}}},
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
+         env_out, true, false, true, true});
+    add({"s3sa.importDll", "Import DLL",
+         "Wrap a PE as community S3SA v1 (replace resourceId or add). Never LoadLibrary.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"path", {{"type", "string"}}},
+                     {"resourceId", rid_schema()},
+                     {"force", force_prop()},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "path"})),
+         env_out, false, true, false, true});
+    add({"s3sa.wrap", "Wrap DLL",
+         "Stateless wrap of a PE file as community S3SA v1 bytes. Never LoadLibrary.",
+         obj_schema({{"path", {{"type", "string"}}},
+                     {"out", {{"type", "string"}}},
+                     {"force", force_prop()}},
+                    json::array({"path"})),
          env_out, true, false, true, true});
     add({"vid.export", "VID export", "Write VP6/VID payload bytes to a path.",
          obj_schema({{"sessionId", sess_prop()},
@@ -1105,6 +1123,36 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                {"openWorldHint", t.open_world}}}});
         }
         return envelope_ok({{"tools", tools}});
+    }
+    if (cmd == "s3sa.wrap") {
+        auto path = check_path(args.at("path").get<std::string>());
+        if (!path) {
+            return envelope_err(path.error());
+        }
+        auto pe = read_file(*path);
+        if (!pe) {
+            return envelope_err(pe.error());
+        }
+        auto wrapped = sxpe::resources::wrap_s3sa_v1(*pe);
+        if (!wrapped) {
+            return envelope_err(wrapped.error());
+        }
+        if (args.contains("out") || args.contains("pathOut")) {
+            const auto dests = args.contains("out") ? args.at("out").get<std::string>()
+                                                    : args.at("pathOut").get<std::string>();
+            auto dest = check_path(dests);
+            if (!dest) {
+                return envelope_err(dest.error());
+            }
+            if (std::filesystem::exists(*dest) && !force(args)) {
+                return envelope_err(err(ErrorCode::refused, "exists; pass force"));
+            }
+            if (auto w = write_file(*dest, *wrapped); !w) {
+                return envelope_err(w.error());
+            }
+            return envelope_ok({{"path", dest->string()}, {"bytes", wrapped->size()}});
+        }
+        return envelope_ok({{"bytes", wrapped->size()}, {"payloadB64", b64_encode(*wrapped)}});
     }
     if (cmd == "hash.fnv") {
         const auto text = args.at("text").get<std::string>();
@@ -2096,7 +2144,75 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"filename", sxpe::games::sims3::community_filename(
                                              t, name, "CLIP.animation")}});
     }
-    if (cmd == "s3sa.info" || cmd == "s3sa.exportDll") {
+    if (cmd == "s3sa.info" || cmd == "s3sa.exportDll" || cmd == "s3sa.importDll") {
+        if (cmd == "s3sa.importDll") {
+            auto path = check_path(args.at("path").get<std::string>());
+            if (!path) {
+                return envelope_err(path.error());
+            }
+            auto pe = read_file(*path);
+            if (!pe) {
+                return envelope_err(pe.error());
+            }
+            auto wrapped = sxpe::resources::wrap_s3sa_v1(*pe);
+            if (!wrapped) {
+                return envelope_err(wrapped.error());
+            }
+            const auto fname = path->filename().string();
+            Tgi t{};
+            t.type = sxpe::resources::kS3sa;
+            t.group = 0;
+            t.instance = sxpe::games::sims3::fnv1_64(fname, true);
+            std::optional<std::uint32_t> replace;
+            if (args.contains("resourceId")) {
+                auto i = need_idx();
+                if (!i) {
+                    return envelope_err(i.error());
+                }
+                replace = *i;
+                t = s.pkg.entry(*i).tgi;
+            }
+            if (args.contains("group")) {
+                t.group = static_cast<std::uint32_t>(as_u64(args["group"]));
+            }
+            if (args.contains("instance")) {
+                t.instance = as_u64(args["instance"]);
+            }
+            if (dry(args)) {
+                return envelope_ok({{"dryRun", true},
+                                    {"resourceId", tgi_json(t)},
+                                    {"bytes", wrapped->size()},
+                                    {"name", fname}});
+            }
+            std::uint32_t idx = 0;
+            if (replace) {
+                if (auto u = snapshot(s, *replace); !u) {
+                    return envelope_err(u.error());
+                }
+                auto r = s.pkg.set_uncompressed(*replace, *wrapped, false);
+                if (!r) {
+                    return envelope_err(r.error());
+                }
+                idx = *replace;
+            } else {
+                auto r = s.pkg.add(t, *wrapped, false);
+                if (!r) {
+                    return envelope_err(r.error());
+                }
+                UndoItem u;
+                u.kind = "remove";
+                u.index = *r;
+                push_undo(s, std::move(u));
+                idx = *r;
+            }
+            json nmap_args{{"sessionId", s.id}, {"instance", s.pkg.entry(idx).tgi.instance},
+                           {"name", fname}};
+            exec("nmap.set", nmap_args);
+            return envelope_ok({{"resourceId", rid_json(s.pkg.entry(idx).tgi, s.pkg.entry(idx).ordinal)},
+                                {"bytes", wrapped->size()},
+                                {"name", fname},
+                                {"loadLibrary", false}});
+        }
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
@@ -2109,9 +2225,23 @@ json Bus::Impl::exec(std::string_view id, json args) {
         auto inf = sxpe::resources::inspect_s3sa(*body, sxpe::resources::lookup_name(
                                                            names, s.pkg.entry(*i).tgi.instance));
         if (cmd == "s3sa.info") {
-            json j{{"size", inf.size}, {"moduleHint", inf.module_hint}};
+            json j{{"size", inf.size},
+                   {"moduleHint", inf.module_hint},
+                   {"parsed", inf.parsed},
+                   {"loadLibrary", false}};
             if (inf.pe_offset) {
                 j["peOffset"] = *inf.pe_offset;
+            }
+            if (inf.parsed) {
+                j["version"] = inf.version;
+                if (!inf.game_version.empty()) {
+                    j["gameVersion"] = inf.game_version;
+                }
+                j["checksumType"] = inf.checksum_type;
+                j["checksumZero"] = inf.checksum_zero;
+                j["blockCount"] = inf.block_count;
+                j["keyTableZero"] = inf.key_table_zero;
+                j["assemblyBytes"] = inf.assembly_bytes;
             }
             return envelope_ok(j);
         }
@@ -2122,15 +2252,14 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (std::filesystem::exists(*path) && !force(args)) {
             return envelope_err(err(ErrorCode::refused, "exists; pass force"));
         }
-        std::span<const std::byte> blob = *body;
-        if (inf.pe_offset) {
-            blob = std::span<const std::byte>(body->data() + *inf.pe_offset,
-                                              body->size() - *inf.pe_offset);
+        auto pe = sxpe::resources::export_pe(*body);
+        if (!pe) {
+            return envelope_err(pe.error());
         }
-        if (auto w = write_file(*path, blob); !w) {
+        if (auto w = write_file(*path, *pe); !w) {
             return envelope_err(w.error());
         }
-        return envelope_ok({{"path", path->string()}, {"bytes", blob.size()}});
+        return envelope_ok({{"path", path->string()}, {"bytes", pe->size()}, {"loadLibrary", false}});
     }
     if (cmd == "hex.get") {
         auto i = need_idx();

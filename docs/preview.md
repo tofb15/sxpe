@@ -78,7 +78,7 @@ No pixels. A few decoded fields beat hex.
 
 | Tag | Types | Preview | Difficulty | Priority |
 | --- | --- | --- | --- | --- |
-| `S3SA` | `073FAA07` | **Today:** size, first `MZ` in the raw blob, NMAP hint (`s3sa.info`). **Later:** decrypt + wrapper fields + `mscorlib` version — [spec/s3sa.md](spec/s3sa.md). Never `LoadLibrary`. | S (card done) / M (codec) | **P0** card, **P1** wrap |
+| `S3SA` | `073FAA07` | Wrapper fields + decrypted PE offset (`s3sa.info`). Import/export DLL. Never `LoadLibrary`. | S | **P0** |
 | `OBJK` | `02DC343F` | Version, component IDs, data keys (`objk.get`). Not a full object editor. | S | P1 |
 | `VPXY` | `736884F1` | Version, entry types, bounding box (`vpxy.get`). Not a mesh viewer. | S | P1 |
 | `OBJD` | `319E4F1D` | Catalog name/desc GUIDs, price, thumbnail IID (public catalog header) | M | P1 |
