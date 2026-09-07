@@ -86,7 +86,6 @@ private:
     void open_external(bool hex);
     void show_licence();
     void show_warranty();
-    void show_contents();
     void rebuild_columns_menu();
     void apply_columns_all();
     QString current_package_path();

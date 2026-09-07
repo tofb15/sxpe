@@ -212,7 +212,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("&Validate"), {}, [this] {
         if (auto* t = current_tab()) {
             auto env = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
-            QMessageBox::information(this, tr("Validate"), QString::fromStdString(env.dump(2)));
+            show_validate_dialog(this, env);
         }
     });
     act(tools, tr("&Compact / save"), {}, [this] {
@@ -261,7 +261,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     auto* help = menuBar()->addMenu(tr("&Help"));
-    act(help, tr("&Contents"), {}, [this] { show_contents(); });
+    act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
     help->addSeparator();
     act(help, tr("&About SXPE"), {}, [this] {
         QMessageBox::about(
@@ -269,11 +269,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             tr("SXPE is an unofficial Sims 3 package editor.\n"
                "Not affiliated with Electronic Arts. Not s3pe.\n"
                "License: GPL-3.0-or-later.\n"
-               "The Sims 3 is a trademark of Electronic Arts."));
-    });
-    act(help, tr("Check for &update"), {}, [this] {
-        QMessageBox::information(this, tr("Update"),
-                                 tr("This build has no update service. Check the SXPE repository."));
+               "The Sims 3 is a trademark of Electronic Arts.\n"
+               "For updates, see https://github.com/tofb15/sxpe"));
     });
     act(help, tr("&Warranty"), {}, [this] { show_warranty(); });
     act(help, tr("&Licence"), {}, [this] { show_licence(); });
@@ -1377,22 +1374,6 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });
     m.addAction(tr("&Delete"), this, [this] { delete_resource(); });
     m.exec(global);
-}
-
-void MainWindow::show_contents() {
-    QMessageBox::information(
-        this, tr("Contents"),
-        tr("SXPE edits Sims 3 DBPF packages.\n\n"
-           "File: new, open (read-write or read-only), save, bookmarks, recent files.\n"
-           "Edit: undo/redo, copy/save/float preview, external text editor.\n"
-           "Resource: add, copy, paste, duplicate, replace, compression and deleted flags, "
-           "details, copy TGI key, import/export (file, package, DBC), typed editors "
-           "(STBL, S3SA DLL, CLIP, DDS, VID), hex/text helpers.\n"
-           "Tools: FNV-1 / CLIP hash, byte search, validate, compact.\n\n"
-           "Right-click the resource list for the same Resource actions. "
-           "Right-click a package tab to save, close (this / others / left / right), or bookmark. "
-           "Right-click column headers to show or hide columns, autofit, or reset widths. "
-           "View → Columns is the same list. The last visible column cannot be hidden."));
 }
 
 void MainWindow::show_warranty() {

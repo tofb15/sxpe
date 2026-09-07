@@ -22,6 +22,9 @@
 #include <QSettings>
 #include <QTableWidget>
 #include <QVBoxLayout>
+#include <QGuiApplication>
+#include <QClipboard>
+#include <QTextBrowser>
 
 #include <algorithm>
 #include <span>
@@ -642,6 +645,177 @@ void show_external_programs_dialog(QWidget* parent) {
         s.setValue("ext/text", text->text());
         dlg.accept();
     });
+    dlg.exec();
+}
+
+void show_contents_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Contents"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* view = new QTextBrowser;
+    view->setOpenExternalLinks(true);
+    view->setHtml(QObject::tr(
+        "<h2>SXPE</h2>"
+        "<p>SXPE edits Sims 3 DBPF packages (.package, .world, .dbc, .nhd).</p>"
+        "<h3>File</h3>"
+        "<p>New, open (read-write or read-only), save / save as / save copy as, close, "
+        "recent files, bookmarks, exit.</p>"
+        "<ul>"
+        "<li><b>New</b> — Ctrl+N</li>"
+        "<li><b>Open…</b> — Ctrl+O</li>"
+        "<li><b>Save</b> — Ctrl+S</li>"
+        "<li><b>Save As…</b> — Ctrl+Shift+S</li>"
+        "<li><b>Close</b> — Ctrl+W</li>"
+        "<li><b>Exit</b> — Ctrl+Q</li>"
+        "</ul>"
+        "<h3>Edit</h3>"
+        "<p>Undo/redo, copy/save/float preview, open in text editor, select all, command palette.</p>"
+        "<ul>"
+        "<li><b>Undo</b> — Ctrl+Z</li>"
+        "<li><b>Redo</b> — Ctrl+Y / Ctrl+Shift+Z</li>"
+        "<li><b>Select All</b> — Ctrl+A</li>"
+        "<li><b>Command palette…</b> — Ctrl+K</li>"
+        "</ul>"
+        "<h3>View</h3>"
+        "<p>Show or hide resource-list columns (same as right-clicking column headers). "
+        "Autofit and reset widths are available from the header menu. The last visible "
+        "column cannot be hidden.</p>"
+        "<h3>Resource</h3>"
+        "<p>Add, copy, paste, duplicate, replace; compression and deleted flags; details; "
+        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, S3SA DLL, "
+        "CLIP, DDS, SNAP PNG, VID); open in hex/text editor; delete.</p>"
+        "<ul>"
+        "<li><b>Add…</b> — Ctrl+I</li>"
+        "<li><b>Copy</b> — Ctrl+C</li>"
+        "<li><b>Paste</b> — Ctrl+V</li>"
+        "<li><b>Duplicate</b> — Ctrl+D</li>"
+        "<li><b>Copy resource key</b> — Ctrl+Shift+C</li>"
+        "<li><b>Delete</b> — Delete</li>"
+        "</ul>"
+        "<h3>Tools</h3>"
+        "<p>FNV-1 / CLIP hash, un-merge package, byte search, validate, compact / save.</p>"
+        "<ul>"
+        "<li><b>Search…</b> — Ctrl+F</li>"
+        "</ul>"
+        "<h3>Settings</h3>"
+        "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
+        "handlers / plugins, external programs, save settings.</p>"
+        "<h3>Help</h3>"
+        "<p>Contents (this window), About, Warranty, Licence.</p>"
+        "<h3>Context menus</h3>"
+        "<p>Right-click the resource list for Resource actions. Right-click a package tab "
+        "to save, close (this / others / left / right), or bookmark. Right-click column "
+        "headers to show or hide columns.</p>"));
+    lay->addWidget(view, 1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+    dlg.resize(720, 560);
+    dlg.exec();
+}
+
+void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Validate"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* summary = new QPlainTextEdit;
+    summary->setReadOnly(true);
+    summary->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+
+    QStringList lines;
+    if (!envelope.value("ok", false)) {
+        QString msg = QObject::tr("Command failed.");
+        if (envelope.contains("error") && envelope["error"].is_object()) {
+            const auto& err = envelope["error"];
+            msg = QString::fromStdString(err.value("message", msg.toStdString()));
+            const auto code = err.value("code", std::string{});
+            if (!code.empty()) {
+                lines << QObject::tr("Error: %1 (%2)")
+                             .arg(msg, QString::fromStdString(code));
+            } else {
+                lines << QObject::tr("Error: %1").arg(msg);
+            }
+        } else {
+            lines << msg;
+        }
+    } else {
+        const auto& data = envelope.contains("data") && envelope["data"].is_object()
+                               ? envelope["data"]
+                               : envelope;
+        const bool valid = data.value("ok", false);
+        lines << (valid ? QObject::tr("Result: OK — no issues found.")
+                        : QObject::tr("Result: issues found."));
+        if (data.contains("indexCount")) {
+            lines << QObject::tr("Resources (index): %1")
+                         .arg(static_cast<qulonglong>(data.value("indexCount", 0ull)));
+        }
+        if (data.contains("dir") && data["dir"].is_object()) {
+            const auto& dir = data["dir"];
+            if (!dir.value("present", false)) {
+                lines << QObject::tr("DIR: not present");
+            } else {
+                lines << QObject::tr("DIR: present");
+                if (dir.contains("records")) {
+                    lines << QObject::tr("  Records: %1")
+                                 .arg(static_cast<qulonglong>(dir.value("records", 0ull)));
+                }
+                if (dir.contains("recordBytes")) {
+                    lines << QObject::tr("  Record size: %1 bytes")
+                                 .arg(static_cast<qulonglong>(dir.value("recordBytes", 0ull)));
+                }
+                if (dir.contains("unmatched")) {
+                    lines << QObject::tr("  Unmatched: %1")
+                                 .arg(static_cast<qulonglong>(dir.value("unmatched", 0ull)));
+                }
+            }
+        }
+        if (data.contains("issues") && data["issues"].is_array()) {
+            const auto& issues = data["issues"];
+            if (issues.empty()) {
+                lines << QObject::tr("Issues: none");
+            } else {
+                lines << QObject::tr("Issues (%1):").arg(static_cast<int>(issues.size()));
+                for (const auto& issue : issues) {
+                    if (issue.is_string()) {
+                        lines << QStringLiteral("  • %1")
+                                     .arg(QString::fromStdString(issue.get<std::string>()));
+                    } else {
+                        lines << QStringLiteral("  • %1")
+                                     .arg(QString::fromStdString(issue.dump()));
+                    }
+                }
+            }
+        }
+        for (const char* key : {"errors", "warnings"}) {
+            if (!data.contains(key) || !data[key].is_array()) {
+                continue;
+            }
+            const auto& arr = data[key];
+            const auto title = QString::fromUtf8(key);
+            lines << QObject::tr("%1 (%2):").arg(title).arg(static_cast<int>(arr.size()));
+            for (const auto& item : arr) {
+                if (item.is_string()) {
+                    lines << QStringLiteral("  • %1")
+                                 .arg(QString::fromStdString(item.get<std::string>()));
+                } else {
+                    lines << QStringLiteral("  • %1").arg(QString::fromStdString(item.dump()));
+                }
+            }
+        }
+    }
+    summary->setPlainText(lines.join(QLatin1Char('\n')));
+    lay->addWidget(summary, 1);
+
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto* copy = box->addButton(QObject::tr("Copy JSON"), QDialogButtonBox::ActionRole);
+    QObject::connect(copy, &QPushButton::clicked, &dlg, [envelope] {
+        if (auto* cb = QGuiApplication::clipboard()) {
+            cb->setText(QString::fromStdString(envelope.dump(2)));
+        }
+    });
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+    dlg.resize(520, 360);
     dlg.exec();
 }
 
