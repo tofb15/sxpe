@@ -12,7 +12,7 @@ A package **may** contain a DIR resource listing compressed entries (type/group/
 ## Read (v1)
 
 - If no DIR is present → OK. Use index `mem_size` / `file_size`.
-- If DIR is present → **TBC-game** exact record layout on FullBuild0. Until then, ignore DIR for decode but do not drop the resource on round-trip (copy bytes through).
+- If DIR is present → ignore for decode but do not drop the resource on round-trip (copy bytes through). **FullBuild0 / fallback / DeltaBuild_p20 have no DIR** (2026-09-07 survey). Record layout remains TBC until a package that contains one is inspected.
 
 ## Write (v1)
 
@@ -22,4 +22,4 @@ A package **may** contain a DIR resource listing compressed entries (type/group/
 
 ## TBC-game
 
-On `FullBuild0.package`: is DIR present? Record size? Does every compressed index row appear in DIR?
+DIR is **absent** from Steam FullBuild0 (102 127 rows), fallback, and DeltaBuild_p20. Follow-up: record layout and whether every compressed row appears, on a package that actually has a DIR.

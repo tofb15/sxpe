@@ -64,5 +64,6 @@ Resource **Name** is the package name map (NMAP). `nmap.set` / `resource.rename`
 - `src/` — implementations
 - `tests/` — unit tests (synthetic fixtures only)
 - `fixtures/synthetic/` — invented DBPF/RefPack bytes (not game files)
+- `docs/testing.md` — optional local FullBuild/CC round-trip (`scripts/roundtrip.ps1`); gitignored paths only
 
 Do not commit game packages, custom-content, or other copyrighted binaries.
