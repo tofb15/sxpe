@@ -552,13 +552,22 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "path"})),
          env_out, false, true, false, true});
     add({"resource.importPackage", "Import package",
-         "Copy resources from one or more TS3 packages. Pass path or paths[].",
+         "Copy resources from one or more TS3 packages. Pass path or paths[]. "
+         "writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                     {"writeMergeManifest", {{"type", "boolean"}, {"default", false}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId"})),
+         env_out, false, true, false, true});
+    add({"package.unmerge", "Un-merge package",
+         "Recreate source packages from an SXPE merge manifest (SXMM). Refuses packages without a valid manifest.",
+         obj_schema({{"path", {{"type", "string"}}},
+                     {"outDir", {{"type", "string"}}},
+                     {"force", force_prop()}},
+                    json::array({"path", "outDir"})),
          env_out, false, true, false, true});
     add({"resource.importDbc", "Import DBC",
          "Treat .dbc/DBPF files as packages and copy resources. Pass path or paths[].",
@@ -1127,6 +1136,103 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                {"openWorldHint", t.open_world}}}});
         }
         return envelope_ok({{"tools", tools}});
+    }
+    if (cmd == "package.unmerge") {
+        auto path = check_path(args.at("path").get<std::string>());
+        if (!path) {
+            return envelope_err(path.error());
+        }
+        auto outd = check_path(args.at("outDir").get<std::string>());
+        if (!outd) {
+            return envelope_err(outd.error());
+        }
+        auto src = Package::open(*path, false);
+        if (!src) {
+            return envelope_err(src.error());
+        }
+        std::optional<std::uint32_t> mi;
+        for (std::uint32_t i = 0; i < src->count(); ++i) {
+            if (src->entry(i).tgi.type == sxpe::resources::kSxmm) {
+                mi = i;
+                break;
+            }
+        }
+        if (!mi) {
+            return envelope_err(err(ErrorCode::refused,
+                                    "not an SXPE merged package (no SXMM manifest)"));
+        }
+        auto body = src->uncompressed(*mi);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        json man;
+        try {
+            man = json::parse(std::string(reinterpret_cast<const char*>(body->data()), body->size()));
+        } catch (const json::exception& e) {
+            return envelope_err(err(ErrorCode::corrupt, std::string("manifest JSON: ") + e.what()));
+        }
+        if (man.value("format", "") != "sxpe.mergeManifest" || man.value("version", 0) < 1 ||
+            !man.contains("sources") || !man["sources"].is_array()) {
+            return envelope_err(err(ErrorCode::refused, "invalid SXPE merge manifest"));
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(*outd, ec);
+        if (ec) {
+            return envelope_err(err(ErrorCode::io, ec.message()));
+        }
+        json written = json::array();
+        json warnings = json::array();
+        int nsrc = 0;
+        for (const auto& srcj : man["sources"]) {
+            ++nsrc;
+            auto fname = srcj.value("originalFileName", "source-" + std::to_string(nsrc) + ".package");
+            if (fname.empty()) {
+                fname = "source-" + std::to_string(nsrc) + ".package";
+            }
+            auto dest = *outd / fname;
+            if (std::filesystem::exists(dest) && !force(args)) {
+                dest = *outd / (dest.stem().string() + "-" + std::to_string(nsrc) + dest.extension().string());
+            }
+            Package child = Package::create_new();
+            int copied = 0;
+            int skipped = 0;
+            if (srcj.contains("resources") && srcj["resources"].is_array()) {
+                for (const auto& r : srcj["resources"]) {
+                    Tgi t = tgi_from(r);
+                    std::uint32_t ord = r.contains("ordinal") ? static_cast<std::uint32_t>(as_u64(r["ordinal"])) : 0;
+                    auto idx = src->find(t, ord);
+                    if (!idx) {
+                        ++skipped;
+                        warnings.push_back({{"file", fname}, {"message", "resource missing"}});
+                        continue;
+                    }
+                    if (src->entry(*idx).tgi.type == sxpe::resources::kSxmm) {
+                        continue;
+                    }
+                    auto bytes = src->uncompressed(*idx);
+                    if (!bytes) {
+                        ++skipped;
+                        warnings.push_back({{"file", fname}, {"message", bytes.error().message}});
+                        continue;
+                    }
+                    auto add = child.add(t, *bytes, src->entry(*idx).compressed == 0xFFFF);
+                    if (!add) {
+                        ++skipped;
+                        warnings.push_back({{"file", fname}, {"message", add.error().message}});
+                        continue;
+                    }
+                    ++copied;
+                }
+            }
+            auto sv = child.save_as(dest);
+            if (!sv) {
+                return envelope_err(sv.error());
+            }
+            written.push_back({{"path", dest.string()}, {"copied", copied}, {"skipped", skipped}});
+        }
+        return envelope_ok({{"packagesWritten", written.size()},
+                            {"packages", written},
+                            {"warnings", warnings}});
     }
     if (cmd == "s3sa.wrap") {
         auto path = check_path(args.at("path").get<std::string>());
@@ -1747,8 +1853,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json packages = json::array();
         json errors = json::array();
+        json sources = json::array();
+        const bool write_man = args.value("writeMergeManifest", false);
         std::uint32_t imported = 0;
         std::uint32_t would = 0;
+        int src_n = 0;
         for (const auto& rawp : paths) {
             auto path = check_path(rawp);
             if (!path) {
@@ -1767,14 +1876,19 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             std::uint32_t n = 0;
             bool file_ok = true;
+            json recs = json::array();
+            ++src_n;
             for (std::uint32_t i = 0; i < src->count(); ++i) {
+                const auto t = src->entry(i).tgi;
+                if (write_man && (t.type == sxpe::resources::kSxmm || t.type == sxpe::resources::kDir)) {
+                    continue;
+                }
                 auto body = src->uncompressed(i);
                 if (!body) {
                     errors.push_back({{"path", path->string()}, {"message", body.error().message}});
                     file_ok = false;
                     break;
                 }
-                const auto t = src->entry(i).tgi;
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
                 if (ex && !force(args)) {
                     errors.push_back({{"path", path->string()},
@@ -1790,6 +1904,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                         file_ok = false;
                         break;
                     }
+                    recs.push_back(rid_json(s.pkg.entry(*ex).tgi, s.pkg.entry(*ex).ordinal));
                 } else {
                     auto r = s.pkg.add(t, *body, src->entry(i).compressed == 0xFFFF);
                     if (!r) {
@@ -1798,21 +1913,57 @@ json Bus::Impl::exec(std::string_view id, json args) {
                         file_ok = false;
                         break;
                     }
+                    recs.push_back(rid_json(s.pkg.entry(*r).tgi, s.pkg.entry(*r).ordinal));
                 }
                 ++n;
             }
             if (file_ok) {
                 imported += n;
                 packages.push_back({{"path", path->string()}, {"imported", n}});
+                sources.push_back({{"id", "src-" + std::to_string(src_n)},
+                                   {"originalFileName", path->filename().string()},
+                                   {"resources", recs}});
             }
         }
         if (dry(args)) {
             return envelope_ok({{"dryRun", true}, {"packages", packages.size()}, {"count", would}});
         }
+        if (write_man && imported > 0) {
+            json man{{"format", "sxpe.mergeManifest"},
+                     {"version", 1},
+                     {"sources", sources},
+                     {"notes",
+                      {{"forceOverwriteOnDuplicateTgi", force(args)}, {"dirPolicy", "strip"}}}};
+            const auto dumped = man.dump();
+            std::vector<std::byte> mb(dumped.size());
+            for (std::size_t i = 0; i < dumped.size(); ++i) {
+                mb[i] = static_cast<std::byte>(static_cast<unsigned char>(dumped[i]));
+            }
+            Tgi mt{};
+            mt.type = sxpe::resources::kSxmm;
+            mt.group = 0;
+            mt.instance = 1;
+            bool replaced = false;
+            for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
+                if (s.pkg.entry(i).tgi.type == sxpe::resources::kSxmm) {
+                    if (auto wr = s.pkg.set_uncompressed(i, mb, false); !wr) {
+                        errors.push_back({{"message", wr.error().message}});
+                    }
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                if (auto addm = s.pkg.add(mt, mb, false); !addm) {
+                    errors.push_back({{"message", addm.error().message}});
+                }
+            }
+        }
         json out{{"imported", imported},
                  {"packages", packages.size()},
                  {"failed", errors.size()},
-                 {"errors", errors}};
+                 {"errors", errors},
+                 {"mergeManifest", write_man}};
         if (imported == 0 && !errors.empty()) {
             return envelope_err(err(ErrorCode::refused, errors[0].value("message", "import failed")),
                                 false);

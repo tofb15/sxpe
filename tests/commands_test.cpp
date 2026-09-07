@@ -289,6 +289,50 @@ int main() {
     auto bad = bus.execute("package.open", json{{"path", dest + "-missing"}});
     CHECK(bad["ok"] == false);
 
+    auto ma = bus.execute("package.new", json::object());
+    auto mb = bus.execute("package.new", json::object());
+    const auto ma_id = ma["data"]["sessionId"].get<std::string>();
+    const auto mb_id = mb["data"]["sessionId"].get<std::string>();
+    CHECK(bus.execute("resource.add",
+                      json{{"sessionId", ma_id},
+                           {"resourceId", json{{"type", 11}, {"group", 0}, {"instance", 11}}},
+                           {"payloadB64", b64(*raw)}})["ok"] == true);
+    CHECK(bus.execute("resource.add",
+                      json{{"sessionId", mb_id},
+                           {"resourceId", json{{"type", 12}, {"group", 0}, {"instance", 12}}},
+                           {"payloadB64", b64(*raw)}})["ok"] == true);
+    auto ma_path = (tmp / "merge-a.package").string();
+    auto mb_path = (tmp / "merge-b.package").string();
+    CHECK(bus.execute("package.saveAs",
+                      json{{"sessionId", ma_id}, {"path", ma_path}, {"force", true}})["ok"] == true);
+    CHECK(bus.execute("package.saveAs",
+                      json{{"sessionId", mb_id}, {"path", mb_path}, {"force", true}})["ok"] == true);
+    bus.execute("package.close", json{{"sessionId", ma_id}});
+    bus.execute("package.close", json{{"sessionId", mb_id}});
+    auto merge_sess = bus.execute("package.new", json::object());
+    const auto merge_id = merge_sess["data"]["sessionId"].get<std::string>();
+    auto mimp = bus.execute("resource.importPackage",
+                            json{{"sessionId", merge_id},
+                                 {"paths", json::array({ma_path, mb_path})},
+                                 {"force", true},
+                                 {"writeMergeManifest", true}});
+    CHECK(mimp["ok"] == true);
+    CHECK(mimp["data"].value("mergeManifest", false) == true);
+    auto merged_path = (tmp / "merged.package").string();
+    CHECK(bus.execute("package.saveAs", json{{"sessionId", merge_id},
+                                             {"path", merged_path},
+                                             {"force", true}})["ok"] == true);
+    bus.execute("package.close", json{{"sessionId", merge_id}});
+    auto outdir = (tmp / "unmerged").string();
+    std::filesystem::create_directories(outdir);
+    auto um = bus.execute("package.unmerge",
+                          json{{"path", merged_path}, {"outDir", outdir}, {"force", true}});
+    CHECK(um["ok"] == true);
+    CHECK(um["data"].value("packagesWritten", 0) == 2);
+    auto refuse = bus.execute("package.unmerge",
+                              json{{"path", ma_path}, {"outDir", outdir}, {"force", true}});
+    CHECK(refuse["ok"] == false);
+
     auto us = bus.execute("package.new", json::object());
     CHECK(us["ok"] == true);
     const auto uid = us["data"]["sessionId"].get<std::string>();
