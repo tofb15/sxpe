@@ -50,6 +50,8 @@ sxpe help resource
 sxpe resource rename --help
 sxpe resource list --package path\to\file.package
 sxpe resource rename --package path\to\file.package --type 0x0333406C --group 0 --instance 0x1 --name NRaas.NoCD --force
+sxpe sims3pack list --path mod.sims3pack
+sxpe sims3pack extract --path mod.sims3pack --out-dir out --index 0 --force
 ```
 
 Commands are `noun verb` (`resource list`, `package info`). `--package PATH` is one-shot: open, run, save if it writes, close. Results are JSON `{ok, data|error}`; `--format text` or `table` prints a human view. `sxpe help` is the command catalog (same list MCP uses). `sxpe <noun> <verb> --help` shows that command.

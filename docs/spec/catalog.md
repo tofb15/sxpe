@@ -25,6 +25,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.validate` | y | n | Returns `layoutLocked`, `pathKind`, `summary[]` (names neighborhood / world layout lock) |
 | `package.diff` | y | n | Compare two packages by TGI+ordinal; SHA-256 of uncompressed payload; `summary[]` |
 | `folder.scan` | y | n | Read-only recursive `*.package` hygiene; empty/corrupt/wrong-game + duplicate TGI sample; `summary[]` |
+| `sims3pack.info` / `sims3pack.list` / `sims3pack.extract` | y / y / y* | n | Read-only TS3Pack inspect; extract writes files (`openWorld`); no Store/DRM |
 | `resource.list` | y | n | `limit` default 100, `cursor` |
 | `resource.read` | y | n | metadata default; `maxBytes` |
 | `resource.export` | y | n | write path; openWorld |

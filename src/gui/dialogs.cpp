@@ -1,6 +1,7 @@
 #include "dialogs.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
+#include "sxpe/commands/sims3pack_report.hpp"
 
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/types.hpp"
@@ -917,7 +918,7 @@ void show_contents_dialog(QWidget* parent) {
         "reorder, compact, create NMAP. Error and Validate text name "
         "“neighborhood / world layout lock”.</p>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), un-merge package, byte search, validate, compact / save.</p>"
+        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), inspect Sims3Pack, un-merge package, byte search, validate, compact / save.</p>"
         "<ul>"
         "<li><b>Search…</b> — Ctrl+F</li>"
         "</ul>"
@@ -1593,6 +1594,184 @@ void show_folder_scan_dialog(
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     dlg.resize(860, 520);
+    dlg.exec();
+}
+
+
+
+void show_sims3pack_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path)>& open_package) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Inspect Sims3Pack"));
+    dlg.resize(780, 520);
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* form = new QFormLayout;
+    auto* path_edit = new QLineEdit;
+    auto* browse = new QPushButton(QObject::tr("Browse…"));
+    auto* row = new QHBoxLayout;
+    row->addWidget(path_edit, 1);
+    row->addWidget(browse);
+    form->addRow(QObject::tr("Sims3Pack"), row);
+    lay->addLayout(form);
+
+    auto* summary = new QPlainTextEdit;
+    summary->setReadOnly(true);
+    summary->setMaximumHeight(160);
+    lay->addWidget(summary);
+
+    auto* table = new QTableWidget(0, 5);
+    table->setHorizontalHeaderLabels({QObject::tr("Index"), QObject::tr("Name"),
+                                      QObject::tr("Length"), QObject::tr("Offset"),
+                                      QObject::tr("Package?")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    lay->addWidget(table, 1);
+
+    auto* hint = new QLabel(
+        QObject::tr("Read-only TS3Pack inspect (SimsWiki). Extract writes packaged payloads to a "
+                    "folder. No Store download or DRM bypass. Extracted .package files can be "
+                    "opened in SXPE."));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    nlohmann::json last_list = nlohmann::json::object();
+
+    auto fill = [&](const nlohmann::json& env) {
+        last_list = env;
+        table->setRowCount(0);
+        QStringList lines;
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Command failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            lines << msg;
+            summary->setPlainText(lines.join(QLatin1Char('\n')));
+            return;
+        }
+        const auto& data = env["data"];
+        if (data.contains("summary") && data["summary"].is_array()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines << QString::fromStdString(line.get<std::string>());
+                }
+            }
+        } else {
+            for (const auto& line : sxpe::commands::format_sims3pack_summary(data)) {
+                lines << QString::fromStdString(line);
+            }
+        }
+        summary->setPlainText(lines.join(QLatin1Char('\n')));
+        if (data.contains("entries") && data["entries"].is_array()) {
+            for (const auto& e : data["entries"]) {
+                const int r = table->rowCount();
+                table->insertRow(r);
+                auto put = [&](int c, const QString& s, const QVariant& user = {}) {
+                    auto* item = new QTableWidgetItem(s);
+                    if (user.isValid()) {
+                        item->setData(Qt::UserRole, user);
+                    }
+                    table->setItem(r, c, item);
+                };
+                const auto idx = static_cast<int>(e.value("index", 0u));
+                put(0, QString::number(idx), idx);
+                put(1, QString::fromStdString(e.value("name", std::string{})), idx);
+                put(2, QString::number(static_cast<qulonglong>(e.value("length", 0ull))), idx);
+                put(3, QString::number(static_cast<qulonglong>(e.value("offset", 0ull))), idx);
+                put(4, e.value("looksLikePackage", false) ? QObject::tr("yes") : QObject::tr(""),
+                    idx);
+            }
+        }
+    };
+
+    auto run_list = [&] {
+        const auto p = path_edit->text().trimmed();
+        if (p.isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("Inspect Sims3Pack"),
+                                 QObject::tr("Choose a .sims3pack file."));
+            return;
+        }
+        auto env = bus.execute("sims3pack.list", {{"path", p.toStdString()}});
+        fill(env);
+    };
+
+    auto selected_index = [&]() -> int {
+        const auto rows = table->selectionModel()->selectedRows();
+        if (rows.isEmpty()) {
+            return -1;
+        }
+        auto* item = table->item(rows.front().row(), 0);
+        if (!item) {
+            return -1;
+        }
+        return item->data(Qt::UserRole).toInt();
+    };
+
+    auto extract_selected = [&] {
+        const int idx = selected_index();
+        if (idx < 0) {
+            QMessageBox::warning(&dlg, QObject::tr("Extract"),
+                                 QObject::tr("Select an entry to extract."));
+            return;
+        }
+        const auto p = path_edit->text().trimmed();
+        const auto dir = QFileDialog::getExistingDirectory(&dlg, QObject::tr("Extract to folder"));
+        if (dir.isEmpty()) {
+            return;
+        }
+        auto env = bus.execute("sims3pack.extract",
+                               {{"path", p.toStdString()},
+                                {"outDir", dir.toStdString()},
+                                {"index", idx},
+                                {"force", true}});
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Extract failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            QMessageBox::warning(&dlg, QObject::tr("Extract"), msg);
+            return;
+        }
+        const auto written = QString::fromStdString(env["data"].value("writtenPath", std::string{}));
+        QMessageBox::information(&dlg, QObject::tr("Extract"),
+                                 QObject::tr("Wrote:\n%1").arg(written));
+        if (open_package && written.endsWith(QStringLiteral(".package"), Qt::CaseInsensitive)) {
+            const auto ans = QMessageBox::question(
+                &dlg, QObject::tr("Open package"),
+                QObject::tr("Open the extracted package in SXPE?"));
+            if (ans == QMessageBox::Yes) {
+                open_package(written);
+            }
+        }
+    };
+
+    QObject::connect(browse, &QPushButton::clicked, &dlg, [&] {
+        const auto p = QFileDialog::getOpenFileName(
+            &dlg, QObject::tr("Open Sims3Pack"), {},
+            QObject::tr("Sims3Pack (*.sims3pack);;All files (*)"));
+        if (!p.isEmpty()) {
+            path_edit->setText(p);
+            run_list();
+        }
+    });
+
+    auto* box = new QDialogButtonBox;
+    auto* inspect = box->addButton(QObject::tr("Inspect"), QDialogButtonBox::ActionRole);
+    auto* extract = box->addButton(QObject::tr("Extract selected…"), QDialogButtonBox::ActionRole);
+    auto* close = box->addButton(QDialogButtonBox::Close);
+    lay->addWidget(box);
+    QObject::connect(inspect, &QPushButton::clicked, &dlg, run_list);
+    QObject::connect(extract, &QPushButton::clicked, &dlg, extract_selected);
+    QObject::connect(close, &QPushButton::clicked, &dlg, &QDialog::reject);
+    QObject::connect(table, &QTableWidget::doubleClicked, &dlg, [&](const QModelIndex&) {
+        extract_selected();
+    });
+
     dlg.exec();
 }
 

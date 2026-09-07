@@ -3,6 +3,7 @@
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
+#include "sxpe/commands/sims3pack_report.hpp"
 #include "sxpe/version.hpp"
 
 #include <CLI11.hpp>
@@ -192,6 +193,8 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe package info --package mod.package\n";
     std::cout << "  sxpe package diff --path-a stock.package --path-b override.package\n";
     std::cout << "  sxpe folder scan --path Mods --format text\n";
+    std::cout << "  sxpe sims3pack list --path mod.sims3pack --format text\n";
+    std::cout << "  sxpe sims3pack extract --path mod.sims3pack --out-dir /tmp/out --index 0 --force\n";
     std::cout << "  sxpe resource find-refs --package mod.package --type 0x0333406C --group 0 --instance 0x1 --format text\n";
     std::cout << "  sxpe resource list --package mod.package --limit 20\n";
     std::cout << "  sxpe resource export --package mod.package --type 0x0333406C --group 0 "
@@ -343,6 +346,21 @@ void print_rows_table(const json& rows) {
         }
         return;
     }
+    if (rows[0].contains("looksLikePackage") ||
+        (rows[0].contains("offset") && rows[0].contains("length") && rows[0].contains("name"))) {
+        std::cout << "INDEX  NAME                                     LENGTH      OFFSET      PKG\n";
+        for (const auto& it : rows) {
+            auto name = cell(it, "name");
+            if (name.size() > 40) {
+                name.resize(37);
+                name += "...";
+            }
+            std::cout << std::left << std::setw(7) << cell(it, "index") << std::setw(41) << name
+                      << std::setw(12) << cell(it, "length") << std::setw(12) << cell(it, "offset")
+                      << (it.value("looksLikePackage", false) ? "Y" : "") << '\n';
+        }
+        return;
+    }
     for (const auto& it : rows) {
         std::cout << it.dump() << '\n';
     }
@@ -441,6 +459,23 @@ void print_object_text(const json& data) {
     if (data.contains("duplicates") && data.contains("filesScanned") && data.contains("readOnly") &&
         data.value("readOnly", false)) {
         print_folder_scan_text(data);
+        return;
+    }
+    if (data.contains("archiveOffset") && data.contains("entryCount") && data.contains("readOnly") &&
+        data.value("readOnly", false)) {
+        std::vector<std::string> lines;
+        if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines.push_back(line.get<std::string>());
+                }
+            }
+        } else {
+            lines = sxpe::commands::format_sims3pack_summary(data);
+        }
+        for (const auto& line : lines) {
+            std::cout << line << '\n';
+        }
         return;
     }
     for (auto it = data.begin(); it != data.end(); ++it) {
@@ -554,13 +589,15 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get";
+           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" ||
+           id == "sims3pack.list";
 }
 
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
            id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "package.diff" ||
-           id == "folder.scan" || id == "help";
+           id == "folder.scan" || id == "sims3pack.info" || id == "sims3pack.list" ||
+           id == "sims3pack.extract" || id == "help";
 }
 
 json make_resource_id(const std::string& type_s, const std::string& group_s,
