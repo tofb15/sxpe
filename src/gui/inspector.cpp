@@ -541,8 +541,15 @@ void Inspector::load_preview(const nlohmann::json& rid) {
             const auto& d = info["data"];
             QStringList lines;
             lines << tr("Size: %1 bytes").arg(d.value("size", 0));
+            if (d.value("parsed", false)) {
+                lines << tr("S3SA version %1").arg(d.value("version", 0));
+                lines << tr("Blocks: %1").arg(d.value("blockCount", 0));
+                lines << (d.value("keyTableZero", false) ? tr("Key table: zeros (community)")
+                                                         : tr("Key table: present"));
+                lines << tr("Assembly: %1 bytes").arg(d.value("assemblyBytes", 0));
+            }
             if (d.contains("peOffset")) {
-                lines << tr("PE (MZ) at offset %1").arg(d.value("peOffset", 0));
+                lines << tr("PE (MZ) at offset %1 (decrypted)").arg(d.value("peOffset", 0));
             } else {
                 lines << tr("No MZ signature found");
             }
@@ -550,6 +557,7 @@ void Inspector::load_preview(const nlohmann::json& rid) {
             if (!hint.isEmpty()) {
                 lines << tr("Module: %1").arg(hint);
             }
+            lines << tr("Import never LoadLibrarys this PE.");
             show_preview_body(lines.join(QLatin1Char('\n')));
             return;
         }

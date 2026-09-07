@@ -191,6 +191,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* editors = res->addMenu(tr("E&ditors"));
     act(editors, tr("&String table…"), {}, [this] { open_stbl(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
+    act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
     act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
@@ -1087,6 +1088,27 @@ void MainWindow::open_stbl() {
     }
 }
 
+void MainWindow::import_s3sa() {
+    auto* t = current_tab();
+    if (!t) {
+        return;
+    }
+    const auto path = QFileDialog::getOpenFileName(this, tr("Import DLL into S3SA"), {},
+                                                   tr("DLL (*.dll);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    nlohmann::json args{{"sessionId", t->session_id().toStdString()},
+                        {"path", path.toStdString()},
+                        {"force", true}};
+    const auto* r = t->current();
+    if (r && r->type == sxpe::resources::kS3sa) {
+        args["resourceId"] = rid_json(*r);
+    }
+    run("s3sa.importDll", std::move(args));
+    t->reload();
+}
+
 void MainWindow::export_s3sa() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1313,6 +1335,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* editors = m.addMenu(tr("E&ditors"));
     auto* stbl = editors->addAction(tr("&String table…"), this, [this] { open_stbl(); });
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
+    auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
@@ -1320,6 +1343,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
+        s3sa_in->setEnabled(true);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));

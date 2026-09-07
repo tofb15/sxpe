@@ -32,8 +32,10 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |
 | `undo` / `redo` | n | y | Session mutation stack (50) |
-| `s3sa.info` | y | n | Today: size / MZ offset / NMAP hint. Extend per [s3sa.md](s3sa.md) |
-| `s3sa.exportDll` | y | n | Today: slice from first `MZ`. Fix: decrypt then write PE |
+| `s3sa.info` | y | n | Wrapper + decrypted PE facts. Never LoadLibrary |
+| `s3sa.exportDll` | y | n | Decrypt then write PE |
+| `s3sa.importDll` | n | y | Wrap PE as community S3SA v1; replace or add |
+| `s3sa.wrap` | y | n | Stateless wrap |
 | `hash.fnv` | y | n | |
 | `manifest` | y | n | tools/list |
 
@@ -41,12 +43,10 @@ GUI-only (no MCP): `preview.float`, `ui.selectAll`, `ui.palette`.
 
 List never includes payloads. `resourceId`: `{ "type", "group", "instance", "ordinal" }`.
 
-## Later (S3SA wrap — not implemented)
+## Later
 
 See [s3sa.md](s3sa.md). Do not `resource.add` a raw `.dll` as type `073FAA07`.
 
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
-| `s3sa.importDll` | n | y | Wrap PE as community S3SA v1; replace or add |
-| `s3sa.wrap` | y | n | Optional stateless wrap for tests |
 | `package.makeScriptMod` | n | y | Optional later: S3SA + `_XML` `kInstantiator` + NMAP |

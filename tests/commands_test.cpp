@@ -349,6 +349,33 @@ int main() {
     CHECK(gg["data"]["type"] == "OBJK");
     bus.execute("package.close", json{{"sessionId", oid}});
 
+    auto s3sess = bus.execute("package.new", json::object());
+    const auto s3id = s3sess["data"]["sessionId"].get<std::string>();
+    auto dllp = (tmp / "mod.dll").string();
+    {
+        std::ofstream df(dllp, std::ios::binary);
+        df.write("MZ\x00\x00", 4);
+    }
+    auto impd = bus.execute("s3sa.importDll", json{{"sessionId", s3id}, {"path", dllp}});
+    CHECK(impd["ok"] == true);
+    CHECK(impd["data"].value("loadLibrary", true) == false);
+    auto s3rid = impd["data"]["resourceId"];
+    auto s3info = bus.execute("s3sa.info", json{{"sessionId", s3id}, {"resourceId", s3rid}});
+    CHECK(s3info["ok"] == true);
+    CHECK(s3info["data"].value("parsed", false) == true);
+    CHECK(s3info["data"].value("version", 0) == 1);
+    auto out_dll = (tmp / "mod-out.dll").string();
+    auto expd = bus.execute("s3sa.exportDll", json{{"sessionId", s3id},
+                                                   {"resourceId", s3rid},
+                                                   {"path", out_dll},
+                                                   {"force", true}});
+    CHECK(expd["ok"] == true);
+    std::ifstream in_dll(out_dll, std::ios::binary);
+    char mz2[2]{};
+    in_dll.read(mz2, 2);
+    CHECK(in_dll.gcount() == 2 && mz2[0] == 'M' && mz2[1] == 'Z');
+    bus.execute("package.close", json{{"sessionId", s3id}});
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;
