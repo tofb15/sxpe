@@ -1,10 +1,11 @@
 #pragma once
 
 #include "sxpe/commands/bus.hpp"
-#include "plugin_host.hpp"
-
 #include <QDialog>
 #include <QString>
+
+#include <cstdint>
+#include <functional>
 
 class QWidget;
 
@@ -18,7 +19,7 @@ void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QStrin
 void show_search_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session);
 void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                         bool dbc);
-void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus, PluginHost& host);
+void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus);
 void show_external_programs_dialog(QWidget* parent);
 bool show_add_resource_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                               bool replace, std::uint32_t type, std::uint32_t group,
@@ -27,6 +28,12 @@ bool show_add_resource_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
 bool show_stbl_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                       std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                       std::uint32_t ordinal);
+/// resourceId may be nullopt to edit the package's (first) NMAP via nmap.get / nmap.replace.
+bool show_nmap_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      const nlohmann::json* resource_id);
+bool show_xml_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                     std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                     std::uint32_t ordinal);
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal);
@@ -34,5 +41,28 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                               std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                               std::uint32_t ordinal, std::uint32_t max_bytes);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
+void show_contents_dialog(QWidget* parent);
+/// Query GitHub Releases API; never downloads. Graceful offline / no-release.
+void show_check_for_update_dialog(QWidget* parent);
+void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
+/// Compare two packages via package.diff. open_hit opens a path and selects a resource.
+void show_package_diff_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path, std::uint32_t type, std::uint32_t group,
+                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit);
+/// Find references to a TGI via resource.findRefs. select_hit jumps to a source resource.
+void show_find_refs_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+    std::uint32_t type, std::uint32_t group, std::uint64_t instance, std::uint32_t ordinal,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& select_hit);
+/// Read-only folder.scan hygiene. open_path opens a package path in SXPE.
+void show_folder_scan_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path)>& open_path);
+/// Read-only Sims3Pack inspect / extract. open_package opens an extracted .package.
+void show_sims3pack_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path)>& open_package);
 
 }  // namespace sxpe::gui

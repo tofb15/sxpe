@@ -29,8 +29,13 @@ Do not commit:
 ## Tests
 
 CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and a Windows job with Qt that runs
-`gui_smoke`. Synthetic fixtures only. Optional local FullBuild/CC round-trip: `docs/testing.md` and
-`scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
+`gui_smoke`. Linux Qt GUI steps and a paste-ready CI job live in `docs/building.md`. Synthetic fixtures
+only. Optional local FullBuild/CC round-trip: `docs/testing.md` and `scripts/roundtrip.ps1`. Game/CC
+bytes stay in `fixtures/local/` (gitignored) or the install tree.
+
+## Docs
+
+User-facing docs live under `docs/` (`user-guide.md`, `cli-mcp.md`, `workflows.md`, `building.md`). Format specs stay in `docs/spec/`. Keep README quick starts accurate when menus or packaging change.
 
 ## Commands
 
@@ -40,9 +45,19 @@ Non-UI features ship on the command bus, CLI, and MCP in the **same** change.
 
 Do not reimplement JSON or CLI parsing. CMake downloads nlohmann/json **v3.11.3** and CLI11 **v2.4.2**
 into the build `_vendor` dir (see `CMakeLists.txt`). `vcpkg.json` lists those same two ports for
-optional vcpkg users. Tests use `tests/check.hpp`. Qt 6 Widgets is optional via `find_package`.
+optional vcpkg users. Tests use `tests/check.hpp`. Qt 6 Widgets (and Network, for Help → Check for update) is optional via `find_package`.
 See [DESIGN.md](DESIGN.md).
+
+## Version
+
+`project(sxpe VERSION …)` in `CMakeLists.txt` is the single source of truth. CMake generates
+`sxpe/version.hpp` (`SXPE_VERSION`) for CLI `--version`, GUI About, and MCP `serverInfo.version`.
+Keep `vcpkg.json` `"version-string"` equal to that same `PROJECT_VERSION` when bumping.
 
 ## Safety
 
 Untrusted package bytes: use `std::span` and size caps. Do not `memcpy` from the index without checking. Fuzz codecs when they exist.
+
+## Plugins
+
+Third-party GUI plugins are not supported in this build.

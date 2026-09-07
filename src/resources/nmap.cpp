@@ -3,6 +3,7 @@
 #include "sxpe/core/caps.hpp"
 
 #include <cstring>
+#include <unordered_map>
 
 namespace sxpe::resources {
 namespace {
@@ -74,12 +75,39 @@ Result<std::vector<std::byte>> write_nmap(const Nmap& n) {
 }
 
 std::string lookup_name(const Nmap& n, std::uint64_t instance) {
+    std::string found;
     for (const auto& e : n.entries) {
         if (e.instance == instance) {
-            return e.name;
+            found = e.name;
         }
     }
-    return {};
+    return found;
+}
+
+std::vector<NmapDuplicate> nmap_duplicates(const Nmap& n) {
+    std::unordered_map<std::uint64_t, std::uint32_t> counts;
+    std::unordered_map<std::uint64_t, std::string> last;
+    counts.reserve(n.entries.size() * 2 + 1);
+    last.reserve(n.entries.size() * 2 + 1);
+    for (const auto& e : n.entries) {
+        counts[e.instance] += 1;
+        last.insert_or_assign(e.instance, e.name);
+    }
+    std::vector<NmapDuplicate> out;
+    for (const auto& e : n.entries) {
+        auto it = counts.find(e.instance);
+        if (it == counts.end() || it->second < 2) {
+            continue;
+        }
+        // Emit once per duplicate instance, in first-seen order.
+        NmapDuplicate d;
+        d.instance = e.instance;
+        d.count = it->second;
+        d.effective_name = last[e.instance];
+        out.push_back(std::move(d));
+        counts.erase(it);
+    }
+    return out;
 }
 
 }  // namespace sxpe::resources

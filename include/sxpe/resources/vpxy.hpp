@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sxpe/error.hpp"
+#include "sxpe/games/sims3/tgi.hpp"
 
 #include <array>
 #include <cstdint>
@@ -23,6 +24,7 @@ struct Vpxy {
     bool modular{false};
     std::uint32_t ftpt_index{0};
     std::uint32_t tgi_count{0};
+    std::vector<sxpe::games::sims3::Tgi> tgis;
 };
 
 /// Minimal VPXY (0x736884F1) reader: magic, version, entry types, bounding box.

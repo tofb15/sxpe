@@ -837,6 +837,34 @@ bool PackageTab::save_preview(const QString& path) {
 
 void PackageTab::select_all() { table_->selectAll(); }
 
+bool PackageTab::select_resource(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                                 std::uint32_t ordinal) {
+    filter_->clear();
+    if (tag_->count() > 0) {
+        tag_->setCurrentIndex(0);
+    }
+    QVector<int> all;
+    all.reserve(static_cast<int>(model_->all().size()));
+    for (int i = 0; i < static_cast<int>(model_->all().size()); ++i) {
+        all.push_back(i);
+    }
+    model_->set_visible(all);
+    for (int view = 0; view < model_->rowCount(); ++view) {
+        const auto* r = model_->row_at(view);
+        if (!r) {
+            continue;
+        }
+        if (r->type == type && r->group == group && r->instance == instance &&
+            r->ordinal == ordinal) {
+            table_->selectRow(view);
+            table_->setCurrentIndex(model_->index(view, 0));
+            table_->scrollTo(model_->index(view, 0));
+            return true;
+        }
+    }
+    return false;
+}
+
 void PackageTab::apply_column_mask(ColumnMask m) {
     if (auto* grid = static_cast<ResourceTableView*>(table_)) {
         grid->apply_mask(m);

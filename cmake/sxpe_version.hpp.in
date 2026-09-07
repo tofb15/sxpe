@@ -1,0 +1,6 @@
+#pragma once
+
+// Generated from CMake PROJECT_VERSION — single source of truth for CLI / GUI / MCP.
+#ifndef SXPE_VERSION
+#define SXPE_VERSION "@PROJECT_VERSION@"
+#endif

@@ -78,11 +78,11 @@ No pixels. A few decoded fields beat hex.
 
 | Tag | Types | Preview | Difficulty | Priority |
 | --- | --- | --- | --- | --- |
-| `S3SA` | `073FAA07` | Wrapper fields + decrypted PE offset (`s3sa.info`). Import/export DLL. Never `LoadLibrary`. | S | **P0** |
-| `OBJK` | `02DC343F` | Version, component IDs, data keys (`objk.get`). Not a full object editor. | S | P1 |
-| `VPXY` | `736884F1` | Version, entry types, bounding box (`vpxy.get`). Not a mesh viewer. | S | P1 |
-| `OBJD` | `319E4F1D` | Catalog name/desc GUIDs, price, thumbnail IID (public catalog header) | M | P1 |
-| `CASP` | `034AEECB` | Clothing type, age/gender flags, TGI refs | M | P1 |
+| `S3SA` | `073FAA07` | Wrapper fields + decrypted PE offset (`s3sa.info`). Import/export/view DLL (`s3sa.view` + `ext/s3sa`). Never `LoadLibrary`. | S | **P0** |
+| `OBJK` | `02DC343F` | Version, component IDs, data keys (`objk.get`). Not a full object editor. | S | **P0/done** |
+| `VPXY` | `736884F1` | Version, entry types, bounding box (`vpxy.get`). Not a mesh viewer. | S | **P0/done** |
+| `OBJD` | `319E4F1D` | Catalog name/desc GUIDs, price, thumbnail IID (`objd.get`) | M | **done** |
+| `CASP` | `034AEECB` | Clothing type, age/gender flags (`casp.get`; best-effort) | M | **done** |
 | `SIMO` | `025ED6F4` | Outfit TGI list | M | P2 |
 | `FAMD` | `062853A8` | Household / member count | M | P2 |
 | `OBJN` | `4D1A5589` | Instance count | M | P2 |
@@ -100,8 +100,8 @@ Public RCOL chunk layout (MODL/MLOD/GEOM/MATD). s3pe does **not** 3D-preview the
 
 | Tag | Preview that is still useful | Difficulty | Priority |
 | --- | --- | --- | --- |
-| `GEOM` | Vertex/face counts, bone count, UV sets — **not** a 3D view at P0 | M (counts) / **L** (mesh GL) | P1 counts, P3 GL |
-| `MODL` `MLOD` | LOD count, chunk types (MATD/VBUF/IBUF/SKIN) | M | P1 |
+| `GEOM` | Vertex/face counts via `rcol.summary` — **not** a 3D view | M (counts) / **L** (mesh GL) | **counts done**, P3 GL |
+| `MODL` `MLOD` | LOD/chunk counts via `rcol.summary` | M | **done** |
 | `MATD` | Shader name, texture TGI refs | M | P1 |
 | `VBUF` `IBUF` `VRTF` `SKIN` | Buffer sizes / format | M | P2 |
 | `BONE` | Bone names / count (`00AE6C67` skcon) | M | P2 |
@@ -118,7 +118,7 @@ A real mesh preview (Qt + GL, skinning, materials) is a product of its own. Do n
 
 | Tag | Preview | Difficulty | Priority |
 | --- | --- | --- | --- |
-| `CLIP` | Duration, track names, hashed names (`clip.exportAs` exists; no player) | M | P1 |
+| `CLIP` | Duration, track names, hashed names (`clip.info`; no player) | M | **done** |
 | `JAZZ` | State-machine / clip name list | M | P2 |
 | `TKMK` | Track-mask bit count | M | P2 |
 | `_AUD` | Fourcc / sample rate if we parse SNR; optional PCM play | M / L (playback) | P2 metadata, P3 play |
@@ -158,15 +158,17 @@ Do **not** start with 3D. Fill the Preview tab so a click always answers “what
 5. **S3SA** — `s3sa.info` card (PE / module hint). Wrap/import is **not** in Wave 1; see [spec/s3sa.md](spec/s3sa.md).  
 6. Keep **PNG/DDS** as now; add **JPEG** magic (`IMAG` `2F7D0002`).
 
-### Wave 2 — P1 (modder daily drivers)
+### Wave 2 — P1 (modder daily drivers) — **done on the Preview tab** (issue #20)
 
-7. Catalog **OBJD** header (name GUID, price, thumb IID).  
-8. **CASP** clothing type / flags.  
-9. **OBJK** / **VPXY** (extend existing graph commands into Preview).  
-10. **CLIP** duration / tracks (no playback).  
-11. **MODL/MLOD/GEOM** counts only.  
-12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`).  
-13. **S3SA codec** — decrypt/export, community v1 `importDll`, Preview wrapper fields (`spec/s3sa.md`). Not a 3D item; this is the s3pe Import/Export DLL gap.
+7. Catalog **OBJD** header (name GUID, price, thumb IID) — `objd.get`.  
+8. **CASP** clothing type / flags — `casp.get` (best-effort public layout).  
+9. **OBJK** / **VPXY** — Preview surfaces `objk.get` / `vpxy.get` fields (not only Graph).  
+10. **CLIP** duration / tracks (no playback) — `clip.info`.  
+11. **MODL/MLOD/GEOM** counts only — `rcol.summary`.  
+12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`) — still open.  
+13. **S3SA codec** — already shipped earlier; see `spec/s3sa.md`.
+
+Assumptions / honesty notes: [spec/preview-wave2.md](spec/preview-wave2.md).
 
 ### Wave 3 — P2 / P3
 

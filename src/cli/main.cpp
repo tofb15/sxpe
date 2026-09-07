@@ -1,4 +1,10 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/validate_report.hpp"
+#include "sxpe/commands/package_diff_report.hpp"
+#include "sxpe/commands/find_refs_report.hpp"
+#include "sxpe/commands/folder_scan_report.hpp"
+#include "sxpe/commands/sims3pack_report.hpp"
+#include "sxpe/version.hpp"
 
 #include <CLI11.hpp>
 #include <nlohmann/json.hpp>
@@ -13,10 +19,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#ifndef SXPE_VERSION
-#define SXPE_VERSION "0.0.0"
-#endif
 
 #ifdef _WIN32
 #include <io.h>
@@ -184,11 +186,16 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --type --group --instance --ordinal\n";
     std::cout << "                     Alternative to --id (hex 0xAABB is ok); do not mix with --id\n";
     std::cout << "  --name TEXT        NMAP display name (resource.rename / nmap.set)\n";
-    std::cout << "  --text TEXT        hash.fnv / search.bytes\n";
+    std::cout << "  --text TEXT        hash.fnv / search.bytes / xml.set\n";
     std::cout << "  --force --dry-run --writable --include-payload --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
     std::cout << "  sxpe package info --package mod.package\n";
+    std::cout << "  sxpe package diff --path-a stock.package --path-b override.package\n";
+    std::cout << "  sxpe folder scan --path Mods --format text\n";
+    std::cout << "  sxpe sims3pack list --path mod.sims3pack --format text\n";
+    std::cout << "  sxpe sims3pack extract --path mod.sims3pack --out-dir /tmp/out --index 0 --force\n";
+    std::cout << "  sxpe resource find-refs --package mod.package --type 0x0333406C --group 0 --instance 0x1 --format text\n";
     std::cout << "  sxpe resource list --package mod.package --limit 20\n";
     std::cout << "  sxpe resource export --package mod.package --type 0x0333406C --group 0 "
                  "--instance 0x1 --path out.xml --force\n";
@@ -196,7 +203,12 @@ void print_global_help(const Bus& bus) {
                  "--instance 0 --path nmap.bin --force\n";
     std::cout << "  sxpe resource rename --package door.package --type 0x0333406C --group 0 "
                  "--instance 0x1 --name NRaas.NoCD --force\n";
+    std::cout << "  sxpe nmap list --package mod.package\n";
     std::cout << "  sxpe nmap set --package mod.package --instance 0x1 --name NRaas.NoCD --force\n";
+    std::cout << "  sxpe nmap delete --package mod.package --instance 0x1 --force\n";
+    std::cout << "  sxpe nmap replace --package mod.package --entries '[{\"instance\":1,\"name\":\"Door\"}]' --force\n";
+    std::cout << "  sxpe xml get --package mod.package --type 0x0333406C --group 0 --instance 0x1\n";
+    std::cout << "  sxpe xml set --package mod.package --type 0x0333406C --group 0 --instance 0x1 --text '<root/>' --force\n";
     std::cout << "  sxpe package new --package new.package --force\n";
     std::cout << "  sxpe help resource\n";
     std::cout << "  sxpe resource rename --help\n\n";
@@ -334,14 +346,141 @@ void print_rows_table(const json& rows) {
         }
         return;
     }
+    if (rows[0].contains("looksLikePackage") ||
+        (rows[0].contains("offset") && rows[0].contains("length") && rows[0].contains("name"))) {
+        std::cout << "INDEX  NAME                                     LENGTH      OFFSET      PKG\n";
+        for (const auto& it : rows) {
+            auto name = cell(it, "name");
+            if (name.size() > 40) {
+                name.resize(37);
+                name += "...";
+            }
+            std::cout << std::left << std::setw(7) << cell(it, "index") << std::setw(41) << name
+                      << std::setw(12) << cell(it, "length") << std::setw(12) << cell(it, "offset")
+                      << (it.value("looksLikePackage", false) ? "Y" : "") << '\n';
+        }
+        return;
+    }
     for (const auto& it : rows) {
         std::cout << it.dump() << '\n';
     }
 }
 
+void print_validate_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            } else {
+                lines.push_back(line.dump());
+            }
+        }
+    } else {
+        const json dir = data.value("dir", json::object());
+        const json issues = data.value("issues", json::array());
+        lines = sxpe::commands::format_validate_summary(
+            data.value("ok", false), data.value("indexCount", 0u), dir, issues,
+            data.value("layoutLocked", false), data.value("pathKind", std::string{}));
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
+
+void print_find_refs_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            } else {
+                lines.push_back(line.dump());
+            }
+        }
+    } else {
+        lines = sxpe::commands::format_find_refs_summary(data);
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
+void print_package_diff_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            } else {
+                lines.push_back(line.dump());
+            }
+        }
+    } else {
+        lines = sxpe::commands::format_package_diff_summary(data);
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
+
+void print_folder_scan_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            }
+        }
+    } else {
+        lines = sxpe::commands::format_folder_scan_summary(data);
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
 void print_object_text(const json& data) {
+    if (data.contains("issues") && data.contains("dir") && data.contains("indexCount")) {
+        print_validate_text(data);
+        return;
+    }
+    if (data.contains("onlyInA") && data.contains("onlyInB") && data.contains("different") &&
+        data.contains("hashAlgorithm")) {
+        print_package_diff_text(data);
+        return;
+    }
+    if (data.contains("hits") && data.contains("target") && data.contains("scanned")) {
+        print_find_refs_text(data);
+        return;
+    }
+    if (data.contains("duplicates") && data.contains("filesScanned") && data.contains("readOnly") &&
+        data.value("readOnly", false)) {
+        print_folder_scan_text(data);
+        return;
+    }
+    if (data.contains("archiveOffset") && data.contains("entryCount") && data.contains("readOnly") &&
+        data.value("readOnly", false)) {
+        std::vector<std::string> lines;
+        if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines.push_back(line.get<std::string>());
+                }
+            }
+        } else {
+            lines = sxpe::commands::format_sims3pack_summary(data);
+        }
+        for (const auto& line : lines) {
+            std::cout << line << '\n';
+        }
+        return;
+    }
     for (auto it = data.begin(); it != data.end(); ++it) {
-        if (it.key() == "items" || it.key() == "entries" || it.key() == "tools") {
+        if (it.key() == "items" || it.key() == "entries" || it.key() == "tools" ||
+            it.key() == "summary") {
             continue;
         }
         std::cout << it.key() << ": ";
@@ -450,12 +589,15 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "stbl.get" || id == "nmap.get";
+           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" ||
+           id == "sims3pack.list";
 }
 
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
-           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "help";
+           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "package.diff" ||
+           id == "folder.scan" || id == "sims3pack.info" || id == "sims3pack.list" ||
+           id == "sims3pack.extract" || id == "help";
 }
 
 json make_resource_id(const std::string& type_s, const std::string& group_s,
@@ -656,6 +798,35 @@ int main(int argc, char** argv) {
             return 2;
         }
         return print_result(env, format, false);
+    }
+
+    // Global --instance fills resourceId; tools like nmap.set/delete require top-level instance.
+    if (const auto tool = find_tool(bus, id)) {
+        bool needs_instance = false;
+        bool needs_rid = false;
+        if (tool->input_schema.contains("required") && tool->input_schema["required"].is_array()) {
+            for (const auto& r : tool->input_schema["required"]) {
+                const auto s = r.get<std::string>();
+                if (s == "instance") {
+                    needs_instance = true;
+                }
+                if (s == "resourceId") {
+                    needs_rid = true;
+                }
+            }
+        }
+        if (needs_instance && !args.contains("instance")) {
+            if (!inst_s.empty()) {
+                args["instance"] = inst_s;
+            } else if (args.contains("resourceId") && args["resourceId"].contains("instance")) {
+                args["instance"] = args["resourceId"]["instance"];
+            }
+        }
+        // Drop a synthesized resourceId that only carried --instance for tools that don't need it.
+        if (needs_instance && !needs_rid && id_json.empty() && type_s.empty() && group_s.empty() &&
+            !inst_s.empty()) {
+            args.erase("resourceId");
+        }
     }
 
     if (!payload_path.empty() && !args.contains("path")) {

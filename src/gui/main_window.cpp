@@ -6,6 +6,9 @@
 #include "resource_model.hpp"
 
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/xml.hpp"
+
+#include <vector>
 
 #include <QAction>
 #include <QApplication>
@@ -91,6 +94,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(file, tr("&New"), QKeySequence::New, [this] { new_package(); });
     act(file, tr("&Open…"), QKeySequence::Open, [this] { open_dialog(); });
     act(file, tr("Open &read-only…"), {}, [this] { open_readonly_dialog(); });
+    act(file, tr("Open &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
     act(file, tr("&Save"), QKeySequence::Save, [this] { save(false, false); });
     act(file, tr("Save &As…"), QKeySequence::SaveAs, [this] { save(false, true); });
     act(file, tr("Save &Copy As…"), {}, [this] { save(true, true); });
@@ -139,10 +143,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(columns_menu_, &QMenu::aboutToShow, this, &MainWindow::rebuild_columns_menu);
 
     auto* res = menuBar()->addMenu(tr("&Resource"));
-    act(res, tr("&Add…"), QKeySequence(Qt::CTRL | Qt::Key_I), [this] { add_resource(); });
+    add_resource_act_ =
+        act(res, tr("&Add…"), QKeySequence(Qt::CTRL | Qt::Key_I), [this] { add_resource(); });
     act(res, tr("&Copy"), QKeySequence::Copy, [this] { copy_resources(); });
-    act(res, tr("&Paste"), QKeySequence::Paste, [this] { paste_resources(); });
-    act(res, tr("&Duplicate"), QKeySequence(Qt::CTRL | Qt::Key_D), [this] { duplicate_resource(); });
+    paste_resource_act_ =
+        act(res, tr("&Paste"), QKeySequence::Paste, [this] { paste_resources(); });
+    duplicate_resource_act_ = act(res, tr("&Duplicate"), QKeySequence(Qt::CTRL | Qt::Key_D),
+                                  [this] { duplicate_resource(); });
     act(res, tr("&Replace…"), {}, [this] { replace_resource(); });
     res->addSeparator();
     compressed_act_ = res->addAction(tr("&Compressed"));
@@ -160,7 +167,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     act(res, tr("Copy resource &key"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C),
         [this] { copy_resource_key(); });
-    auto* imp = res->addMenu(tr("&Import"));
+    import_menu_ = res->addMenu(tr("&Import"));
+    auto* imp = import_menu_;
     act(imp, tr("From &file…"), {}, [this] { import_files(); });
     act(imp, tr("From &package(s)…"), {}, [this] {
         if (auto* t = current_tab()) {
@@ -190,19 +198,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     res->addSeparator();
     auto* editors = res->addMenu(tr("E&ditors"));
     act(editors, tr("&String table…"), {}, [this] { open_stbl(); });
+    nmap_editor_act_ = editors->addAction(tr("&Name map…"), this, [this] { open_nmap(); });
+    act(editors, tr("&XML…"), {}, [this] { open_xml(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
+    act(editors, tr("&View S3SA…"), {}, [this] { view_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
     act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
     act(editors, tr("Export &VID…"), {}, [this] { export_vid(); });
     act(res, tr("Open in &hex editor"), {}, [this] { open_external(true); });
     act(res, tr("Open in te&xt editor"), {}, [this] { open_external(false); });
-    act(res, tr("&Delete"), QKeySequence::Delete, [this] { delete_resource(); });
-    connect(res, &QMenu::aboutToShow, this, &MainWindow::sync_flag_actions);
+    delete_resource_act_ =
+        act(res, tr("&Delete"), QKeySequence::Delete, [this] { delete_resource(); });
+    connect(res, &QMenu::aboutToShow, this, [this] {
+        sync_flag_actions();
+        sync_layout_lock_actions();
+    });
 
     auto* tools = menuBar()->addMenu(tr("&Tools"));
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
+    act(tools, tr("&Compare packages…"), {}, [this] { compare_packages(); });
+    act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
+    act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
+    act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -212,10 +231,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("&Validate"), {}, [this] {
         if (auto* t = current_tab()) {
             auto env = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
-            QMessageBox::information(this, tr("Validate"), QString::fromStdString(env.dump(2)));
+            show_validate_dialog(this, env);
         }
     });
-    act(tools, tr("&Compact / save"), {}, [this] {
+    compact_act_ = act(tools, tr("&Compact / save"), {}, [this] {
         if (auto* t = current_tab()) {
             run("package.compact", {{"sessionId", t->session_id().toStdString()}});
             t->reload();
@@ -250,8 +269,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     settings->addSeparator();
     act(settings, tr("&Organise bookmarks…"), {}, [this] { organise_bookmarks(); });
-    act(settings, tr("&Handlers / plugins…"), {},
-        [this] { show_handlers_dialog(this, bus_, plugins_); });
+    act(settings, tr("&Built-in handlers…"), {},
+        [this] { show_handlers_dialog(this, bus_); });
     act(settings, tr("&External programs…"), {},
         [this] { show_external_programs_dialog(this); });
     settings->addSeparator();
@@ -261,29 +280,34 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     auto* help = menuBar()->addMenu(tr("&Help"));
-    act(help, tr("&Contents"), {}, [this] { show_contents(); });
+    act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
+    act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this); });
     help->addSeparator();
     act(help, tr("&About SXPE"), {}, [this] {
         QMessageBox::about(
             this, tr("About SXPE"),
-            tr("SXPE is an unofficial Sims 3 package editor.\n"
+            tr("SXPE %1\n"
+               "SXPE is an unofficial Sims 3 package editor.\n"
                "Not affiliated with Electronic Arts. Not s3pe.\n"
                "License: GPL-3.0-or-later.\n"
-               "The Sims 3 is a trademark of Electronic Arts."));
-    });
-    act(help, tr("Check for &update"), {}, [this] {
-        QMessageBox::information(this, tr("Update"),
-                                 tr("This build has no update service. Check the SXPE repository."));
+               "The Sims 3 is a trademark of Electronic Arts.\n"
+               "For updates, see https://github.com/tofb15/sxpe")
+                .arg(QCoreApplication::applicationVersion()));
     });
     act(help, tr("&Warranty"), {}, [this] { show_warranty(); });
     act(help, tr("&Licence"), {}, [this] { show_licence(); });
 
     status_path_ = new QLabel(tr("No package"));
+    status_layout_ = new QLabel;
+    status_layout_->setVisible(false);
+    status_layout_->setStyleSheet(
+        QStringLiteral("QLabel { padding: 1px 6px; border-radius: 3px; "
+                       "background: #5c4a1f; color: #ffe9a8; font-weight: 600; }"));
     status_counts_ = new QLabel;
     statusBar()->addWidget(status_path_, 1);
+    statusBar()->addPermanentWidget(status_layout_);
     statusBar()->addPermanentWidget(status_counts_);
 
-    plugins_.scan();
     mru_ = st.value("mru").toStringList();
     bookmarks_ = st.value("bookmarks").toStringList();
     rebuild_mru();
@@ -337,6 +361,65 @@ void MainWindow::unmerge_package() {
             tr("Wrote %1 package(s). Only SXPE-manifest merges can be un-merged.")
                 .arg(env["data"].value("packagesWritten", 0)));
     }
+}
+
+
+void MainWindow::find_refs() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        QMessageBox::information(this, tr("Find references"),
+                                 tr("Select a resource to find references to."));
+        return;
+    }
+    show_find_refs_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal,
+                          [this](std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                                 std::uint32_t ordinal) {
+                              if (auto* tab = current_tab()) {
+                                  if (!tab->select_resource(type, group, instance, ordinal)) {
+                                      QMessageBox::information(
+                                          this, tr("Find references"),
+                                          tr("Hit listed, but the resource was not found in the "
+                                             "index."));
+                                  }
+                              }
+                          });
+}
+
+void MainWindow::scan_folder() {
+    show_folder_scan_dialog(this, bus_, [this](const QString& path) {
+        if (!open_path(path, true)) {
+            QMessageBox::warning(this, tr("Scan folder"),
+                                 tr("Could not open \"%1\" in SXPE.").arg(path));
+        }
+    });
+}
+
+void MainWindow::inspect_sims3pack() {
+    show_sims3pack_dialog(this, bus_, [this](const QString& path) {
+        if (!open_path(path, true)) {
+            QMessageBox::warning(this, tr("Open Sims3Pack"),
+                                 tr("Could not open extracted package:\n%1").arg(path));
+        }
+    });
+}
+
+
+void MainWindow::compare_packages() {
+    show_package_diff_dialog(this, bus_, [this](const QString& path, std::uint32_t type,
+                                                std::uint32_t group, std::uint64_t instance,
+                                                std::uint32_t ordinal) {
+        if (!open_path(path, true)) {
+            return;
+        }
+        if (auto* t = current_tab()) {
+            if (!t->select_resource(type, group, instance, ordinal)) {
+                QMessageBox::information(this, tr("Compare packages"),
+                                         tr("Opened the package, but the resource was not found "
+                                            "in the index."));
+            }
+        }
+    });
 }
 
 void MainWindow::merge_dropped_packages(const QStringList& paths) {
@@ -653,14 +736,19 @@ void MainWindow::update_status() {
     auto* t = current_tab();
     if (!t) {
         status_path_->setText(tr("No package"));
+        status_layout_->clear();
+        status_layout_->setVisible(false);
+        status_layout_->setToolTip({});
         status_counts_->clear();
         setWindowTitle(tr("SXPE"));
         setWindowModified(false);
+        sync_layout_lock_actions();
         return;
     }
     refresh_tab_chrome(t);
     auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
     if (!info.value("ok", false)) {
+        sync_layout_lock_actions();
         return;
     }
     const auto& d = info["data"];
@@ -672,9 +760,23 @@ void MainWindow::update_status() {
         path += " *";
     }
     status_path_->setText(path);
+    const bool locked = d.value("layoutLocked", false);
+    if (locked) {
+        const auto kind = QString::fromStdString(d.value("pathKind", std::string("neighborhood")));
+        status_layout_->setText(tr("Layout lock (%1)").arg(kind));
+        status_layout_->setToolTip(
+            tr("Neighborhood / world layout lock: only in-place payload replace within "
+               "existing hole capacity. Add, delete, reorder, and compact are refused."));
+        status_layout_->setVisible(true);
+    } else {
+        status_layout_->clear();
+        status_layout_->setVisible(false);
+        status_layout_->setToolTip({});
+    }
     status_counts_->setText(tr("%1 shown / %2 in package")
                                 .arg(t->visible_count())
                                 .arg(d.value("indexCount", 0)));
+    sync_layout_lock_actions();
 }
 
 void MainWindow::run_palette() {
@@ -794,6 +896,9 @@ nlohmann::json MainWindow::run(const char* id, nlohmann::json args) {
 
 void MainWindow::warn_if_err(const nlohmann::json& env) {
     if (env.value("ok", false)) {
+        return;
+    }
+    if (smoke_mode_) {
         return;
     }
     QString msg = tr("Command failed");
@@ -1113,6 +1218,53 @@ void MainWindow::open_stbl() {
     }
 }
 
+void MainWindow::open_nmap() {
+    auto* t = current_tab();
+    if (!t) {
+        return;
+    }
+    const auto* r = t->current();
+    nlohmann::json rid;
+    const nlohmann::json* rid_ptr = nullptr;
+    if (r && r->type == sxpe::resources::kNmap) {
+        rid = rid_json(*r);
+        rid_ptr = &rid;
+    } else {
+        // Prefer package NMAP when another row is selected (or none).
+        auto listed = bus_.execute(
+            "resource.list",
+            {{"sessionId", t->session_id().toStdString()},
+             {"filter", {{"tag", "NMAP"}}},
+             {"limit", 1}});
+        if (!listed.value("ok", false) || !listed["data"].contains("items") ||
+            listed["data"]["items"].empty()) {
+            QMessageBox::information(this, tr("SXPE"),
+                                     tr("This package has no name map (NMAP)."));
+            return;
+        }
+        const auto& it = listed["data"]["items"][0];
+        rid = {{"type", it.value("type", 0u)},
+               {"group", it.value("group", 0u)},
+               {"instance", it.value("instance", 0ull)},
+               {"ordinal", it.value("ordinal", 0u)}};
+        rid_ptr = &rid;
+    }
+    if (show_nmap_editor(this, bus_, t->session_id(), rid_ptr)) {
+        t->reload();
+    }
+}
+
+void MainWindow::open_xml() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_xml_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::import_s3sa() {
     auto* t = current_tab();
     if (!t) {
@@ -1161,6 +1313,41 @@ void MainWindow::export_s3sa() {
                            {"resourceId", rid_json(*r)},
                            {"path", path.toStdString()},
                            {"force", true}});
+}
+
+
+void MainWindow::view_s3sa() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r || r->type != sxpe::resources::kS3sa) {
+        return;
+    }
+    QSettings s("SXPE", "SXPE");
+    const auto cmd = s.value("ext/s3sa").toString();
+    if (cmd.trimmed().isEmpty()) {
+        QMessageBox::information(
+            this, tr("SXPE"),
+            tr("Set an S3SA viewer under Settings → External programs (ILSpy, dnSpy, …). "
+               "Use {path}. SXPE never LoadLibrarys the assembly."));
+        return;
+    }
+    auto env = run("s3sa.view", {{"sessionId", t->session_id().toStdString()},
+                                 {"resourceId", rid_json(*r)},
+                                 {"keepTemp", true},
+                                 {"force", true}});
+    if (!env.value("ok", false)) {
+        return;
+    }
+    const auto path = QString::fromStdString(env["data"].value("path", std::string()));
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, tr("SXPE"), tr("s3sa.view returned no path."));
+        return;
+    }
+    QString err;
+    if (!plugins_.run_user_command_cleanup(cmd, path, &err)) {
+        QMessageBox::warning(this, tr("SXPE"), err);
+        QFile::remove(path);
+    }
 }
 
 void MainWindow::clip_export() {
@@ -1305,19 +1492,81 @@ void MainWindow::sync_flag_actions() {
         compressed_act_->setChecked(r && r->compressed);
     }
     if (deleted_act_) {
-        deleted_act_->setEnabled(r != nullptr);
+        deleted_act_->setEnabled(r != nullptr && !current_layout_locked());
         deleted_act_->setChecked(r && r->deleted);
+    }
+    if (nmap_editor_act_) {
+        bool enable = false;
+        if (t) {
+            if (r && r->type == sxpe::resources::kNmap) {
+                enable = true;
+            } else {
+                auto listed = bus_.execute(
+                    "resource.list",
+                    {{"sessionId", t->session_id().toStdString()},
+                     {"filter", {{"tag", "NMAP"}}},
+                     {"limit", 1}});
+                enable = listed.value("ok", false) && listed["data"].contains("items") &&
+                         !listed["data"]["items"].empty();
+            }
+        }
+        nmap_editor_act_->setEnabled(enable);
+    }
+}
+
+bool MainWindow::current_layout_locked() {
+    auto* t = current_tab();
+    if (!t) {
+        return false;
+    }
+    auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
+    return info.value("ok", false) && info["data"].value("layoutLocked", false);
+}
+
+void MainWindow::sync_layout_lock_actions() {
+    const bool locked = current_layout_locked();
+    const bool allow_mutate_layout = !locked;
+    if (add_resource_act_) {
+        add_resource_act_->setEnabled(allow_mutate_layout);
+        add_resource_act_->setToolTip(
+            locked ? tr("Neighborhood / world layout lock: adding resources is not supported")
+                   : QString());
+    }
+    if (paste_resource_act_) {
+        paste_resource_act_->setEnabled(allow_mutate_layout);
+    }
+    if (duplicate_resource_act_) {
+        duplicate_resource_act_->setEnabled(allow_mutate_layout);
+    }
+    if (delete_resource_act_) {
+        delete_resource_act_->setEnabled(allow_mutate_layout);
+        delete_resource_act_->setToolTip(
+            locked ? tr("Neighborhood / world layout lock: deleting resources is not supported")
+                   : QString());
+    }
+    if (deleted_act_) {
+        const auto* r = current_tab() ? current_tab()->current() : nullptr;
+        deleted_act_->setEnabled(r != nullptr && allow_mutate_layout);
+    }
+    if (import_menu_) {
+        import_menu_->setEnabled(allow_mutate_layout);
+    }
+    if (compact_act_) {
+        compact_act_->setEnabled(allow_mutate_layout);
+        compact_act_->setToolTip(
+            locked ? tr("Neighborhood / world layout lock: compact is not supported") : QString());
     }
 }
 
 void MainWindow::show_resource_context(const QPoint& global) {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
+    const bool locked = current_layout_locked();
     QMenu m(this);
-    m.addAction(tr("&Add…"), this, [this] { add_resource(); });
+    m.addAction(tr("&Add…"), this, [this] { add_resource(); })->setEnabled(!locked);
     m.addAction(tr("&Copy"), this, [this] { copy_resources(); });
-    m.addAction(tr("&Paste"), this, [this] { paste_resources(); });
-    m.addAction(tr("&Duplicate"), this, [this] { duplicate_resource(); });
+    m.addAction(tr("&Paste"), this, [this] { paste_resources(); })->setEnabled(!locked);
+    m.addAction(tr("&Duplicate"), this, [this] { duplicate_resource(); })->setEnabled(!locked);
     m.addAction(tr("&Replace…"), this, [this] { replace_resource(); });
     m.addSeparator();
     auto* cmp = m.addAction(tr("&Compressed"));
@@ -1327,7 +1576,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     connect(cmp, &QAction::triggered, this, [this](bool on) { set_compressed(on); });
     auto* del = m.addAction(tr("De&leted flag"));
     del->setCheckable(true);
-    del->setEnabled(r != nullptr);
+    del->setEnabled(r != nullptr && !locked);
     del->setChecked(r && r->deleted);
     connect(del, &QAction::triggered, this, [this](bool on) { set_deleted(on); });
     m.addAction(tr("D&etails…"), this, [this] { details_resource(); });
@@ -1339,6 +1588,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     });
     m.addAction(tr("Copy resource &key"), this, [this] { copy_resource_key(); });
     auto* imp = m.addMenu(tr("&Import"));
+    imp->setEnabled(!locked);
     imp->addAction(tr("From &file…"), this, [this] { import_files(); });
     imp->addAction(tr("From &package(s)…"), this, [this] {
         if (auto* tab = current_tab()) {
@@ -1359,40 +1609,75 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addSeparator();
     auto* editors = m.addMenu(tr("E&ditors"));
     auto* stbl = editors->addAction(tr("&String table…"), this, [this] { open_stbl(); });
+    auto* nmap = editors->addAction(tr("&Name map…"), this, [this] { open_nmap(); });
+    auto* xml = editors->addAction(tr("&XML…"), this, [this] { open_xml(); });
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
+    auto* s3sa_view = editors->addAction(tr("&View S3SA…"), this, [this] { view_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
     editors->addAction(tr("Export &VID…"), this, [this] { export_vid(); });
+    bool has_nmap = false;
+    if (t) {
+        auto listed = bus_.execute(
+            "resource.list",
+            {{"sessionId", t->session_id().toStdString()},
+             {"filter", {{"tag", "NMAP"}}},
+             {"limit", 1}});
+        has_nmap = listed.value("ok", false) && listed["data"].contains("items") &&
+                   !listed["data"]["items"].empty();
+    }
+    nmap->setEnabled((r && r->type == sxpe::resources::kNmap) || has_nmap);
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
+        bool xml_ok = r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun;
+        if (!xml_ok) {
+            // Match bus xml.get: enable when a short peek looks like XML.
+            auto peek = bus_.execute(
+                "hex.get",
+                {{"sessionId", t->session_id().toStdString()},
+                 {"resourceId", rid_json(*r)},
+                 {"maxBytes", 64}});
+            if (peek.value("ok", false) && peek["data"].contains("hex")) {
+                const auto hex = peek["data"].value("hex", std::string{});
+                std::vector<std::byte> raw;
+                raw.reserve(hex.size() / 2);
+                for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+                    try {
+                        raw.push_back(std::byte{static_cast<unsigned char>(
+                            std::stoul(hex.substr(i, 2), nullptr, 16))});
+                    } catch (...) {
+                        raw.clear();
+                        break;
+                    }
+                }
+                if (!raw.empty()) {
+                    xml_ok = sxpe::resources::looks_like_xml(raw);
+                }
+            }
+        }
+        xml->setEnabled(xml_ok);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         s3sa_in->setEnabled(true);
+        s3sa_view->setEnabled(r->type == sxpe::resources::kS3sa);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));
+    } else {
+        stbl->setEnabled(false);
+        xml->setEnabled(false);
+        s3sa->setEnabled(false);
+        s3sa_view->setEnabled(false);
+        clip->setEnabled(false);
+        dds->setEnabled(false);
+        snap->setEnabled(false);
     }
+    m.addAction(tr("Find &references…"), this, [this] { find_refs(); })->setEnabled(r != nullptr);
     m.addAction(tr("Open in &hex editor"), this, [this] { open_external(true); });
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });
-    m.addAction(tr("&Delete"), this, [this] { delete_resource(); });
+    m.addAction(tr("&Delete"), this, [this] { delete_resource(); })->setEnabled(!locked);
     m.exec(global);
-}
-
-void MainWindow::show_contents() {
-    QMessageBox::information(
-        this, tr("Contents"),
-        tr("SXPE edits Sims 3 DBPF packages.\n\n"
-           "File: new, open (read-write or read-only), save, bookmarks, recent files.\n"
-           "Edit: undo/redo, copy/save/float preview, external text editor.\n"
-           "Resource: add, copy, paste, duplicate, replace, compression and deleted flags, "
-           "details, copy TGI key, import/export (file, package, DBC), typed editors "
-           "(STBL, S3SA DLL, CLIP, DDS, VID), hex/text helpers.\n"
-           "Tools: FNV-1 / CLIP hash, byte search, validate, compact.\n\n"
-           "Right-click the resource list for the same Resource actions. "
-           "Right-click a package tab to save, close (this / others / left / right), or bookmark. "
-           "Right-click column headers to show or hide columns, autofit, or reset widths. "
-           "View → Columns is the same list. The last visible column cannot be hidden."));
 }
 
 void MainWindow::show_warranty() {
@@ -1462,7 +1747,8 @@ bool MainWindow::smoke_filter(const QString& text) {
     }
     t->apply_filter();
     (void)text;
-    return t->visible_count() >= 0;
+    // Require at least one visible resource so CI proves list/filter works.
+    return t->visible_count() > 0;
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
