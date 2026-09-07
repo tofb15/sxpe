@@ -48,5 +48,11 @@ void show_package_diff_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,
     const std::function<void(const QString& path, std::uint32_t type, std::uint32_t group,
                              std::uint64_t instance, std::uint32_t ordinal)>& open_hit);
+/// Find references to a TGI via resource.findRefs. select_hit jumps to a source resource.
+void show_find_refs_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+    std::uint32_t type, std::uint32_t group, std::uint64_t instance, std::uint32_t ordinal,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& select_hit);
 
 }  // namespace sxpe::gui

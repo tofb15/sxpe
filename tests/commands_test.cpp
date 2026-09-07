@@ -1162,6 +1162,146 @@ int main() {
         bus.execute("package.close", json{{"sessionId", nsid}});
     }
 
+
+    // Issue #25: resource.findRefs — REFS + OBJK structured hits; optional byteScan.
+    {
+        auto wu16 = [](std::vector<std::byte>& o, std::uint16_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 2);
+        };
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        auto wu8 = [](std::vector<std::byte>& o, std::uint8_t v) { o.push_back(std::byte{v}); };
+        auto wtgi = [&](std::vector<std::byte>& o, std::uint32_t type, std::uint32_t group,
+                        std::uint64_t inst) {
+            wu32(o, type);
+            wu32(o, group);
+            wu64(o, inst);
+        };
+
+        const std::uint32_t target_type = 0x0333406Cu;
+        const std::uint32_t target_group = 0;
+        const std::uint64_t target_inst = 0xABCDull;
+
+        std::vector<std::byte> refs_body;
+        wu16(refs_body, 1);
+        wu32(refs_body, 1);
+        wtgi(refs_body, target_type, target_group, target_inst);
+        wu16(refs_body, 0);
+        wu32(refs_body, 0);
+
+        std::vector<std::byte> objk_inner;
+        wu8(objk_inner, 0);  // components
+        wu8(objk_inner, 0);  // data
+        wu8(objk_inner, 1);  // visibility
+        const auto tgi_off = static_cast<std::uint32_t>(objk_inner.size());
+        wu8(objk_inner, 1);
+        wtgi(objk_inner, target_type, target_group, target_inst);
+        std::vector<std::byte> objk_body;
+        wu32(objk_body, 7);
+        wu32(objk_body, tgi_off);
+        wu32(objk_body, 17);
+        objk_body.insert(objk_body.end(), objk_inner.begin(), objk_inner.end());
+
+        // Unrelated resource embedding the TGI bytes for byteScan.
+        std::vector<std::byte> blob;
+        blob.push_back(std::byte{'X'});
+        wtgi(blob, target_type, target_group, target_inst);
+        blob.push_back(std::byte{'Y'});
+
+        auto created = bus.execute("package.new", json::object());
+        CHECK(created["ok"] == true);
+        const auto fsid = created["data"]["sessionId"].get<std::string>();
+        json target_rid{{"type", target_type}, {"group", target_group}, {"instance", target_inst}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", fsid},
+                               {"resourceId", target_rid},
+                               {"payloadB64", b64(std::vector<std::byte>{std::byte{'t'}})}})["ok"] ==
+              true);
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", fsid},
+                               {"resourceId",
+                                json{{"type", sxpe::resources::kRefs},
+                                     {"group", 0},
+                                     {"instance", 1}}},
+                               {"payloadB64", b64(refs_body)}})["ok"] == true);
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", fsid},
+                               {"resourceId",
+                                json{{"type", sxpe::resources::kObjk},
+                                     {"group", 0},
+                                     {"instance", 2}}},
+                               {"payloadB64", b64(objk_body)}})["ok"] == true);
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", fsid},
+                               {"resourceId",
+                                json{{"type", 0x12345678u}, {"group", 0}, {"instance", 3}}},
+                               {"payloadB64", b64(blob)}})["ok"] == true);
+
+        auto man = bus.execute("manifest", json::object());
+        bool saw = false;
+        for (const auto& tool : man["data"]["tools"]) {
+            if (tool["name"] == "resource.findRefs") {
+                saw = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == true);
+                CHECK(tool["mcpName"] == "resource_findRefs");
+            }
+        }
+        CHECK(saw);
+
+        auto found = bus.execute("resource.findRefs",
+                                 json{{"sessionId", fsid}, {"resourceId", target_rid}});
+        CHECK(found["ok"] == true);
+        CHECK(found["data"]["hits"].is_array());
+        CHECK(found["data"]["hits"].size() == 2);
+        CHECK(found["data"].contains("summary"));
+        CHECK(found["data"]["summary"].is_array());
+        bool saw_refs = false;
+        bool saw_objk = false;
+        for (const auto& h : found["data"]["hits"]) {
+            const auto reason = h.value("reason", "");
+            if (reason == "refs.entry") {
+                saw_refs = true;
+                CHECK(h["source"].value("type", 0u) == sxpe::resources::kRefs);
+            }
+            if (reason == "objk.tgi") {
+                saw_objk = true;
+                CHECK(h["source"].value("type", 0u) == sxpe::resources::kObjk);
+            }
+        }
+        CHECK(saw_refs);
+        CHECK(saw_objk);
+        CHECK(found["data"]["byteScan"].value("enabled", true) == false);
+
+        auto with_bs = bus.execute(
+            "resource.findRefs",
+            json{{"sessionId", fsid},
+                 {"resourceId", target_rid},
+                 {"byteScan", true},
+                 {"byteScanMaxBytes", 1024},
+                 {"byteScanMaxResources", 50}});
+        CHECK(with_bs["ok"] == true);
+        CHECK(with_bs["data"]["hits"].size() >= 3);
+        bool saw_bs = false;
+        for (const auto& h : with_bs["data"]["hits"]) {
+            const auto reason = h.value("reason", "");
+            if (reason == "byteScan" || reason == "byteScan.hiLo") {
+                saw_bs = true;
+                CHECK(h["source"].value("instance", 0ull) == 3);
+            }
+        }
+        CHECK(saw_bs);
+        CHECK(with_bs["data"]["byteScan"].value("enabled", false) == true);
+
+        bus.execute("package.close", json{{"sessionId", fsid}});
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;

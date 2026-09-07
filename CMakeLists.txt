@@ -63,6 +63,8 @@ add_library(sxpe_resources
     src/resources/rcol.cpp
     src/resources/dir.cpp
     src/resources/xml.cpp
+    src/resources/refs.cpp
+    src/resources/key_table.cpp
 )
 target_link_libraries(sxpe_resources PUBLIC sxpe_games_sims3)
 
@@ -106,6 +108,9 @@ target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
 
 add_executable(sxpe_objk_vpxy_test tests/objk_vpxy_test.cpp)
 target_link_libraries(sxpe_objk_vpxy_test PRIVATE sxpe_resources)
+
+add_executable(sxpe_refs_test tests/refs_test.cpp)
+target_link_libraries(sxpe_refs_test PRIVATE sxpe_resources)
 
 add_executable(sxpe_preview_wave2_test tests/preview_wave2_test.cpp)
 target_link_libraries(sxpe_preview_wave2_test PRIVATE sxpe_resources)
@@ -158,6 +163,7 @@ add_test(NAME fnv COMMAND sxpe_fnv_test)
 add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
 add_test(NAME objk_vpxy COMMAND sxpe_objk_vpxy_test)
+add_test(NAME refs COMMAND sxpe_refs_test)
 add_test(NAME preview_wave2 COMMAND sxpe_preview_wave2_test)
 add_test(NAME s3sa COMMAND sxpe_s3sa_test)
 add_test(NAME dir COMMAND sxpe_dir_test)

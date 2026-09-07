@@ -1,4 +1,5 @@
 #include "dialogs.hpp"
+#include "sxpe/commands/find_refs_report.hpp"
 
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/types.hpp"
@@ -903,7 +904,7 @@ void show_contents_dialog(QWidget* parent) {
         "<li><b>Delete</b> — Delete</li>"
         "</ul>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, compare packages, un-merge package, byte search, validate, compact / save.</p>"
+        "<p>FNV-1 / CLIP hash, compare packages, find references, un-merge package, byte search, validate, compact / save.</p>"
         "<ul>"
         "<li><b>Search…</b> — Ctrl+F</li>"
         "</ul>"
@@ -1267,5 +1268,138 @@ void show_package_diff_dialog(
     dlg.exec();
 }
 
+
+
+void show_find_refs_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus, const QString& session, std::uint32_t type,
+    std::uint32_t group, std::uint64_t instance, std::uint32_t ordinal,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& select_hit) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Find references"));
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* summary = new QPlainTextEdit;
+    summary->setReadOnly(true);
+    summary->setMaximumHeight(100);
+    lay->addWidget(summary);
+
+    auto* byte_scan = new QCheckBox(QObject::tr("Also byte-scan payloads (slow, capped)"));
+    lay->addWidget(byte_scan);
+
+    auto* table = new QTableWidget(0, 6);
+    table->setHorizontalHeaderLabels({QObject::tr("Tag"), QObject::tr("Type"),
+                                      QObject::tr("Group"), QObject::tr("Instance"),
+                                      QObject::tr("Ord"), QObject::tr("Reason")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    lay->addWidget(table, 1);
+
+    auto* hint = new QLabel(
+        QObject::tr("Double-click a row (or Jump) to select that source resource. Scans REFS and "
+                    "OBJK/VPXY TGI lists; optional byte-scan covers other payloads."));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    auto fill = [&](const nlohmann::json& env) {
+        table->setRowCount(0);
+        QStringList lines;
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Command failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            summary->setPlainText(msg);
+            return;
+        }
+        const auto& data = env["data"];
+        if (data.contains("summary") && data["summary"].is_array()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines << QString::fromStdString(line.get<std::string>());
+                }
+            }
+        } else {
+            for (const auto& line : sxpe::commands::format_find_refs_summary(data)) {
+                lines << QString::fromStdString(line);
+            }
+        }
+        summary->setPlainText(lines.join(QLatin1Char('\n')));
+        const auto hits = data.value("hits", nlohmann::json::array());
+        if (!hits.is_array()) {
+            return;
+        }
+        for (const auto& h : hits) {
+            const auto& src = h.contains("source") ? h["source"] : h;
+            const int r = table->rowCount();
+            table->insertRow(r);
+            auto put = [&](int c, const QString& s) {
+                auto* item = new QTableWidgetItem(s);
+                item->setData(Qt::UserRole, static_cast<qulonglong>(src.value("type", 0u)));
+                item->setData(Qt::UserRole + 1, static_cast<qulonglong>(src.value("group", 0u)));
+                item->setData(Qt::UserRole + 2,
+                              static_cast<qulonglong>(src.value("instance", 0ull)));
+                item->setData(Qt::UserRole + 3, static_cast<qulonglong>(src.value("ordinal", 0u)));
+                table->setItem(r, c, item);
+            };
+            put(0, QString::fromStdString(src.value("tag", "")));
+            put(1, QString::fromStdString(
+                       src.value("typeHex", std::to_string(src.value("type", 0u)))));
+            put(2, QString::fromStdString(
+                       src.value("groupHex", std::to_string(src.value("group", 0u)))));
+            put(3, QString::fromStdString(
+                       src.value("instanceHex", std::to_string(src.value("instance", 0ull)))));
+            put(4, QString::number(static_cast<qulonglong>(src.value("ordinal", 0u))));
+            put(5, QString::fromStdString(h.value("reason", "")));
+        }
+    };
+
+    auto run_find = [&] {
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"resourceId",
+                             {{"type", type},
+                              {"group", group},
+                              {"instance", instance},
+                              {"ordinal", ordinal}}},
+                            {"limit", 200},
+                            {"byteScan", byte_scan->isChecked()}};
+        auto env = bus.execute("resource.findRefs", args);
+        fill(env);
+    };
+
+    auto jump = [&] {
+        const auto rows = table->selectionModel()->selectedRows();
+        if (rows.isEmpty()) {
+            return;
+        }
+        const int r = rows.front().row();
+        auto* item = table->item(r, 0);
+        if (!item) {
+            return;
+        }
+        select_hit(static_cast<std::uint32_t>(item->data(Qt::UserRole).toULongLong()),
+                   static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
+                   static_cast<std::uint64_t>(item->data(Qt::UserRole + 2).toULongLong()),
+                   static_cast<std::uint32_t>(item->data(Qt::UserRole + 3).toULongLong()));
+        dlg.accept();
+    };
+
+    auto* box = new QDialogButtonBox;
+    auto* find = box->addButton(QObject::tr("Find"), QDialogButtonBox::ActionRole);
+    auto* jump_btn = box->addButton(QObject::tr("Jump"), QDialogButtonBox::ActionRole);
+    box->addButton(QDialogButtonBox::Close);
+    lay->addWidget(box);
+    QObject::connect(find, &QPushButton::clicked, &dlg, run_find);
+    QObject::connect(jump_btn, &QPushButton::clicked, &dlg, jump);
+    QObject::connect(table, &QTableWidget::cellDoubleClicked, &dlg, [jump](int, int) { jump(); });
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    dlg.resize(720, 420);
+    run_find();
+    dlg.exec();
+}
 
 }  // namespace sxpe::gui

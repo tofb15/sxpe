@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sxpe/error.hpp"
+#include "sxpe/games/sims3/tgi.hpp"
 
 #include <cstdint>
 #include <span>
@@ -22,6 +23,7 @@ struct Objk {
     std::vector<ObjkData> data;
     std::uint8_t visibility{0};
     std::uint32_t tgi_count{0};
+    std::vector<sxpe::games::sims3::Tgi> tgis;
 };
 
 /// Minimal OBJK (0x02DC343F) reader: version, component IDs, data keys, visibility.
