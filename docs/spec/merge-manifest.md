@@ -21,14 +21,22 @@ Machine-readable provenance for packages **SXPE itself merged**. Un-merge refuse
     {
       "id": "src-1",
       "originalFileName": "hair.package",
-      "resources": [{ "type": 1, "group": 0, "instance": 2, "ordinal": 0 }]
+      "resources": [{ "type": 1, "group": 0, "instance": 2, "ordinal": 0 }],
+      "nameMap": {
+        "type": 23462796,
+        "group": 0,
+        "instance": 0,
+        "ordinal": 0,
+        "version": 1,
+        "entries": [{ "instance": 2, "name": "hair" }]
+      }
     }
   ],
-  "notes": { "forceOverwriteOnDuplicateTgi": true, "dirPolicy": "strip" }
+  "notes": { "forceOverwriteOnDuplicateTgi": true, "dirPolicy": "strip", "nmapPolicy": "concat" }
 }
 ```
 
-GUI drop-merge and `resource.importPackage --writeMergeManifest` write this after copying. Source DIR and SXMM rows are skipped (`dirPolicy: strip`). Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and the name map is moved to index 0 (see [nmap.md](nmap.md)).
+GUI drop-merge and `resource.importPackage --writeMergeManifest` write this after copying. Source DIR and SXMM rows are skipped (`dirPolicy: strip`). Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and the name map is moved to index 0 (see [nmap.md](nmap.md)). Each source records its original `nameMap` so un-merge can restore that table instead of copying the concatenated NMAP.
 
 ## Un-merge
 
@@ -37,7 +45,8 @@ GUI drop-merge and `resource.importPackage --writeMergeManifest` write this afte
 - Require `format` + `version` ≥ 1 + `sources`.
 - Write one child package per source using **basename-only** `originalFileName`.
   Reject path separators, `..`, and absolute paths (traversal hardening).
-- Copy listed TGIs via **on-disk blob copy-through** (preserves RefPack sizes/flags).
+- Copy listed TGIs via **on-disk blob copy-through** (preserves RefPack sizes/flags), except NMAP.
+- Restore each child's NMAP from that source's `nameMap` snapshot (uncompressed). If `nameMap` is absent (older SXMM), keep merged NMAP rows whose instance appears on that source's other listed resources.
 - Warn when a listed TGI is missing; report orphan resources present in the merge but not listed in SXMM.
 - Do not copy SXMM (or source DIR) into children.
 

@@ -683,7 +683,45 @@ int main() {
         auto ng2 = bus.execute("nmap.get", json{{"sessionId", mgid}});
         CHECK(ng2["ok"] == true);
         CHECK(ng2["data"]["entries"].size() == 2);
+        auto nmap_merged = (tmp / "nmap-merged.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", mgid}, {"path", nmap_merged}, {"force", true}})["ok"] ==
+              true);
         bus.execute("package.close", json{{"sessionId", mgid}});
+        auto nout = (tmp / "nmap-unmerged").string();
+        std::filesystem::create_directories(nout);
+        auto umn = bus.execute(
+            "package.unmerge", json{{"path", nmap_merged}, {"outDir", nout}, {"force", true}});
+        CHECK(umn["ok"] == true);
+        CHECK(umn["data"].value("packagesWritten", 0) == 2);
+        auto check_child = [&](const std::string& fname, std::uint64_t inst, const std::string& name,
+                               std::uint64_t other) {
+            auto op = bus.execute("package.open", json{{"path", (tmp / "nmap-unmerged" / fname).string()}});
+            CHECK(op["ok"] == true);
+            const auto cid = op["data"]["sessionId"].get<std::string>();
+            auto ng = bus.execute("nmap.get", json{{"sessionId", cid}});
+            CHECK(ng["ok"] == true);
+            CHECK(ng["data"]["entries"].size() == 1);
+            CHECK(ng["data"]["entries"][0].value("instance", 0ull) == inst);
+            CHECK(ng["data"]["entries"][0].value("name", "") == name);
+            auto lst = bus.execute("resource.list", json{{"sessionId", cid}, {"limit", 20}});
+            CHECK(lst["ok"] == true);
+            bool saw = false;
+            bool leaked = false;
+            for (const auto& it : lst["data"]["items"]) {
+                if (it.value("instance", 0ull) == inst && it.value("name", "") == name) {
+                    saw = true;
+                }
+                if (it.value("instance", 0ull) == other) {
+                    leaked = true;
+                }
+            }
+            CHECK(saw);
+            CHECK(!leaked);
+            bus.execute("package.close", json{{"sessionId", cid}});
+        };
+        check_child("nmap-a.package", 0x111, "AlphaMesh", 0x222);
+        check_child("nmap-b.package", 0x222, "BetaMesh", 0x111);
     }
 
     if (g_failed != 0) {

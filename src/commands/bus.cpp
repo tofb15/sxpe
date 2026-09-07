@@ -428,6 +428,101 @@ VoidResult pin_nmap_front(Package& pkg) {
     return ok();
 }
 
+json snapshot_source_nmap(const Package& pkg) {
+    for (std::uint32_t i = 0; i < pkg.count(); ++i) {
+        if (pkg.entry(i).tgi.type != kNmap) {
+            continue;
+        }
+        auto body = pkg.uncompressed(i);
+        if (!body) {
+            continue;
+        }
+        auto n = sxpe::resources::parse_nmap(*body);
+        if (!n) {
+            continue;
+        }
+        json ents = json::array();
+        for (const auto& e : n->entries) {
+            ents.push_back({{"instance", e.instance}, {"name", e.name}});
+        }
+        auto j = rid_json(pkg.entry(i).tgi, pkg.entry(i).ordinal);
+        j["version"] = n->version;
+        j["entries"] = std::move(ents);
+        return j;
+    }
+    return json();
+}
+
+Result<sxpe::resources::Nmap> nmap_from_manifest(const json& nm) {
+    sxpe::resources::Nmap n;
+    n.version = nm.value("version", 1);
+    if (!nm.contains("entries") || !nm["entries"].is_array()) {
+        return std::unexpected(err(ErrorCode::corrupt, "nameMap entries"));
+    }
+    if (nm["entries"].size() > sxpe::core::caps::kMaxTableEntries) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "nameMap count"));
+    }
+    n.entries.reserve(nm["entries"].size());
+    for (const auto& e : nm["entries"]) {
+        if (!e.is_object() || !e.contains("instance") || !e.contains("name")) {
+            return std::unexpected(err(ErrorCode::corrupt, "nameMap row"));
+        }
+        const auto name = e["name"].get<std::string>();
+        if (name.size() > sxpe::core::caps::kMaxNameBytes) {
+            return std::unexpected(err(ErrorCode::cap_exceeded, "nameMap name"));
+        }
+        n.entries.push_back({as_u64(e["instance"]), name});
+    }
+    return n;
+}
+
+Result<std::uint32_t> add_restored_nmap(Package& dest, const json& nm) {
+    auto n = nmap_from_manifest(nm);
+    if (!n) {
+        return std::unexpected(n.error());
+    }
+    auto body = sxpe::resources::write_nmap(*n);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    Tgi t{};
+    t.type = kNmap;
+    if (nm.contains("type") || nm.contains("typeHex")) {
+        t = tgi_from(nm);
+    }
+    return dest.add(t, *body, false);
+}
+
+Result<sxpe::resources::Nmap> slice_nmap_for_listed(const Package& merged, std::uint32_t nmap_i,
+                                                   const json& resources) {
+    auto body = merged.uncompressed(nmap_i);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    auto n = sxpe::resources::parse_nmap(*body);
+    if (!n) {
+        return std::unexpected(n.error());
+    }
+    std::unordered_set<std::uint64_t> insts;
+    if (resources.is_array()) {
+        for (const auto& r : resources) {
+            Tgi t = tgi_from(r);
+            if (t.type == kNmap) {
+                continue;
+            }
+            insts.insert(t.instance);
+        }
+    }
+    sxpe::resources::Nmap out;
+    out.version = n->version != 0 ? n->version : 1;
+    for (auto& e : n->entries) {
+        if (insts.count(e.instance) != 0) {
+            out.entries.push_back(std::move(e));
+        }
+    }
+    return out;
+}
+
 Result<std::vector<std::byte>> payload_from_args(const json& args) {
     if (args.contains("payloadB64") && args["payloadB64"].is_string()) {
         const auto s = args["payloadB64"].get<std::string>();
@@ -1336,6 +1431,34 @@ json Bus::Impl::exec(std::string_view id, json args) {
                         ++skipped;
                         continue;
                     }
+                    if (typ == kNmap) {
+                        Result<std::uint32_t> add = std::unexpected(err(ErrorCode::corrupt, "nmap"));
+                        if (srcj.contains("nameMap") && srcj["nameMap"].is_object()) {
+                            add = add_restored_nmap(child, srcj["nameMap"]);
+                        } else {
+                            auto sliced = slice_nmap_for_listed(*src, *idx, srcj.value("resources", json::array()));
+                            if (!sliced) {
+                                ++skipped;
+                                warnings.push_back({{"file", fname}, {"message", sliced.error().message}});
+                                continue;
+                            }
+                            auto body = sxpe::resources::write_nmap(*sliced);
+                            if (!body) {
+                                ++skipped;
+                                warnings.push_back({{"file", fname}, {"message", body.error().message}});
+                                continue;
+                            }
+                            add = child.add(src->entry(*idx).tgi, *body, false);
+                        }
+                        if (!add) {
+                            ++skipped;
+                            warnings.push_back({{"file", fname}, {"message", add.error().message}});
+                            continue;
+                        }
+                        (void)*add;
+                        ++copied;
+                        continue;
+                    }
                     auto add = copy_resource_through(child, *src, *idx);
                     if (!add) {
                         ++skipped;
@@ -2063,9 +2186,14 @@ json Bus::Impl::exec(std::string_view id, json args) {
             if (file_ok) {
                 imported += n;
                 packages.push_back({{"path", path->string()}, {"imported", n}});
-                sources.push_back({{"id", "src-" + std::to_string(src_n)},
-                                   {"originalFileName", path->filename().string()},
-                                   {"resources", recs}});
+                json src_ent{{"id", "src-" + std::to_string(src_n)},
+                             {"originalFileName", path->filename().string()},
+                             {"resources", recs}};
+                auto snap = snapshot_source_nmap(*src);
+                if (snap.is_object() && !snap.empty()) {
+                    src_ent["nameMap"] = std::move(snap);
+                }
+                sources.push_back(std::move(src_ent));
             }
         }
         if (dry(args)) {
@@ -2076,7 +2204,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
                      {"version", 1},
                      {"sources", sources},
                      {"notes",
-                      {{"forceOverwriteOnDuplicateTgi", force(args)}, {"dirPolicy", "strip"}}}};
+                      {{"forceOverwriteOnDuplicateTgi", force(args)},
+                       {"dirPolicy", "strip"},
+                       {"nmapPolicy", "concat"}}}};
             const auto dumped = man.dump();
             std::vector<std::byte> mb(dumped.size());
             for (std::size_t i = 0; i < dumped.size(); ++i) {
