@@ -1,6 +1,6 @@
 # Command catalog (M1 sketch)
 
-Source of truth for GUI, CLI, and MCP. Full agent rules: workspace `AGENTIC-PRACTICES.md` and DESIGN Agentic section.
+Source of truth for GUI, CLI, and MCP. Architecture: [DESIGN.md](../../DESIGN.md).
 
 CLI: `sxpe <noun> <verb>` · MCP: `noun_verb` · ids: dotted `noun.verb`.
 
