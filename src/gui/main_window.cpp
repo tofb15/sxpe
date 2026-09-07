@@ -203,6 +203,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* tools = menuBar()->addMenu(tr("&Tools"));
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
+    act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
             show_search_dialog(this, bus_, t->session_id());
@@ -317,6 +318,27 @@ void MainWindow::new_package() {
     add_tab(QString::fromStdString(env["data"]["sessionId"].get<std::string>()), tr("Untitled"));
 }
 
+void MainWindow::unmerge_package() {
+    const auto path = QFileDialog::getOpenFileName(this, tr("Un-merge package"), {},
+                                                   tr("Packages (*.package);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const auto dir = QFileDialog::getExistingDirectory(this, tr("Output folder"));
+    if (dir.isEmpty()) {
+        return;
+    }
+    auto env = run("package.unmerge", {{"path", path.toStdString()},
+                                       {"outDir", dir.toStdString()},
+                                       {"force", true}});
+    if (env.value("ok", false)) {
+        QMessageBox::information(
+            this, tr("Un-merge"),
+            tr("Wrote %1 package(s). Only SXPE-manifest merges can be un-merged.")
+                .arg(env["data"].value("packagesWritten", 0)));
+    }
+}
+
 void MainWindow::merge_dropped_packages(const QStringList& paths) {
     auto created = bus_.execute("package.new", nlohmann::json::object());
     if (!created.value("ok", false)) {
@@ -330,7 +352,10 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     }
     QApplication::setOverrideCursor(Qt::WaitCursor);
     auto env = bus_.execute("resource.importPackage",
-                            {{"sessionId", sid.toStdString()}, {"paths", arr}, {"force", true}});
+                            {{"sessionId", sid.toStdString()},
+                             {"paths", arr},
+                             {"force", true},
+                             {"writeMergeManifest", true}});
     QApplication::restoreOverrideCursor();
     if (!env.value("ok", false) || env["data"].value("imported", 0) == 0) {
         bus_.execute("package.close", {{"sessionId", sid.toStdString()}});

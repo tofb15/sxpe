@@ -455,7 +455,7 @@ bool is_list(const std::string& id) {
 
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
-           id == "hash.fnv" || id == "s3sa.wrap" || id == "help";
+           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "help";
 }
 
 json make_resource_id(const std::string& type_s, const std::string& group_s,
