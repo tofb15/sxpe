@@ -1,6 +1,7 @@
 #include "check.hpp"
 #include "sxpe/commands/bus.hpp"
 #include "sxpe/resources/dds.hpp"
+#include "sxpe/resources/dir.hpp"
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -722,6 +724,138 @@ int main() {
         };
         check_child("nmap-a.package", 0x111, "AlphaMesh", 0x222);
         check_child("nmap-b.package", 0x222, "BetaMesh", 0x111);
+    }
+
+    // Issue #21: validate summary + dirPolicy strip / copy-through (no DIR invent on new).
+    {
+        auto empty = bus.execute("package.new", json::object());
+        CHECK(empty["ok"] == true);
+        const auto eid = empty["data"]["sessionId"].get<std::string>();
+        auto einfo = bus.execute("package.info", json{{"sessionId", eid}});
+        CHECK(einfo["ok"] == true);
+        CHECK(einfo["data"].value("dirPresent", true) == false);
+        auto eval = bus.execute("package.validate", json{{"sessionId", eid}});
+        CHECK(eval["ok"] == true);
+        CHECK(eval["data"].value("ok", false) == true);
+        CHECK(eval["data"].contains("summary"));
+        CHECK(eval["data"]["summary"].is_array());
+        CHECK(!eval["data"]["summary"].empty());
+        CHECK(eval["data"]["summary"][0].get<std::string>().find("OK") != std::string::npos);
+        CHECK(eval["data"]["dir"].value("present", true) == false);
+        auto empty_path = (tmp / "no-dir-new.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", eid}, {"path", empty_path}, {"force", true}})["ok"] ==
+              true);
+        bus.execute("package.close", json{{"sessionId", eid}});
+        auto reopen = bus.execute("package.open", json{{"path", empty_path}});
+        CHECK(reopen["ok"] == true);
+        auto rinfo = bus.execute("package.info",
+                                 json{{"sessionId", reopen["data"]["sessionId"].get<std::string>()}});
+        CHECK(rinfo["data"].value("dirPresent", true) == false);
+        bus.execute("package.close",
+                    json{{"sessionId", reopen["data"]["sessionId"].get<std::string>()}});
+
+        auto with_dir = bus.execute("package.new", json::object());
+        CHECK(with_dir["ok"] == true);
+        const auto did = with_dir["data"]["sessionId"].get<std::string>();
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", did},
+                               {"resourceId", json{{"type", 21}, {"group", 0}, {"instance", 21}}},
+                               {"payloadB64", b64(*raw)}})["ok"] == true);
+        sxpe::resources::DirEntry de{{21u, 0u, 21ull}, static_cast<std::uint32_t>(raw->size())};
+        auto dir_bytes = sxpe::resources::write_dir(std::span<const sxpe::resources::DirEntry>(&de, 1));
+        CHECK(dir_bytes.has_value());
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", did},
+                               {"resourceId",
+                                json{{"type", static_cast<int>(sxpe::resources::kDir)},
+                                     {"group", 0},
+                                     {"instance", 0}}},
+                               {"payloadB64", b64(*dir_bytes)}})["ok"] == true);
+        auto dval = bus.execute("package.validate", json{{"sessionId", did}});
+        CHECK(dval["ok"] == true);
+        CHECK(dval["data"].value("ok", false) == true);
+        CHECK(dval["data"]["dir"].value("present", false) == true);
+        CHECK(dval["data"]["dir"].value("records", 0) == 1);
+        CHECK(dval["data"]["dir"].value("unmatched", 1) == 0);
+        auto with_dir_path = (tmp / "with-dir.package").string();
+        CHECK(bus.execute("package.saveAs", json{{"sessionId", did},
+                                                 {"path", with_dir_path},
+                                                 {"force", true}})["ok"] == true);
+        bus.execute("package.close", json{{"sessionId", did}});
+
+        auto strip_sess = bus.execute("package.new", json::object());
+        const auto strip_id = strip_sess["data"]["sessionId"].get<std::string>();
+        auto strip_imp = bus.execute("resource.importPackage",
+                                     json{{"sessionId", strip_id},
+                                          {"path", with_dir_path},
+                                          {"force", true},
+                                          {"writeMergeManifest", true}});
+        CHECK(strip_imp["ok"] == true);
+        CHECK(strip_imp["data"].value("dirPolicy", "") == "strip");
+        auto strip_info = bus.execute("package.info", json{{"sessionId", strip_id}});
+        CHECK(strip_info["data"].value("dirPresent", true) == false);
+        bool saw_sxmm = false;
+        auto strip_list = bus.execute("resource.list", json{{"sessionId", strip_id}, {"limit", 20}});
+        for (const auto& it : strip_list["data"]["items"]) {
+            if (it.value("type", 0u) == sxpe::resources::kSxmm) {
+                saw_sxmm = true;
+            }
+            CHECK(it.value("type", 0u) != sxpe::resources::kDir);
+        }
+        CHECK(saw_sxmm);
+        auto sxmm_read =
+            bus.execute("resource.read",
+                        json{{"sessionId", strip_id},
+                             {"resourceId",
+                              json{{"type", static_cast<int>(sxpe::resources::kSxmm)},
+                                   {"group", 0},
+                                   {"instance", 1}}},
+                             {"includePayload", true},
+                             {"maxBytes", 65536}});
+        CHECK(sxmm_read["ok"] == true);
+        // payloadB64 present — decode notes via listing notes from import response only;
+        // SXMM notes.dirPolicy is strip by default with writeMergeManifest.
+        bus.execute("package.close", json{{"sessionId", strip_id}});
+
+        auto copy_sess = bus.execute("package.new", json::object());
+        const auto copy_id = copy_sess["data"]["sessionId"].get<std::string>();
+        auto copy_imp = bus.execute("resource.importPackage",
+                                    json{{"sessionId", copy_id},
+                                         {"path", with_dir_path},
+                                         {"force", true},
+                                         {"writeMergeManifest", true},
+                                         {"dirPolicy", "copy-through"}});
+        CHECK(copy_imp["ok"] == true);
+        CHECK(copy_imp["data"].value("dirPolicy", "") == "copy-through");
+        auto copy_info = bus.execute("package.info", json{{"sessionId", copy_id}});
+        CHECK(copy_info["data"].value("dirPresent", false) == true);
+        auto copy_val = bus.execute("package.validate", json{{"sessionId", copy_id}});
+        CHECK(copy_val["ok"] == true);
+        CHECK(copy_val["data"]["dir"].value("present", false) == true);
+        CHECK(copy_val["data"]["summary"].is_array());
+        bus.execute("package.close", json{{"sessionId", copy_id}});
+
+        auto rebuild_sess = bus.execute("package.new", json::object());
+        const auto rebuild_id = rebuild_sess["data"]["sessionId"].get<std::string>();
+        auto rebuild_imp = bus.execute("resource.importPackage",
+                                       json{{"sessionId", rebuild_id},
+                                            {"path", with_dir_path},
+                                            {"force", true},
+                                            {"dirPolicy", "rebuild"}});
+        CHECK(rebuild_imp["ok"] == false);
+        CHECK(rebuild_imp["error"].value("message", std::string{}).find("rebuild") !=
+              std::string::npos);
+        bus.execute("package.close", json{{"sessionId", rebuild_id}});
+
+        auto bad_pol = bus.execute("package.new", json::object());
+        const auto bad_id = bad_pol["data"]["sessionId"].get<std::string>();
+        auto bad_imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", bad_id},
+                                        {"path", with_dir_path},
+                                        {"dirPolicy", "explode"}});
+        CHECK(bad_imp["ok"] == false);
+        bus.execute("package.close", json{{"sessionId", bad_id}});
     }
 
     if (g_failed != 0) {

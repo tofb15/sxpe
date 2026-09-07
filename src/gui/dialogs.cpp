@@ -741,46 +741,56 @@ void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope) {
         const auto& data = envelope.contains("data") && envelope["data"].is_object()
                                ? envelope["data"]
                                : envelope;
-        const bool valid = data.value("ok", false);
-        lines << (valid ? QObject::tr("Result: OK — no issues found.")
-                        : QObject::tr("Result: issues found."));
-        if (data.contains("indexCount")) {
-            lines << QObject::tr("Resources (index): %1")
-                         .arg(static_cast<qulonglong>(data.value("indexCount", 0ull)));
-        }
-        if (data.contains("dir") && data["dir"].is_object()) {
-            const auto& dir = data["dir"];
-            if (!dir.value("present", false)) {
-                lines << QObject::tr("DIR: not present");
-            } else {
-                lines << QObject::tr("DIR: present");
-                if (dir.contains("records")) {
-                    lines << QObject::tr("  Records: %1")
-                                 .arg(static_cast<qulonglong>(dir.value("records", 0ull)));
-                }
-                if (dir.contains("recordBytes")) {
-                    lines << QObject::tr("  Record size: %1 bytes")
-                                 .arg(static_cast<qulonglong>(dir.value("recordBytes", 0ull)));
-                }
-                if (dir.contains("unmatched")) {
-                    lines << QObject::tr("  Unmatched: %1")
-                                 .arg(static_cast<qulonglong>(dir.value("unmatched", 0ull)));
+        if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines << QString::fromStdString(line.get<std::string>());
+                } else {
+                    lines << QString::fromStdString(line.dump());
                 }
             }
-        }
-        if (data.contains("issues") && data["issues"].is_array()) {
-            const auto& issues = data["issues"];
-            if (issues.empty()) {
-                lines << QObject::tr("Issues: none");
-            } else {
-                lines << QObject::tr("Issues (%1):").arg(static_cast<int>(issues.size()));
-                for (const auto& issue : issues) {
-                    if (issue.is_string()) {
-                        lines << QStringLiteral("  • %1")
-                                     .arg(QString::fromStdString(issue.get<std::string>()));
-                    } else {
-                        lines << QStringLiteral("  • %1")
-                                     .arg(QString::fromStdString(issue.dump()));
+        } else {
+            const bool valid = data.value("ok", false);
+            lines << (valid ? QObject::tr("Result: OK — no issues found.")
+                            : QObject::tr("Result: issues found."));
+            if (data.contains("indexCount")) {
+                lines << QObject::tr("Resources (index): %1")
+                             .arg(static_cast<qulonglong>(data.value("indexCount", 0ull)));
+            }
+            if (data.contains("dir") && data["dir"].is_object()) {
+                const auto& dir = data["dir"];
+                if (!dir.value("present", false)) {
+                    lines << QObject::tr("DIR: not present");
+                } else {
+                    lines << QObject::tr("DIR: present");
+                    if (dir.contains("records")) {
+                        lines << QObject::tr("  Records: %1")
+                                     .arg(static_cast<qulonglong>(dir.value("records", 0ull)));
+                    }
+                    if (dir.contains("recordBytes")) {
+                        lines << QObject::tr("  Record size: %1 bytes")
+                                     .arg(static_cast<qulonglong>(dir.value("recordBytes", 0ull)));
+                    }
+                    if (dir.contains("unmatched")) {
+                        lines << QObject::tr("  Unmatched: %1")
+                                     .arg(static_cast<qulonglong>(dir.value("unmatched", 0ull)));
+                    }
+                }
+            }
+            if (data.contains("issues") && data["issues"].is_array()) {
+                const auto& issues = data["issues"];
+                if (issues.empty()) {
+                    lines << QObject::tr("Issues: none");
+                } else {
+                    lines << QObject::tr("Issues (%1):").arg(static_cast<int>(issues.size()));
+                    for (const auto& issue : issues) {
+                        if (issue.is_string()) {
+                            lines << QStringLiteral("  • %1")
+                                         .arg(QString::fromStdString(issue.get<std::string>()));
+                        } else {
+                            lines << QStringLiteral("  • %1")
+                                         .arg(QString::fromStdString(issue.dump()));
+                        }
                     }
                 }
             }

@@ -22,7 +22,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.save` | n | y | unmap then ReplaceFile |
 | `package.saveAs` | n | y | |
 | `package.info` | y | n | |
-| `package.validate` | y | n | |
+| `package.validate` | y | n | Returns `summary[]` for CLI `--format text` / GUI / MCP |
 | `resource.list` | y | n | `limit` default 100, `cursor` |
 | `resource.read` | y | n | metadata default; `maxBytes` |
 | `resource.export` | y | n | write path; openWorld |
@@ -55,4 +55,5 @@ See [s3sa.md](s3sa.md). Do not `resource.add` a raw `.dll` as type `073FAA07`.
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
 | `package.unmerge` | n | y | Recreate sources from SXMM; refuse if missing |
+| `resource.importPackage` | n | y | Merge/import; `dirPolicy` strip / copy-through / rebuild(refused) |
 | `package.makeScriptMod` | n | y | Optional later: S3SA + `_XML` `kInstantiator` + NMAP |

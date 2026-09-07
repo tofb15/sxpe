@@ -1,4 +1,5 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/validate_report.hpp"
 
 #include <CLI11.hpp>
 #include <nlohmann/json.hpp>
@@ -339,9 +340,35 @@ void print_rows_table(const json& rows) {
     }
 }
 
+void print_validate_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            } else {
+                lines.push_back(line.dump());
+            }
+        }
+    } else {
+        const json dir = data.value("dir", json::object());
+        const json issues = data.value("issues", json::array());
+        lines = sxpe::commands::format_validate_summary(data.value("ok", false),
+                                                       data.value("indexCount", 0u), dir, issues);
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
 void print_object_text(const json& data) {
+    if (data.contains("issues") && data.contains("dir") && data.contains("indexCount")) {
+        print_validate_text(data);
+        return;
+    }
     for (auto it = data.begin(); it != data.end(); ++it) {
-        if (it.key() == "items" || it.key() == "entries" || it.key() == "tools") {
+        if (it.key() == "items" || it.key() == "entries" || it.key() == "tools" ||
+            it.key() == "summary") {
             continue;
         }
         std::cout << it.key() << ": ";

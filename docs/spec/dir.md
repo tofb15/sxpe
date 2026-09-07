@@ -37,9 +37,21 @@ DIR lists compressed resources so `mem_size` can be cross-checked against the in
 
 ## Write
 
-- File→New / SXPE saveAs: **do not invent** a DIR (matches EA).
-- If the input had a DIR, copy it through. Rebuild is a later merge-policy choice (`dirPolicy` on #9).
+- File→New / SXPE `package.saveAs`: **do not invent** a DIR (matches EA).
+- Opening a package that already has a DIR keeps it on round-trip (copy bytes through unless the session deleted it).
+
+## Merge `dirPolicy` (`notes.dirPolicy` on SXMM)
+
+`resource.importPackage` accepts `dirPolicy`:
+
+| Value | Default when | Behavior |
+| --- | --- | --- |
+| `strip` | `writeMergeManifest` | Skip source DIR rows |
+| `copy-through` | import without merge manifest | Copy source DIR through (force on duplicate TGI) |
+| `rebuild` | — | **Not yet**; refused with a clear error |
+
+Pass `--dir-policy copy-through` (or `dirPolicy` in JSON) with `--write-merge-manifest` to preserve legacy DIR in an SXPE merge and record that choice in SXMM `notes.dirPolicy`.
 
 ## Tests
 
-Synthetic 20-byte round-trip in `tests/dir_test.cpp`. No EA bytes.
+Synthetic 20-byte round-trip in `tests/dir_test.cpp`. Strip + copy-through import coverage in `tests/commands_test.cpp`. No EA bytes.

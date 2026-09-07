@@ -36,7 +36,15 @@ Machine-readable provenance for packages **SXPE itself merged**. Un-merge refuse
 }
 ```
 
-GUI drop-merge and `resource.importPackage --writeMergeManifest` write this after copying. Source DIR and SXMM rows are skipped (`dirPolicy: strip`). Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and the name map is moved to index 0 (see [nmap.md](nmap.md)). Each source records its original `nameMap` so un-merge can restore that table instead of copying the concatenated NMAP.
+GUI drop-merge and `resource.importPackage --writeMergeManifest` write this after copying. Source SXMM rows are always skipped when writing a new manifest. Source DIR handling follows `notes.dirPolicy` (see [dir.md](dir.md)):
+
+| `dirPolicy` | Behavior |
+| --- | --- |
+| `strip` | Default with `--writeMergeManifest`. Skip source DIR rows (EA TS3 does not ship DIR). |
+| `copy-through` | Default without a merge manifest. Copy source DIR bytes into the dest when present. |
+| `rebuild` | Not yet implemented; `resource.importPackage` refuses with a clear error. |
+
+Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and the name map is moved to index 0 (see [nmap.md](nmap.md)). Each source records its original `nameMap` so un-merge can restore that table instead of copying the concatenated NMAP.
 
 ## Un-merge
 
