@@ -1,4 +1,5 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/version.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -83,7 +84,7 @@ void write_message(const json& msg) {
 json initialize_result() {
     return {{"protocolVersion", "2026-07-28"},
             {"capabilities", {{"tools", {{"listChanged", false}}}}},
-            {"serverInfo", {{"name", "sxpe"}, {"version", "0.5.0"}}}};
+            {"serverInfo", {{"name", "sxpe"}, {"version", SXPE_VERSION}}}};
 }
 
 json tools_list(Bus& bus, const json& params) {

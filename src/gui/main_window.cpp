@@ -279,11 +279,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(help, tr("&About SXPE"), {}, [this] {
         QMessageBox::about(
             this, tr("About SXPE"),
-            tr("SXPE is an unofficial Sims 3 package editor.\n"
+            tr("SXPE %1\n"
+               "SXPE is an unofficial Sims 3 package editor.\n"
                "Not affiliated with Electronic Arts. Not s3pe.\n"
                "License: GPL-3.0-or-later.\n"
                "The Sims 3 is a trademark of Electronic Arts.\n"
-               "For updates, see https://github.com/tofb15/sxpe"));
+               "For updates, see https://github.com/tofb15/sxpe")
+                .arg(QCoreApplication::applicationVersion()));
     });
     act(help, tr("&Warranty"), {}, [this] { show_warranty(); });
     act(help, tr("&Licence"), {}, [this] { show_licence(); });

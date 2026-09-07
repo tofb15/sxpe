@@ -43,6 +43,12 @@ into the build `_vendor` dir (see `CMakeLists.txt`). `vcpkg.json` lists those sa
 optional vcpkg users. Tests use `tests/check.hpp`. Qt 6 Widgets is optional via `find_package`.
 See [DESIGN.md](DESIGN.md).
 
+## Version
+
+`project(sxpe VERSION …)` in `CMakeLists.txt` is the single source of truth. CMake generates
+`sxpe/version.hpp` (`SXPE_VERSION`) for CLI `--version`, GUI About, and MCP `serverInfo.version`.
+Keep `vcpkg.json` `"version-string"` equal to that same `PROJECT_VERSION` when bumping.
+
 ## Safety
 
 Untrusted package bytes: use `std::span` and size caps. Do not `memcpy` from the index without checking. Fuzz codecs when they exist.

@@ -3,6 +3,7 @@
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
+#include "sxpe/version.hpp"
 
 #include <CLI11.hpp>
 #include <nlohmann/json.hpp>
@@ -17,10 +18,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#ifndef SXPE_VERSION
-#define SXPE_VERSION "0.0.0"
-#endif
 
 #ifdef _WIN32
 #include <io.h>

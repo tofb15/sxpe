@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Single source of truth for CLI --version, GUI About, and MCP serverInfo.
+# When bumping, keep vcpkg.json "version-string" equal to PROJECT_VERSION.
+set(SXPE_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/sxpe_version.hpp.in"
+    "${SXPE_GENERATED_INCLUDE_DIR}/sxpe/version.hpp"
+    @ONLY)
+
 set(SXPE_VENDOR "${CMAKE_BINARY_DIR}/_vendor")
 file(MAKE_DIRECTORY "${SXPE_VENDOR}/nlohmann")
 if(NOT EXISTS "${SXPE_VENDOR}/nlohmann/json.hpp")
@@ -75,12 +83,11 @@ target_include_directories(sxpe_commands PUBLIC "${SXPE_VENDOR}")
 target_link_libraries(sxpe_commands PUBLIC sxpe_resources)
 
 add_executable(sxpe src/cli/main.cpp)
-target_include_directories(sxpe PRIVATE "${SXPE_VENDOR}")
+target_include_directories(sxpe PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe PRIVATE sxpe_commands)
-target_compile_definitions(sxpe PRIVATE "SXPE_VERSION=\"${PROJECT_VERSION}\"")
 
 add_executable(sxpe_mcp src/mcp/main.cpp)
-target_include_directories(sxpe_mcp PRIVATE "${SXPE_VENDOR}")
+target_include_directories(sxpe_mcp PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_mcp PRIVATE sxpe_commands)
 
 add_executable(sxpe_tests tests/game_profile_registry_test.cpp)
@@ -140,7 +147,8 @@ if(Qt6_FOUND)
     )
     target_include_directories(sxpe_gui PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/gui"
-        "${SXPE_VENDOR}")
+        "${SXPE_VENDOR}"
+        "${SXPE_GENERATED_INCLUDE_DIR}")
     target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
     set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
