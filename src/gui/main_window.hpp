@@ -21,6 +21,7 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     bool open_path(const QString& path, bool writable = true);
     void new_package();
+    void set_smoke_mode(bool on) { smoke_mode_ = on; }
     bool smoke_filter(const QString& text);
 
 protected:
@@ -100,6 +101,7 @@ private:
     QString current_package_path();
 
     sxpe::commands::Bus bus_;
+    bool smoke_mode_ = false;
     PluginHost plugins_;
     QTabWidget* tabs_{};
     QLabel* status_path_{};

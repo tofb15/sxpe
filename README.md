@@ -22,7 +22,7 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs Linux CLI/MCP without Qt, and a Windows job that installs Qt and runs `gui_smoke`. Optional local FullBuild/CC checks are not CI.
+GitHub Actions (`.github/workflows/ci.yml`) runs Linux CLI/MCP without Qt and a Windows Qt `gui_smoke` job. Linux Qt GUI build/smoke is documented (and paste-ready CI YAML) in [docs/building.md](docs/building.md), including Wayland/X11 notes. Optional local FullBuild/CC checks are not CI.
 
 On Windows with Visual Studio 2022/2026 (MSVC):
 
@@ -40,7 +40,7 @@ package.bat
 
 (`scripts/package.ps1` is the same command.) Use `-SkipBuild` to package the current `build/` output. The zip includes `SXPE.bat`, `sxpe-cli.bat`, and `sxpe-mcp.bat`. Keep the DLL and plugin subfolders next to the exes when you share the folder.
 
-Requires CMake 3.28+ and a C++23 compiler. The GUI needs Qt 6 Widgets (`find_package(Qt6)`). If Qt lives next to the repo as `../qt/6.8.2/msvc2022_64`, CMake picks it up. Without Qt, CLI and MCP still build.
+Requires CMake 3.28+ and a C++23 compiler. The GUI needs Qt 6.5+ Widgets (`find_package(Qt6)`). On Windows, if Qt lives next to the repo as `../qt/6.8.2/msvc2022_64`, CMake picks it up. On Linux, set `CMAKE_PREFIX_PATH` to a Qt 6.5+ `gcc_64` kit (or use distro Qt ≥ 6.5). Without Qt, CLI and MCP still build. Packaging (`package.bat` / `scripts/package.ps1`) remains Windows-only.
 
 ```text
 sxpe_gui path\to\file.package
@@ -68,6 +68,7 @@ Resource **Name** is the package name map (NMAP). `nmap.set` / `resource.rename`
 - `src/` — implementations
 - `tests/` — unit tests (synthetic fixtures only)
 - `fixtures/synthetic/` — invented DBPF/RefPack bytes (not game files)
+- `docs/building.md` — CLI/GUI build, Linux Qt, Wayland/X11 caveats
 - `docs/testing.md` — optional local FullBuild/CC round-trip (`scripts/roundtrip.ps1`); gitignored paths only
 - `docs/neighborhood-layout.md` — `.nhd`/`.world`/`.dbc` layout lock (safe in-place replace vs refused)
 

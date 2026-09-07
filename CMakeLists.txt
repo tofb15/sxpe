@@ -219,7 +219,18 @@ if(TARGET sxpe_gui)
     add_test(NAME gui_smoke COMMAND sxpe_gui --smoke
         "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin")
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+    # Official Qt: <prefix>/plugins; Debian/Ubuntu multiarch: <libdir>/qt6/plugins.
+    set(_qt_plugins "${_qt_prefix}/plugins")
+    if(NOT EXISTS "${_qt_plugins}/platforms")
+        if(EXISTS "${_qt_prefix}/qt6/plugins/platforms")
+            set(_qt_plugins "${_qt_prefix}/qt6/plugins")
+        endif()
+    endif()
+    set(_gui_smoke_env "QT_QPA_PLATFORM=offscreen")
+    if(EXISTS "${_qt_plugins}/platforms")
+        string(APPEND _gui_smoke_env ";QT_PLUGIN_PATH=${_qt_plugins}")
+    endif()
     set_tests_properties(gui_smoke PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_qt_prefix}/plugins"
+        ENVIRONMENT "${_gui_smoke_env}"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_prefix}/bin")
 endif()

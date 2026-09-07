@@ -895,6 +895,9 @@ void MainWindow::warn_if_err(const nlohmann::json& env) {
     if (env.value("ok", false)) {
         return;
     }
+    if (smoke_mode_) {
+        return;
+    }
     QString msg = tr("Command failed");
     if (env.contains("error") && env["error"].contains("message")) {
         msg = QString::fromStdString(env["error"]["message"].get<std::string>());
@@ -1714,7 +1717,8 @@ bool MainWindow::smoke_filter(const QString& text) {
     }
     t->apply_filter();
     (void)text;
-    return t->visible_count() >= 0;
+    // Require at least one visible resource so CI proves list/filter works.
+    return t->visible_count() > 0;
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
