@@ -207,6 +207,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
     act(tools, tr("&Compare packages…"), {}, [this] { compare_packages(); });
     act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
+    act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -361,6 +362,15 @@ void MainWindow::find_refs() {
                                   }
                               }
                           });
+}
+
+void MainWindow::scan_folder() {
+    show_folder_scan_dialog(this, bus_, [this](const QString& path) {
+        if (!open_path(path, true)) {
+            QMessageBox::warning(this, tr("Scan folder"),
+                                 tr("Could not open \"%1\" in SXPE.").arg(path));
+        }
+    });
 }
 
 void MainWindow::compare_packages() {

@@ -16,4 +16,12 @@ inline constexpr std::uint32_t kMaxLivePreviewBytes = 8u << 20;
 /// Max uncompressed `_XML`/`ITUN` body for xml.get / xml.set (plain-text editor).
 inline constexpr std::uint32_t kMaxXmlEditorBytes = 4u << 20;
 
+/// folder.scan defaults (read-only Downloads/Mods hygiene).
+inline constexpr std::uint32_t kFolderScanMaxFiles = 5000;
+inline constexpr std::uint64_t kFolderScanMaxTotalBytes = 8ull << 30;
+/// Max duplicate-TGI groups returned (total count still reported).
+inline constexpr std::uint32_t kFolderScanMaxDuplicateSamples = 100;
+/// Max file paths listed per duplicate TGI sample.
+inline constexpr std::uint32_t kFolderScanMaxPathsPerDuplicate = 8;
+
 }  // namespace sxpe::core::caps
