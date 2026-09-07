@@ -31,6 +31,9 @@ public:
     void copy_preview();
     bool save_preview(const QString& path);
     void select_all();
+    /// Clear filters and select the first row matching the TGI key (for Compare jump-to).
+    bool select_resource(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                         std::uint32_t ordinal);
     void apply_column_mask(ColumnMask m);
     [[nodiscard]] int visible_count() const { return model_ ? model_->visible_count() : 0; }
 

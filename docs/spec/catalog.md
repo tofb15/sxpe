@@ -23,6 +23,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.saveAs` | n | y | |
 | `package.info` | y | n | |
 | `package.validate` | y | n | Returns `summary[]` for CLI `--format text` / GUI / MCP |
+| `package.diff` | y | n | Compare two packages by TGI+ordinal; SHA-256 of uncompressed payload; `summary[]` |
 | `resource.list` | y | n | `limit` default 100, `cursor` |
 | `resource.read` | y | n | metadata default; `maxBytes` |
 | `resource.export` | y | n | write path; openWorld |

@@ -3,6 +3,8 @@
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/types.hpp"
 
+#include <QApplication>
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -692,7 +694,7 @@ void show_contents_dialog(QWidget* parent) {
         "<li><b>Delete</b> — Delete</li>"
         "</ul>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, un-merge package, byte search, validate, compact / save.</p>"
+        "<p>FNV-1 / CLIP hash, compare packages, un-merge package, byte search, validate, compact / save.</p>"
         "<ul>"
         "<li><b>Search…</b> — Ctrl+F</li>"
         "</ul>"
@@ -827,5 +829,234 @@ void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope) {
     dlg.resize(520, 360);
     dlg.exec();
 }
+
+void show_package_diff_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path, std::uint32_t type, std::uint32_t group,
+                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Compare packages"));
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* form = new QFormLayout;
+    auto* path_a = new QLineEdit;
+    auto* path_b = new QLineEdit;
+    auto* browse_a = new QPushButton(QObject::tr("Browse…"));
+    auto* browse_b = new QPushButton(QObject::tr("Browse…"));
+    auto* row_a = new QHBoxLayout;
+    row_a->addWidget(path_a, 1);
+    row_a->addWidget(browse_a);
+    auto* row_b = new QHBoxLayout;
+    row_b->addWidget(path_b, 1);
+    row_b->addWidget(browse_b);
+    form->addRow(QObject::tr("Package A"), row_a);
+    form->addRow(QObject::tr("Package B"), row_b);
+    lay->addLayout(form);
+
+    auto* summary = new QPlainTextEdit;
+    summary->setReadOnly(true);
+    summary->setMaximumHeight(120);
+    lay->addWidget(summary);
+
+    auto* table = new QTableWidget(0, 6);
+    table->setHorizontalHeaderLabels({QObject::tr("Side"), QObject::tr("Type"),
+                                      QObject::tr("Group"), QObject::tr("Instance"),
+                                      QObject::tr("Ord"), QObject::tr("Detail")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    lay->addWidget(table, 1);
+
+    auto* hint = new QLabel(
+        QObject::tr("Double-click a row (or Open selected) to open that package and select the "
+                    "resource. Payload equality uses SHA-256 of uncompressed bytes."));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    nlohmann::json last_env = nlohmann::json::object();
+    QString last_a;
+    QString last_b;
+
+    auto fill = [&](const nlohmann::json& env) {
+        last_env = env;
+        table->setRowCount(0);
+        QStringList lines;
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Command failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            lines << msg;
+            summary->setPlainText(lines.join(QLatin1Char('\n')));
+            return;
+        }
+        const auto& data = env["data"];
+        last_a = QString::fromStdString(data.value("pathA", std::string{}));
+        last_b = QString::fromStdString(data.value("pathB", std::string{}));
+        if (data.contains("summary") && data["summary"].is_array()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    lines << QString::fromStdString(line.get<std::string>());
+                }
+            }
+        }
+        summary->setPlainText(lines.join(QLatin1Char('\n')));
+
+        auto add_rows = [&](const char* side, const nlohmann::json& arr, const char* detail_key) {
+            if (!arr.is_array()) {
+                return;
+            }
+            for (const auto& it : arr) {
+                const int r = table->rowCount();
+                table->insertRow(r);
+                auto put = [&](int c, const QString& s) {
+                    auto* item = new QTableWidgetItem(s);
+                    item->setData(Qt::UserRole, QString::fromStdString(side));
+                    item->setData(Qt::UserRole + 1, static_cast<qulonglong>(it.value("type", 0u)));
+                    item->setData(Qt::UserRole + 2, static_cast<qulonglong>(it.value("group", 0u)));
+                    item->setData(Qt::UserRole + 3,
+                                  static_cast<qulonglong>(it.value("instance", 0ull)));
+                    item->setData(Qt::UserRole + 4, static_cast<qulonglong>(it.value("ordinal", 0u)));
+                    table->setItem(r, c, item);
+                };
+                put(0, QString::fromUtf8(side));
+                put(1, QString::fromStdString(it.value("typeHex", std::to_string(it.value("type", 0u)))));
+                put(2, QString::fromStdString(it.value("groupHex", std::to_string(it.value("group", 0u)))));
+                put(3, QString::fromStdString(
+                           it.value("instanceHex", std::to_string(it.value("instance", 0ull)))));
+                put(4, QString::number(static_cast<qulonglong>(it.value("ordinal", 0u))));
+                QString detail;
+                if (std::string(detail_key) == "different") {
+                    detail = QObject::tr("payload differs");
+                    if (it.contains("hashA") && it.contains("hashB")) {
+                        const auto ha = it.value("hashA", std::string{});
+                        const auto hb = it.value("hashB", std::string{});
+                        detail += QLatin1String("  A=") +
+                                  QString::fromStdString(ha.substr(0, std::min<std::size_t>(12, ha.size()))) +
+                                  QLatin1String("… B=") +
+                                  QString::fromStdString(hb.substr(0, std::min<std::size_t>(12, hb.size()))) +
+                                  QStringLiteral("…");
+                    }
+                } else if (it.contains("hash")) {
+                    const auto h = it.value("hash", std::string{});
+                    detail = QString::fromStdString(h.substr(0, std::min<std::size_t>(16, h.size()))) +
+                             QStringLiteral("…");
+                }
+                put(5, detail);
+            }
+        };
+        add_rows("A only", data.value("onlyInA", nlohmann::json::array()), "onlyA");
+        add_rows("B only", data.value("onlyInB", nlohmann::json::array()), "onlyB");
+        add_rows("Different", data.value("different", nlohmann::json::array()), "different");
+    };
+
+    auto run_diff = [&] {
+        const auto a = path_a->text().trimmed();
+        const auto b = path_b->text().trimmed();
+        if (a.isEmpty() || b.isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("Compare packages"),
+                                 QObject::tr("Choose both package A and package B."));
+            return;
+        }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto env = bus.execute("package.diff",
+                               {{"pathA", a.toStdString()}, {"pathB", b.toStdString()}});
+        QApplication::restoreOverrideCursor();
+        fill(env);
+    };
+
+    auto open_selected = [&] {
+        const auto rows = table->selectionModel() ? table->selectionModel()->selectedRows()
+                                                  : QModelIndexList{};
+        if (rows.isEmpty()) {
+            return;
+        }
+        const auto* item = table->item(rows.first().row(), 0);
+        if (!item || !open_hit) {
+            return;
+        }
+        const auto side = item->data(Qt::UserRole).toString();
+        QString path = last_a;
+        if (side.startsWith(QLatin1String("B"))) {
+            path = last_b;
+        }
+        // "Different" → open A by default (user can open B via context if needed)
+        if (side.startsWith(QLatin1String("Different"))) {
+            path = last_a;
+        }
+        open_hit(path, static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 2).toULongLong()),
+                 static_cast<std::uint64_t>(item->data(Qt::UserRole + 3).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 4).toULongLong()));
+    };
+
+    QObject::connect(browse_a, &QPushButton::clicked, &dlg, [path_a, &dlg] {
+        const auto p = QFileDialog::getOpenFileName(
+            &dlg, QObject::tr("Package A"), path_a->text(),
+            QObject::tr("Packages (*.package);;All files (*.*)"));
+        if (!p.isEmpty()) {
+            path_a->setText(p);
+        }
+    });
+    QObject::connect(browse_b, &QPushButton::clicked, &dlg, [path_b, &dlg] {
+        const auto p = QFileDialog::getOpenFileName(
+            &dlg, QObject::tr("Package B"), path_b->text(),
+            QObject::tr("Packages (*.package);;All files (*.*)"));
+        if (!p.isEmpty()) {
+            path_b->setText(p);
+        }
+    });
+    QObject::connect(table, &QTableWidget::cellDoubleClicked, &dlg, [&](int, int) { open_selected(); });
+
+    auto* box = new QDialogButtonBox;
+    auto* compare = box->addButton(QObject::tr("Compare"), QDialogButtonBox::ActionRole);
+    auto* open_a = box->addButton(QObject::tr("Open selected in A"), QDialogButtonBox::ActionRole);
+    auto* open_b = box->addButton(QObject::tr("Open selected in B"), QDialogButtonBox::ActionRole);
+    auto* copy = box->addButton(QObject::tr("Copy JSON"), QDialogButtonBox::ActionRole);
+    box->addButton(QDialogButtonBox::Close);
+    QObject::connect(compare, &QPushButton::clicked, &dlg, run_diff);
+    QObject::connect(open_a, &QPushButton::clicked, &dlg, [&] {
+        const auto rows = table->selectionModel() ? table->selectionModel()->selectedRows()
+                                                  : QModelIndexList{};
+        if (rows.isEmpty() || !open_hit) {
+            return;
+        }
+        const auto* item = table->item(rows.first().row(), 0);
+        if (!item) {
+            return;
+        }
+        open_hit(last_a, static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 2).toULongLong()),
+                 static_cast<std::uint64_t>(item->data(Qt::UserRole + 3).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 4).toULongLong()));
+    });
+    QObject::connect(open_b, &QPushButton::clicked, &dlg, [&] {
+        const auto rows = table->selectionModel() ? table->selectionModel()->selectedRows()
+                                                  : QModelIndexList{};
+        if (rows.isEmpty() || !open_hit) {
+            return;
+        }
+        const auto* item = table->item(rows.first().row(), 0);
+        if (!item) {
+            return;
+        }
+        open_hit(last_b, static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 2).toULongLong()),
+                 static_cast<std::uint64_t>(item->data(Qt::UserRole + 3).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 4).toULongLong()));
+    });
+    QObject::connect(copy, &QPushButton::clicked, &dlg, [&last_env] {
+        if (auto* cb = QGuiApplication::clipboard()) {
+            cb->setText(QString::fromStdString(last_env.dump(2)));
+        }
+    });
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+    dlg.resize(820, 560);
+    dlg.exec();
+}
+
 
 }  // namespace sxpe::gui
