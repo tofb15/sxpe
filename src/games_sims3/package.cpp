@@ -10,6 +10,7 @@
 #include <fstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -899,6 +900,33 @@ VoidResult Package::remove(std::uint32_t i) {
     entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(i));
     overrides_.erase(overrides_.begin() + static_cast<std::ptrdiff_t>(i));
     deleted_.erase(deleted_.begin() + static_cast<std::ptrdiff_t>(i));
+    recompute_ordinals();
+    dirty_ = true;
+    return ok();
+}
+
+VoidResult Package::move(std::uint32_t from, std::uint32_t to) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (layout_locked()) {
+        return std::unexpected(
+            err(ErrorCode::refused, "reordering resources is not supported when saving a neighborhood file"));
+    }
+    if (from >= entries_.size() || to >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    if (from == to) {
+        return ok();
+    }
+    auto rotate = [from, to](auto& v) {
+        auto val = std::move(v[from]);
+        v.erase(v.begin() + static_cast<std::ptrdiff_t>(from));
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(to), std::move(val));
+    };
+    rotate(entries_);
+    rotate(overrides_);
+    rotate(deleted_);
     recompute_ordinals();
     dirty_ = true;
     return ok();

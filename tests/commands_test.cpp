@@ -679,6 +679,7 @@ int main() {
         CHECK(nmap_rows == 1);
         CHECK(saw_alpha);
         CHECK(saw_beta);
+        CHECK(nlist["data"]["items"][0].value("type", 0u) == sxpe::resources::kNmap);
         auto ng2 = bus.execute("nmap.get", json{{"sessionId", mgid}});
         CHECK(ng2["ok"] == true);
         CHECK(ng2["data"]["entries"].size() == 2);

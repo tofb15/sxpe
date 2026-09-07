@@ -28,7 +28,7 @@ Machine-readable provenance for packages **SXPE itself merged**. Un-merge refuse
 }
 ```
 
-GUI drop-merge and `resource.importPackage --writeMergeManifest` write this after copying. Source DIR and SXMM rows are skipped (`dirPolicy: strip`). Duplicate NMAP TGIs concatenate name records instead of last-wins replace (see [nmap.md](nmap.md)).
+GUI drop-merge and `resource.importPackage --writeMergeManifest` write this after copying. Source DIR and SXMM rows are skipped (`dirPolicy: strip`). Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and the name map is moved to index 0 (see [nmap.md](nmap.md)).
 
 ## Un-merge
 

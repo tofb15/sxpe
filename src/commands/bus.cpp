@@ -413,6 +413,21 @@ VoidResult merge_nmap_from(Package& dest, std::uint32_t dest_i, const Package& s
     return dest.set_uncompressed(dest_i, *out, false);
 }
 
+VoidResult pin_nmap_front(Package& pkg) {
+    if (pkg.layout_locked()) {
+        return ok();
+    }
+    for (std::uint32_t i = 0; i < pkg.count(); ++i) {
+        if (pkg.entry(i).tgi.type == kNmap) {
+            if (i == 0) {
+                return ok();
+            }
+            return pkg.move(i, 0);
+        }
+    }
+    return ok();
+}
+
 Result<std::vector<std::byte>> payload_from_args(const json& args) {
     if (args.contains("payloadB64") && args["payloadB64"].is_string()) {
         const auto s = args["payloadB64"].get<std::string>();
@@ -632,8 +647,8 @@ std::vector<Tool> make_catalog() {
          env_out, false, true, false, true});
     add({"resource.importPackage", "Import package",
          "Copy resources from one or more TS3 packages. Pass path or paths[]. "
-         "Duplicate NMAP TGIs concatenate name records (s3pe merge). "
-         "writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge.",
+         "Duplicate NMAP TGIs concatenate name records and the name map is moved to index 0 "
+         "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
@@ -2085,6 +2100,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 if (auto addm = s.pkg.add(mt, mb, false); !addm) {
                     errors.push_back({{"message", addm.error().message}});
                 }
+            }
+        }
+        if (imported > 0) {
+            if (auto pin = pin_nmap_front(s.pkg); !pin) {
+                return envelope_err(pin.error());
             }
         }
         json out{{"imported", imported},
