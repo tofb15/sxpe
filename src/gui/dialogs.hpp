@@ -4,6 +4,9 @@
 #include <QDialog>
 #include <QString>
 
+#include <cstdint>
+#include <functional>
+
 class QWidget;
 
 namespace sxpe::gui {
@@ -34,5 +37,10 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
 void show_contents_dialog(QWidget* parent);
 void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
+/// Compare two packages via package.diff. open_hit opens a path and selects a resource.
+void show_package_diff_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus,
+    const std::function<void(const QString& path, std::uint32_t type, std::uint32_t group,
+                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit);
 
 }  // namespace sxpe::gui

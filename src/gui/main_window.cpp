@@ -203,6 +203,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* tools = menuBar()->addMenu(tr("&Tools"));
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
+    act(tools, tr("&Compare packages…"), {}, [this] { compare_packages(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -334,6 +335,23 @@ void MainWindow::unmerge_package() {
             tr("Wrote %1 package(s). Only SXPE-manifest merges can be un-merged.")
                 .arg(env["data"].value("packagesWritten", 0)));
     }
+}
+
+void MainWindow::compare_packages() {
+    show_package_diff_dialog(this, bus_, [this](const QString& path, std::uint32_t type,
+                                                std::uint32_t group, std::uint64_t instance,
+                                                std::uint32_t ordinal) {
+        if (!open_path(path, true)) {
+            return;
+        }
+        if (auto* t = current_tab()) {
+            if (!t->select_resource(type, group, instance, ordinal)) {
+                QMessageBox::information(this, tr("Compare packages"),
+                                         tr("Opened the package, but the resource was not found "
+                                            "in the index."));
+            }
+        }
+    });
 }
 
 void MainWindow::merge_dropped_packages(const QStringList& paths) {

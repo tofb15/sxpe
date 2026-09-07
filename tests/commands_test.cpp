@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 int main() {
@@ -858,9 +859,82 @@ int main() {
         bus.execute("package.close", json{{"sessionId", bad_id}});
     }
 
+    // Issue #22: package.diff — only-in-A / only-in-B / same-TGI different payload.
+    {
+        auto make_pkg = [&](const std::string& name, const std::vector<std::tuple<int, int, std::uint64_t, std::string>>& rows) {
+            auto created = bus.execute("package.new", json::object());
+            CHECK(created["ok"] == true);
+            const auto sid = created["data"]["sessionId"].get<std::string>();
+            for (const auto& [type, group, inst, payload] : rows) {
+                std::vector<std::byte> bytes(payload.size());
+                for (std::size_t i = 0; i < payload.size(); ++i) {
+                    bytes[i] = static_cast<std::byte>(payload[i]);
+                }
+                CHECK(bus.execute("resource.add",
+                                  json{{"sessionId", sid},
+                                       {"resourceId",
+                                        json{{"type", type}, {"group", group}, {"instance", inst}}},
+                                       {"payloadB64", b64(bytes)}})["ok"] == true);
+            }
+            const auto path = (tmp / name).string();
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", path}, {"force", true}})["ok"] ==
+                  true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            return path;
+        };
+        const auto path_a =
+            make_pkg("diff-a.package", {{1, 0, 10, "alpha"}, {2, 0, 20, "shared-old"}, {3, 0, 30, "only-a"}});
+        const auto path_b =
+            make_pkg("diff-b.package", {{1, 0, 10, "alpha"}, {2, 0, 20, "shared-new"}, {4, 0, 40, "only-b"}});
+
+        auto man = bus.execute("manifest", json::object());
+        bool saw_diff = false;
+        for (const auto& t : man["data"]["tools"]) {
+            if (t["name"] == "package.diff") {
+                saw_diff = true;
+                CHECK(t["annotations"]["readOnlyHint"] == true);
+                CHECK(t.contains("mcpName"));
+                CHECK(t["mcpName"] == "package_diff");
+            }
+        }
+        CHECK(saw_diff);
+
+        auto diff = bus.execute("package.diff", json{{"pathA", path_a}, {"pathB", path_b}});
+        CHECK(diff["ok"] == true);
+        const auto& d = diff["data"];
+        CHECK(d.value("hashAlgorithm", "") == "sha256-uncompressed");
+        CHECK(d.value("sameCount", 0u) == 1);
+        CHECK(d["onlyInA"].is_array());
+        CHECK(d["onlyInA"].size() == 1);
+        CHECK(d["onlyInA"][0].value("instance", 0ull) == 30);
+        CHECK(d["onlyInB"].is_array());
+        CHECK(d["onlyInB"].size() == 1);
+        CHECK(d["onlyInB"][0].value("instance", 0ull) == 40);
+        CHECK(d["different"].is_array());
+        CHECK(d["different"].size() == 1);
+        CHECK(d["different"][0].value("instance", 0ull) == 20);
+        CHECK(d["different"][0].contains("hashA"));
+        CHECK(d["different"][0].contains("hashB"));
+        CHECK(d["different"][0]["hashA"] != d["different"][0]["hashB"]);
+        CHECK(d.contains("summary"));
+        CHECK(d["summary"].is_array());
+        CHECK(!d["summary"].empty());
+        CHECK(d["summary"][0].get<std::string>().find("differences") != std::string::npos);
+
+        auto same = bus.execute("package.diff", json{{"pathA", path_a}, {"pathB", path_a}});
+        CHECK(same["ok"] == true);
+        CHECK(same["data"].value("sameCount", 0u) == 3);
+        CHECK(same["data"]["onlyInA"].empty());
+        CHECK(same["data"]["onlyInB"].empty());
+        CHECK(same["data"]["different"].empty());
+        CHECK(same["data"]["summary"][0].get<std::string>().find("match") != std::string::npos);
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;
     }
+
     return 0;
 }

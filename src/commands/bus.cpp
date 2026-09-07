@@ -1,5 +1,7 @@
 #include "sxpe/commands/bus.hpp"
 #include "sxpe/commands/validate_report.hpp"
+#include "sxpe/commands/package_diff_report.hpp"
+#include "sxpe/core/sha256.hpp"
 
 #include "sxpe/core/caps.hpp"
 #include "sxpe/games/sims3/fnv.hpp"
@@ -660,6 +662,15 @@ std::vector<Tool> make_catalog() {
          "and summary[] lines for CLI --format text / GUI.",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
+    add({"package.diff", "Compare packages",
+         "Diff two TS3 packages by TGI key (type, group, instance, ordinal). "
+         "Returns onlyInA[], onlyInB[], different[] (same key, different SHA-256 of uncompressed "
+         "payload), sameCount, and summary[] for CLI --format text / GUI. "
+         "Example: {\"pathA\":\"a.package\",\"pathB\":\"b.package\"}.",
+         obj_schema({{"pathA", {{"type", "string"}}},
+                     {"pathB", {{"type", "string"}}}},
+                    json::array({"pathA", "pathB"})),
+         env_out, true, false, true, true});
     add({"package.compact", "Compact", "Save dropping session-deleted resources.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
@@ -1358,6 +1369,171 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                {"openWorldHint", t.open_world}}}});
         }
         return envelope_ok({{"tools", tools}});
+    }
+    if (cmd == "package.diff") {
+        auto path_a = check_path(args.at("pathA").get<std::string>());
+        if (!path_a) {
+            return envelope_err(path_a.error());
+        }
+        auto path_b = check_path(args.at("pathB").get<std::string>());
+        if (!path_b) {
+            return envelope_err(path_b.error());
+        }
+        auto open_a = Package::open(*path_a, false);
+        if (!open_a) {
+            return envelope_err(open_a.error(), open_a.error().code == ErrorCode::io, "none");
+        }
+        auto open_b = Package::open(*path_b, false);
+        if (!open_b) {
+            return envelope_err(open_b.error(), open_b.error().code == ErrorCode::io, "none");
+        }
+        struct DiffKey {
+            std::uint32_t type{0};
+            std::uint32_t group{0};
+            std::uint64_t instance{0};
+            std::uint32_t ordinal{0};
+            bool operator==(const DiffKey&) const = default;
+            bool operator<(const DiffKey& o) const {
+                if (type != o.type) {
+                    return type < o.type;
+                }
+                if (group != o.group) {
+                    return group < o.group;
+                }
+                if (instance != o.instance) {
+                    return instance < o.instance;
+                }
+                return ordinal < o.ordinal;
+            }
+        };
+        struct DiffHash {
+            std::size_t operator()(const DiffKey& k) const noexcept {
+                std::size_t h = k.type;
+                h ^= static_cast<std::size_t>(k.group) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.ordinal) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.instance) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(k.instance >> 32) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+        struct SideInfo {
+            std::uint32_t index{0};
+            std::uint32_t mem_size{0};
+            std::uint16_t compressed{0};
+            std::string hash;
+            bool hash_ok{false};
+            std::string error;
+        };
+        auto index_side = [](Package& pkg) -> Result<std::unordered_map<DiffKey, SideInfo, DiffHash>> {
+            std::unordered_map<DiffKey, SideInfo, DiffHash> m;
+            m.reserve(pkg.count() * 2 + 1);
+            for (std::uint32_t i = 0; i < pkg.count(); ++i) {
+                const auto& e = pkg.entry(i);
+                DiffKey key{e.tgi.type, e.tgi.group, e.tgi.instance, e.ordinal};
+                SideInfo info;
+                info.index = i;
+                info.mem_size = e.mem_size;
+                info.compressed = e.compressed;
+                auto body = pkg.uncompressed(i);
+                if (!body) {
+                    info.hash_ok = false;
+                    info.error = body.error().message;
+                } else {
+                    info.hash = sxpe::core::sha256_hex(*body);
+                    info.hash_ok = true;
+                }
+                m[key] = std::move(info);
+            }
+            return m;
+        };
+        auto map_a = index_side(*open_a);
+        if (!map_a) {
+            return envelope_err(map_a.error());
+        }
+        auto map_b = index_side(*open_b);
+        if (!map_b) {
+            return envelope_err(map_b.error());
+        }
+        json only_a = json::array();
+        json only_b = json::array();
+        json different = json::array();
+        std::uint32_t same = 0;
+        std::vector<DiffKey> keys;
+        keys.reserve(map_a->size() + map_b->size());
+        for (const auto& [k, _] : *map_a) {
+            keys.push_back(k);
+        }
+        for (const auto& [k, _] : *map_b) {
+            if (!map_a->count(k)) {
+                keys.push_back(k);
+            }
+        }
+        std::sort(keys.begin(), keys.end());
+        for (const auto& k : keys) {
+            const auto ia = map_a->find(k);
+            const auto ib = map_b->find(k);
+            const bool in_a = ia != map_a->end();
+            const bool in_b = ib != map_b->end();
+            Tgi tgi{k.type, k.group, k.instance};
+            if (in_a && !in_b) {
+                auto row = rid_json(tgi, k.ordinal);
+                row["memSize"] = ia->second.mem_size;
+                row["compressed"] = ia->second.compressed != 0;
+                if (ia->second.hash_ok) {
+                    row["hash"] = ia->second.hash;
+                } else {
+                    row["error"] = ia->second.error;
+                }
+                only_a.push_back(std::move(row));
+                continue;
+            }
+            if (!in_a && in_b) {
+                auto row = rid_json(tgi, k.ordinal);
+                row["memSize"] = ib->second.mem_size;
+                row["compressed"] = ib->second.compressed != 0;
+                if (ib->second.hash_ok) {
+                    row["hash"] = ib->second.hash;
+                } else {
+                    row["error"] = ib->second.error;
+                }
+                only_b.push_back(std::move(row));
+                continue;
+            }
+            const auto& a = ia->second;
+            const auto& b = ib->second;
+            const bool both_ok = a.hash_ok && b.hash_ok;
+            if (both_ok && a.hash == b.hash) {
+                ++same;
+                continue;
+            }
+            auto row = rid_json(tgi, k.ordinal);
+            row["memSizeA"] = a.mem_size;
+            row["memSizeB"] = b.mem_size;
+            row["compressedA"] = a.compressed != 0;
+            row["compressedB"] = b.compressed != 0;
+            if (a.hash_ok) {
+                row["hashA"] = a.hash;
+            } else {
+                row["errorA"] = a.error;
+            }
+            if (b.hash_ok) {
+                row["hashB"] = b.hash;
+            } else {
+                row["errorB"] = b.error;
+            }
+            different.push_back(std::move(row));
+        }
+        json data{{"pathA", path_a->string()},
+                  {"pathB", path_b->string()},
+                  {"hashAlgorithm", "sha256-uncompressed"},
+                  {"countA", open_a->count()},
+                  {"countB", open_b->count()},
+                  {"sameCount", same},
+                  {"onlyInA", only_a},
+                  {"onlyInB", only_b},
+                  {"different", different}};
+        data["summary"] = package_diff_summary_json(data);
+        return envelope_ok(std::move(data));
     }
     if (cmd == "package.unmerge") {
         auto path = check_path(args.at("path").get<std::string>());

@@ -1,5 +1,6 @@
 #include "sxpe/commands/bus.hpp"
 #include "sxpe/commands/validate_report.hpp"
+#include "sxpe/commands/package_diff_report.hpp"
 
 #include <CLI11.hpp>
 #include <nlohmann/json.hpp>
@@ -190,6 +191,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
     std::cout << "  sxpe package info --package mod.package\n";
+    std::cout << "  sxpe package diff --path-a stock.package --path-b override.package\n";
     std::cout << "  sxpe resource list --package mod.package --limit 20\n";
     std::cout << "  sxpe resource export --package mod.package --type 0x0333406C --group 0 "
                  "--instance 0x1 --path out.xml --force\n";
@@ -361,9 +363,32 @@ void print_validate_text(const json& data) {
     }
 }
 
+void print_package_diff_text(const json& data) {
+    std::vector<std::string> lines;
+    if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+        for (const auto& line : data["summary"]) {
+            if (line.is_string()) {
+                lines.push_back(line.get<std::string>());
+            } else {
+                lines.push_back(line.dump());
+            }
+        }
+    } else {
+        lines = sxpe::commands::format_package_diff_summary(data);
+    }
+    for (const auto& line : lines) {
+        std::cout << line << '\n';
+    }
+}
+
 void print_object_text(const json& data) {
     if (data.contains("issues") && data.contains("dir") && data.contains("indexCount")) {
         print_validate_text(data);
+        return;
+    }
+    if (data.contains("onlyInA") && data.contains("onlyInB") && data.contains("different") &&
+        data.contains("hashAlgorithm")) {
+        print_package_diff_text(data);
         return;
     }
     for (auto it = data.begin(); it != data.end(); ++it) {
@@ -482,7 +507,8 @@ bool is_list(const std::string& id) {
 
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
-           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "help";
+           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "package.diff" ||
+           id == "help";
 }
 
 json make_resource_id(const std::string& type_s, const std::string& group_s,

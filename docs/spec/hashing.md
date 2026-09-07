@@ -67,3 +67,14 @@ Community filename:
 ## Synthetic vectors (FNV-1, lowercase ASCII `"a"`)
 
 Compute in tests when the codec lands. Known public: empty string FNV-1 32 = offset basis `0x811C9DC5`.
+
+## Package compare (`package.diff`)
+
+Payload equality for `package.diff` uses **SHA-256 of the uncompressed resource body**
+(after RefPack decompress when the index marks compression). On-disk compressed bytes are
+not compared, so recompression alone does not count as a difference. Keys are
+`type` + `group` + `instance` + `ordinal`.
+
+Alternative considered: size + compressed flag only — rejected because identical sizes can
+hide content changes. Documented choice: SHA-256 uncompressed.
+
