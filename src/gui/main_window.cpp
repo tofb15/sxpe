@@ -191,6 +191,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* editors = res->addMenu(tr("E&ditors"));
     act(editors, tr("&String table…"), {}, [this] { open_stbl(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
+    act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
     act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
@@ -202,6 +203,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* tools = menuBar()->addMenu(tr("&Tools"));
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
+    act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
             show_search_dialog(this, bus_, t->session_id());
@@ -316,6 +318,27 @@ void MainWindow::new_package() {
     add_tab(QString::fromStdString(env["data"]["sessionId"].get<std::string>()), tr("Untitled"));
 }
 
+void MainWindow::unmerge_package() {
+    const auto path = QFileDialog::getOpenFileName(this, tr("Un-merge package"), {},
+                                                   tr("Packages (*.package);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const auto dir = QFileDialog::getExistingDirectory(this, tr("Output folder"));
+    if (dir.isEmpty()) {
+        return;
+    }
+    auto env = run("package.unmerge", {{"path", path.toStdString()},
+                                       {"outDir", dir.toStdString()},
+                                       {"force", true}});
+    if (env.value("ok", false)) {
+        QMessageBox::information(
+            this, tr("Un-merge"),
+            tr("Wrote %1 package(s). Only SXPE-manifest merges can be un-merged.")
+                .arg(env["data"].value("packagesWritten", 0)));
+    }
+}
+
 void MainWindow::merge_dropped_packages(const QStringList& paths) {
     auto created = bus_.execute("package.new", nlohmann::json::object());
     if (!created.value("ok", false)) {
@@ -329,7 +352,10 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     }
     QApplication::setOverrideCursor(Qt::WaitCursor);
     auto env = bus_.execute("resource.importPackage",
-                            {{"sessionId", sid.toStdString()}, {"paths", arr}, {"force", true}});
+                            {{"sessionId", sid.toStdString()},
+                             {"paths", arr},
+                             {"force", true},
+                             {"writeMergeManifest", true}});
     QApplication::restoreOverrideCursor();
     if (!env.value("ok", false) || env["data"].value("imported", 0) == 0) {
         bus_.execute("package.close", {{"sessionId", sid.toStdString()}});
@@ -1087,6 +1113,27 @@ void MainWindow::open_stbl() {
     }
 }
 
+void MainWindow::import_s3sa() {
+    auto* t = current_tab();
+    if (!t) {
+        return;
+    }
+    const auto path = QFileDialog::getOpenFileName(this, tr("Import DLL into S3SA"), {},
+                                                   tr("DLL (*.dll);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    nlohmann::json args{{"sessionId", t->session_id().toStdString()},
+                        {"path", path.toStdString()},
+                        {"force", true}};
+    const auto* r = t->current();
+    if (r && r->type == sxpe::resources::kS3sa) {
+        args["resourceId"] = rid_json(*r);
+    }
+    run("s3sa.importDll", std::move(args));
+    t->reload();
+}
+
 void MainWindow::export_s3sa() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1313,6 +1360,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* editors = m.addMenu(tr("E&ditors"));
     auto* stbl = editors->addAction(tr("&String table…"), this, [this] { open_stbl(); });
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
+    auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
@@ -1320,6 +1368,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
+        s3sa_in->setEnabled(true);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));

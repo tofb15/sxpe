@@ -10,6 +10,7 @@
 #include <fstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -553,12 +554,84 @@ Result<std::uint32_t> Package::add(Tgi tgi, std::span<const std::byte> data, boo
     return idx;
 }
 
+
+VoidResult Package::set_raw(std::uint32_t i, std::span<const std::byte> disk, std::uint32_t mem_size,
+                            std::uint16_t compressed, std::uint16_t unknown2,
+                            bool file_size_high_bit) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    if (disk.size() > kMaxResourceBytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "resource size"));
+    }
+    if (compressed != 0 && compressed != 0xFFFF) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "compressed flag"));
+    }
+    if (compressed == 0 && mem_size != disk.size()) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "uncompressed mem_size"));
+    }
+    if (layout_locked() && disk.size() > entries_[i].payload_capacity) {
+        return std::unexpected(err(ErrorCode::cap_exceeded,
+                                   "resource is " + std::to_string(disk.size()) +
+                                       " bytes; in-place hole is " +
+                                       std::to_string(entries_[i].payload_capacity)));
+    }
+    overrides_[i] = std::vector<std::byte>(disk.begin(), disk.end());
+    if (!layout_locked()) {
+        entries_[i].compressed = compressed;
+        entries_[i].file_size = static_cast<std::uint32_t>(disk.size());
+        entries_[i].mem_size = mem_size;
+        entries_[i].unknown2 = unknown2;
+        entries_[i].file_size_high_bit = file_size_high_bit;
+    } else {
+        entries_[i].mem_size = mem_size;
+    }
+    dirty_ = true;
+    return ok();
+}
+
+Result<std::uint32_t> Package::add_raw(Tgi tgi, std::span<const std::byte> disk, std::uint32_t mem_size,
+                                       std::uint16_t compressed, std::uint16_t unknown2,
+                                       bool file_size_high_bit) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (entries_.size() >= kMaxIndexEntries) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "index entry cap"));
+    }
+    IndexEntry e;
+    e.tgi = tgi;
+    e.ordinal = 0;
+    for (const auto& x : entries_) {
+        if (x.tgi == tgi) {
+            ++e.ordinal;
+        }
+    }
+    entries_.push_back(e);
+    overrides_.push_back(std::nullopt);
+    deleted_.push_back(0);
+    const auto idx = static_cast<std::uint32_t>(entries_.size() - 1);
+    if (auto r = set_raw(idx, disk, mem_size, compressed, unknown2, file_size_high_bit); !r) {
+        entries_.pop_back();
+        overrides_.pop_back();
+        deleted_.pop_back();
+        return std::unexpected(r.error());
+    }
+    dirty_ = true;
+    return idx;
+}
+
 VoidResult Package::write_file(const std::filesystem::path& dest) const {
     // Keep package-index order. Do not sort by TGI, offset, or name.
     std::vector<std::byte> payloads;
     std::vector<IndexEntry> out_e;
     std::uint32_t off = kHeaderSize;
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        // TS3 DBPF 2.0 has no on-disk deleted bit (no trash index; CompressedFlags
+        // is 0 or 0xFFFF; group high byte is EP/product flags). Save omits the row.
         if (deleted(i)) {
             continue;
         }
@@ -811,6 +884,7 @@ VoidResult Package::set_deleted(std::uint32_t i, bool del) {
     if (i >= entries_.size()) {
         return std::unexpected(err(ErrorCode::not_found, "index"));
     }
+    // Session flag only. The game never stores this in the index; compact/save drops the row.
     deleted_[i] = del ? 1 : 0;
     dirty_ = true;
     return ok();
@@ -831,14 +905,40 @@ VoidResult Package::remove(std::uint32_t i) {
     return ok();
 }
 
-Result<std::uint32_t> Package::duplicate(std::uint32_t i) {
-    auto body = uncompressed(i);
-    if (!body) {
-        return std::unexpected(body.error());
+VoidResult Package::move(std::uint32_t from, std::uint32_t to) {
+    if (!writable_) {
+        return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
-    const auto tgi = entries_[i].tgi;
-    const bool compress = entries_[i].compressed == 0xFFFF;
-    return add(tgi, *body, compress);
+    if (layout_locked()) {
+        return std::unexpected(
+            err(ErrorCode::refused, "reordering resources is not supported when saving a neighborhood file"));
+    }
+    if (from >= entries_.size() || to >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    if (from == to) {
+        return ok();
+    }
+    auto rotate = [from, to](auto& v) {
+        auto val = std::move(v[from]);
+        v.erase(v.begin() + static_cast<std::ptrdiff_t>(from));
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(to), std::move(val));
+    };
+    rotate(entries_);
+    rotate(overrides_);
+    rotate(deleted_);
+    recompute_ordinals();
+    dirty_ = true;
+    return ok();
+}
+
+Result<std::uint32_t> Package::duplicate(std::uint32_t i) {
+    auto disk = payload_on_disk(i);
+    if (!disk) {
+        return std::unexpected(disk.error());
+    }
+    const auto& e = entries_[i];
+    return add_raw(e.tgi, *disk, e.mem_size, e.compressed, e.unknown2, e.file_size_high_bit);
 }
 
 VoidResult Package::rekey(std::uint32_t i, Tgi tgi) {

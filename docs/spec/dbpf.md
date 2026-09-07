@@ -38,4 +38,7 @@ Sources:
 
 ## TBC-game
 
-Confirm on `FullBuild0.package`: exact unknown fields, typical index position (EOF vs other).
+Confirmed 2026-09-07 on Steam `fallback.package`, `DeltaBuild_p20.package`, and `FullBuild0.package`
+(mmap in place; see [testing.md](../testing.md)). Header unknown blobs are **all zeros**. Index sits
+at EOF: `index_pos + index_size == file size` (FullBuild0: 1 024 703 221 + 3 268 068 = 1 027 971 289).
+Preserve zeros on round-trip; writers may emit zeros for File→New.

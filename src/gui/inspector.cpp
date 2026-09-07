@@ -496,14 +496,60 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         }
     }
 
+    if (pending_type_ == sxpe::resources::kObjk) {
+        auto info = bus_.execute("objk.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("OBJK version %1").arg(d.value("version", 0));
+            lines << tr("%1 components").arg(d.contains("components") ? d["components"].size() : 0);
+            if (d.contains("data")) {
+                for (const auto& row : d["data"]) {
+                    const auto key = QString::fromStdString(row.value("key", ""));
+                    if (row.contains("text")) {
+                        lines << key + QStringLiteral(" = ") +
+                                     QString::fromStdString(row.value("text", ""));
+                    } else {
+                        lines << key + QStringLiteral(" = ") +
+                                     QString::number(row.value("number", 0));
+                    }
+                }
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kVpxy) {
+        auto info = bus_.execute("vpxy.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("VPXY version %1").arg(d.value("version", 0));
+            lines << tr("%1 entries").arg(d.contains("entries") ? d["entries"].size() : 0);
+            if (d.value("modular", false)) {
+                lines << tr("Modular");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
     if (pending_type_ == sxpe::resources::kS3sa) {
         auto info = bus_.execute("s3sa.info", {{"sessionId", sid}, {"resourceId", rid}});
         if (info.value("ok", false)) {
             const auto& d = info["data"];
             QStringList lines;
             lines << tr("Size: %1 bytes").arg(d.value("size", 0));
+            if (d.value("parsed", false)) {
+                lines << tr("S3SA version %1").arg(d.value("version", 0));
+                lines << tr("Blocks: %1").arg(d.value("blockCount", 0));
+                lines << (d.value("keyTableZero", false) ? tr("Key table: zeros (community)")
+                                                         : tr("Key table: present"));
+                lines << tr("Assembly: %1 bytes").arg(d.value("assemblyBytes", 0));
+            }
             if (d.contains("peOffset")) {
-                lines << tr("PE (MZ) at offset %1").arg(d.value("peOffset", 0));
+                lines << tr("PE (MZ) at offset %1 (decrypted)").arg(d.value("peOffset", 0));
             } else {
                 lines << tr("No MZ signature found");
             }
@@ -511,6 +557,7 @@ void Inspector::load_preview(const nlohmann::json& rid) {
             if (!hint.isEmpty()) {
                 lines << tr("Module: %1").arg(hint);
             }
+            lines << tr("Import never LoadLibrarys this PE.");
             show_preview_body(lines.join(QLatin1Char('\n')));
             return;
         }

@@ -15,6 +15,10 @@
 #else
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace sxpe::core {
@@ -151,11 +155,6 @@ void MappedFile::close() {
 }
 
 #else
-
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writable) {
     MappedFile m;

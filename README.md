@@ -22,6 +22,8 @@ cmake --build --preset default
 ctest --preset default
 ```
 
+GitHub Actions (`.github/workflows/ci.yml`) runs Linux CLI/MCP without Qt, and a Windows job that installs Qt and runs `gui_smoke`. Optional local FullBuild/CC checks are not CI.
+
 On Windows with Visual Studio 2022/2026 (MSVC):
 
 ```text
@@ -64,5 +66,8 @@ Resource **Name** is the package name map (NMAP). `nmap.set` / `resource.rename`
 - `src/` — implementations
 - `tests/` — unit tests (synthetic fixtures only)
 - `fixtures/synthetic/` — invented DBPF/RefPack bytes (not game files)
+- `docs/testing.md` — optional local FullBuild/CC round-trip (`scripts/roundtrip.ps1`); gitignored paths only
 
 Do not commit game packages, custom-content, or other copyrighted binaries.
+
+Drop several `.package` files on the GUI to merge them; SXPE writes an `SXMM` manifest so **Tools → Un-merge package** can recreate the sources. Only SXPE-manifest merges are reversible.

@@ -32,6 +32,7 @@ private:
     PackageTab* current_tab() const;
     void add_tab(const QString& session_id, const QString& title);
     void merge_dropped_packages(const QStringList& paths);
+    void unmerge_package();
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);
@@ -71,6 +72,7 @@ private:
     void details_resource();
     void open_stbl();
     void export_s3sa();
+    void import_s3sa();
     void clip_export();
     void replace_dds();
     void replace_snap();

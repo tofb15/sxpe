@@ -21,9 +21,9 @@ Field order (bit 0 = LSB):
 | 2 | InstanceHi | uint32 | High 32 of instance |
 | 3 | InstanceLo | uint32 | Low 32; instance = `(hi << 32) \| lo` |
 | 4 | ChunkOffset | uint32 | Absolute offset of payload |
-| 5 | FileSize | uint32 | **Low 31 bits** = on-disk size; **high bit** Unknown1 **TBC-game** |
+| 5 | FileSize | uint32 | **Low 31 bits** = on-disk size; **high bit** set on every FullBuild0 / fallback / DeltaBuild_p20 row (102 127/102 127). Preserve on copy; writers may set it. |
 | 6 | MemSize | uint32 | Uncompressed size |
-| 7 | CompressedFlags | uint32 | Low 16 = compressed (`0x0000` or `0xFFFF`); high 16 = Unknown2 **TBC-game** |
+| 7 | CompressedFlags | uint32 | Low 16 = compressed (`0x0000` or `0xFFFF`); high 16 = `1` on every surveyed EA row (not a deleted flag). Preserve. |
 
 ## Writer (v1)
 
@@ -47,12 +47,19 @@ struct IndexEntry {
 
 ## Compressed
 
-- `compressed == 0` → payload is raw `mem_size` bytes (`file_size` should match, **TBC-game**).
+- `compressed == 0` → payload is raw `mem_size` bytes (`file_size & 0x7FFFFFFF == mem_size` on all 10 152 uncompressed FullBuild0 rows).
 - `compressed == 0xFFFF` → payload is RefPack; on-disk length = `file_size & 0x7FFFFFFF`; uncompressed = `mem_size`.
 
 ## Deleted
 
-Encoding **TBC-game** (group high byte vs `unknown2` vs hole). Until confirmed, SXPE may track a session flag without claiming on-disk encoding.
+TS3 DBPF **2.0 has no on-disk deleted bit**. Evidence (2026-09-07, in-place mmap; see [testing.md](../testing.md)):
+
+- No trash/hole index (header unknown3 is zeros; SimsTek: trash index is DBPF **&lt; 2.0** only).
+- CompressedFlags low 16 is only `0` or `0xFFFF` across 198 local packages + FullBuild0 (never `0xFFE0`).
+- Group high byte is **EP/product flags** (delta packs `p02`…`p20` use 8, 16, … 152 on every row), not a deleted flag. s3pi exposes this as EpFlags and returns only the low 24 bits as `ResourceGroup`.
+- s3pe’s `IsDeleted` is a **RAM flag**; save omits the index row (same as SXPE `write_file`).
+
+SXPE: `resource.setFlags deleted` is a session flag. `package.save` / `saveAs` / `compact` drop those rows. After reopen, `deletedCount` is 0 — the resource is gone, not struck through.
 
 ## Caps
 

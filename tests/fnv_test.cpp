@@ -23,6 +23,17 @@ int main() {
     CHECK(fnv1_32("Hello", true) == fnv1_32("HELLO", true));
     CHECK(fnv64_clip("walk") == fnv1_64("walk", true));
 
+    constexpr std::uint64_t kFrozenAWalk = 0x11a06ab91bca6bdeull;
+    constexpr std::uint64_t kFrozenTWalk = 0x95a06ab91bca6bdeull;
+    constexpr std::uint64_t kFrozenA2aSit = 0x3b27e4eac9eb9af8ull;  // a2a_sit, bit 63 clear
+    constexpr std::uint64_t kFrozenT2cSit = 0xbf24e4eac9eb9af8ull;
+    CHECK(fnv64_clip("a_walk") == kFrozenAWalk);
+    CHECK(fnv64_clip("A_WALK") == kFrozenAWalk);
+    CHECK(fnv64_clip("t_walk") == kFrozenTWalk);
+    CHECK(fnv64_clip("t_walk") != fnv64_clip("a_walk"));
+    CHECK(fnv64_clip("a2a_sit") == kFrozenA2aSit);
+    CHECK(fnv64_clip("t2c_sit") == kFrozenT2cSit);
+
     Tgi tgi{0x220557DA, 0, 1};
     CHECK(community_filename(tgi, "Hello", "stbl") ==
           "S3_220557DA_00000000_0000000000000001_Hello%%+stbl");

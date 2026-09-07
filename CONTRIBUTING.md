@@ -28,7 +28,9 @@ Do not commit:
 
 ## Tests
 
-CI uses **synthetic** fixtures. Optional local tests against a user-owned game directory stay gitignored.
+CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and a Windows job with Qt that runs
+`gui_smoke`. Synthetic fixtures only. Optional local FullBuild/CC round-trip: `docs/testing.md` and
+`scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
 
 ## Commands
 
@@ -36,7 +38,10 @@ Non-UI features ship on the command bus, CLI, and MCP in the **same** change.
 
 ## Libraries
 
-Do not reimplement JSON, CLI parsing, unit-test harnesses, DDS/BCn, XML, or TLS HTTP. Use the pins in `vcpkg.json` and DESIGN.md (nlohmann/json, CLI11, Catch2, spdlog, pugixml; Qt 6 and DirectXTex when those targets exist).
+Do not reimplement JSON or CLI parsing. CMake downloads nlohmann/json **v3.11.3** and CLI11 **v2.4.2**
+into the build `_vendor` dir (see `CMakeLists.txt`). `vcpkg.json` lists those same two ports for
+optional vcpkg users. Tests use `tests/check.hpp`. Qt 6 Widgets is optional via `find_package`.
+See [DESIGN.md](DESIGN.md).
 
 ## Safety
 

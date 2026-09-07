@@ -12,12 +12,13 @@ Related: [hashing.md](hashing.md) (FNV-1 64, lowercase), [tags.md](../tags.md), 
 
 | Surface | What it does |
 | --- | --- |
-| `s3sa.info` | Resource **size**, first `MZ` byte offset in the **raw** blob, NMAP name as `moduleHint` (else `assembly.dll`) |
-| `s3sa.exportDll` | Write bytes from that `MZ` to EOF (or the whole blob if no `MZ`) |
-| GUI Editors → Export S3SA as DLL | Same |
-| Preview tab | Size / PE offset / module hint |
-| Wrap / import / decrypt / version fields | **Missing** |
-| `resource.add` of a raw `.dll` as type `073FAA07` | **Wrong** — that is a PE, not an S3SA |
+| `s3sa.info` | Wrapper fields + decrypted PE offset / `assemblyBytes`. Never `LoadLibrary`. |
+| `s3sa.exportDll` | Decrypt, trim to PE file size, write the PE |
+| `s3sa.importDll` | Wrap PE as community v1; replace or add; NMAP name = filename |
+| `s3sa.wrap` | Stateless wrap for tests |
+| GUI Editors → Export / Import DLL | Same bus commands |
+| Preview tab | Version, zero-key, assembly size, MZ offset |
+| `resource.add` of a raw `.dll` as type `073FAA07` | **Wrong** — use `s3sa.importDll` |
 
 `exportDll` works for **community** blobs (zero XOR table → plaintext PE after a 135-byte v1 prologue). It is not a decoder. Encrypted or v2 resources, or a PE with no `MZ` in the wrapped bytes, export garbage or the wrapper.
 

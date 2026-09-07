@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(sxpe VERSION 0.4.0 LANGUAGES CXX)
+project(sxpe VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,6 +55,9 @@ add_library(sxpe_resources
     src/resources/nmap.cpp
     src/resources/dds.cpp
     src/resources/s3sa.cpp
+    src/resources/objk.cpp
+    src/resources/vpxy.cpp
+    src/resources/dir.cpp
 )
 target_link_libraries(sxpe_resources PUBLIC sxpe_games_sims3)
 
@@ -95,6 +98,15 @@ target_include_directories(sxpe_commands_test PRIVATE "${SXPE_VENDOR}")
 
 add_executable(sxpe_stbl_test tests/stbl_test.cpp)
 target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
+
+add_executable(sxpe_objk_vpxy_test tests/objk_vpxy_test.cpp)
+target_link_libraries(sxpe_objk_vpxy_test PRIVATE sxpe_resources)
+
+add_executable(sxpe_s3sa_test tests/s3sa_test.cpp)
+target_link_libraries(sxpe_s3sa_test PRIVATE sxpe_resources)
+
+add_executable(sxpe_dir_test tests/dir_test.cpp)
+target_link_libraries(sxpe_dir_test PRIVATE sxpe_resources)
 
 set(_sxpe_qt_hint "${CMAKE_CURRENT_SOURCE_DIR}/../qt/6.8.2/msvc2022_64")
 if(EXISTS "${_sxpe_qt_hint}/lib/cmake/Qt6/Qt6Config.cmake")
@@ -137,6 +149,9 @@ add_test(NAME refpack COMMAND sxpe_refpack_test)
 add_test(NAME fnv COMMAND sxpe_fnv_test)
 add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
+add_test(NAME objk_vpxy COMMAND sxpe_objk_vpxy_test)
+add_test(NAME s3sa COMMAND sxpe_s3sa_test)
+add_test(NAME dir COMMAND sxpe_dir_test)
 add_test(NAME cli_manifest COMMAND sxpe manifest --format json)
 add_test(NAME cli_hash COMMAND sxpe hash fnv --text a --width 32 --format json)
 add_test(NAME cli_list COMMAND sxpe resource list --package
