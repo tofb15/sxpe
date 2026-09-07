@@ -62,6 +62,8 @@ int main() {
     CHECK(info["ok"] == true);
     CHECK(info["data"]["game"] == "sims3");
     CHECK(info["data"]["indexCount"] == 0);
+    CHECK(info["data"].value("layoutLocked", true) == false);
+    CHECK(info["data"].value("pathKind", "") == "package");
 
     json rid{{"type", sxpe::resources::kStbl}, {"group", 0}, {"instance", 1}, {"ordinal", 0}};
     sxpe::resources::Stbl st;
@@ -1433,6 +1435,83 @@ int main() {
         CHECK(capped["data"].value("capReason", "") == "maxFiles");
     }
 
+
+
+    // Issue #27: neighborhood / world layout lock honesty (info + validate + refuse).
+    {
+        auto mk = bus.execute("package.new", json::object());
+        CHECK(mk["ok"] == true);
+        const auto lock_sid = mk["data"]["sessionId"].get<std::string>();
+        std::vector<std::byte> tiny{std::byte{'H'}, std::byte{'i'}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", lock_sid},
+                               {"resourceId", json{{"type", 1}, {"group", 2}, {"instance", 3}}},
+                               {"payloadB64", b64(tiny)}})["ok"] == true);
+        auto pkg_path = (tmp / "layout-lock-src.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", lock_sid}, {"path", pkg_path}, {"force", true}})["ok"] ==
+              true);
+        bus.execute("package.close", json{{"sessionId", lock_sid}});
+        auto nhd_path = (tmp / "layout-lock.nhd").string();
+        std::error_code ec;
+        std::filesystem::copy_file(pkg_path, nhd_path,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        CHECK(!ec);
+
+        auto opened = bus.execute("package.open", json{{"path", nhd_path}, {"writable", true}});
+        CHECK(opened["ok"] == true);
+        const auto nid = opened["data"]["sessionId"].get<std::string>();
+        auto ninfo = bus.execute("package.info", json{{"sessionId", nid}});
+        CHECK(ninfo["ok"] == true);
+        CHECK(ninfo["data"].value("layoutLocked", false) == true);
+        CHECK(ninfo["data"].value("pathKind", "") == "nhd");
+
+        auto val = bus.execute("package.validate", json{{"sessionId", nid}});
+        CHECK(val["ok"] == true);
+        CHECK(val["data"].value("layoutLocked", false) == true);
+        CHECK(val["data"].value("pathKind", "") == "nhd");
+        CHECK(val["data"].contains("summary"));
+        bool saw_lock = false;
+        for (const auto& line : val["data"]["summary"]) {
+            if (line.is_string() &&
+                line.get<std::string>().find("neighborhood / world layout lock") !=
+                    std::string::npos) {
+                saw_lock = true;
+            }
+        }
+        CHECK(saw_lock);
+
+        auto add_refused =
+            bus.execute("resource.add",
+                        json{{"sessionId", nid},
+                             {"resourceId", json{{"type", 9}, {"group", 9}, {"instance", 9}}},
+                             {"payloadB64", b64(tiny)}});
+        CHECK(add_refused["ok"] == false);
+        CHECK(add_refused["error"].value("message", std::string{})
+                  .find("neighborhood / world layout lock") != std::string::npos);
+
+        auto del_refused = bus.execute(
+            "resource.delete",
+            json{{"sessionId", nid},
+                 {"resourceId", json{{"type", 1}, {"group", 2}, {"instance", 3}, {"ordinal", 0}}}});
+        CHECK(del_refused["ok"] == false);
+        CHECK(del_refused["error"].value("message", std::string{})
+                  .find("neighborhood / world layout lock") != std::string::npos);
+
+        auto compact = bus.execute("package.compact", json{{"sessionId", nid}});
+        CHECK(compact["ok"] == false);
+        CHECK(compact["error"].value("message", std::string{})
+                  .find("neighborhood / world layout lock") != std::string::npos);
+
+        auto unlocked = bus.execute("package.open", json{{"path", pkg_path}});
+        CHECK(unlocked["ok"] == true);
+        const auto uid = unlocked["data"]["sessionId"].get<std::string>();
+        auto uinfo = bus.execute("package.info", json{{"sessionId", uid}});
+        CHECK(uinfo["data"].value("layoutLocked", true) == false);
+        CHECK(uinfo["data"].value("pathKind", "") == "package");
+        bus.execute("package.close", json{{"sessionId", uid}});
+        bus.execute("package.close", json{{"sessionId", nid}});
+    }
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";

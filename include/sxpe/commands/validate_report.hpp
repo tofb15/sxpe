@@ -27,12 +27,24 @@ inline std::string validate_issue_label(const std::string& code) {
 
 /// Shared text summary for CLI `--format text`, GUI Validate dialog, and MCP clients
 /// that print `data.summary` from `package.validate`.
+/// When `layout_locked` is true, names the neighborhood / world layout lock and what is safe.
 inline std::vector<std::string> format_validate_summary(bool valid, std::uint32_t index_count,
                                                         const nlohmann::json& dir,
-                                                        const nlohmann::json& issues) {
+                                                        const nlohmann::json& issues,
+                                                        bool layout_locked = false,
+                                                        const std::string& path_kind = {}) {
     std::vector<std::string> summary;
     summary.push_back(valid ? "Result: OK — no issues found." : "Result: issues found.");
     summary.push_back("Resources (index): " + std::to_string(index_count));
+    if (layout_locked) {
+        const std::string kind = path_kind.empty() ? "neighborhood" : path_kind;
+        summary.push_back("Layout: neighborhood / world layout lock (pathKind=" + kind + ")");
+        summary.push_back("  Safe: in-place payload replace within existing hole capacity");
+        summary.push_back(
+            "  Not supported: add, delete, reorder, compact, create NMAP (index layout changes)");
+    } else if (!path_kind.empty() && path_kind != "package") {
+        summary.push_back("pathKind: " + path_kind);
+    }
     if (!dir.is_object() || !dir.value("present", false)) {
         summary.push_back("DIR: not present");
     } else {
@@ -65,9 +77,12 @@ inline std::vector<std::string> format_validate_summary(bool valid, std::uint32_
 
 inline nlohmann::json validate_summary_json(bool valid, std::uint32_t index_count,
                                             const nlohmann::json& dir,
-                                            const nlohmann::json& issues) {
+                                            const nlohmann::json& issues,
+                                            bool layout_locked = false,
+                                            const std::string& path_kind = {}) {
     nlohmann::json arr = nlohmann::json::array();
-    for (const auto& line : format_validate_summary(valid, index_count, dir, issues)) {
+    for (const auto& line :
+         format_validate_summary(valid, index_count, dir, issues, layout_locked, path_kind)) {
         arr.push_back(line);
     }
     return arr;

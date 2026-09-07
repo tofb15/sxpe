@@ -21,8 +21,8 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.close` | n | n | |
 | `package.save` | n | y | unmap then ReplaceFile |
 | `package.saveAs` | n | y | |
-| `package.info` | y | n | |
-| `package.validate` | y | n | Returns `summary[]` for CLI `--format text` / GUI / MCP |
+| `package.info` | y | n | Includes `layoutLocked`, `pathKind` (nhd/world/dbc/package) |
+| `package.validate` | y | n | Returns `layoutLocked`, `pathKind`, `summary[]` (names neighborhood / world layout lock) |
 | `package.diff` | y | n | Compare two packages by TGI+ordinal; SHA-256 of uncompressed payload; `summary[]` |
 | `folder.scan` | y | n | Read-only recursive `*.package` hygiene; empty/corrupt/wrong-game + duplicate TGI sample; `summary[]` |
 | `resource.list` | y | n | `limit` default 100, `cursor` |

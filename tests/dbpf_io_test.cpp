@@ -243,6 +243,20 @@ int main() {
         auto w = Package::open(nhd, true);
         CHECK(w.has_value());
         if (w) {
+            CHECK(w->layout_locked());
+            CHECK(w->path_kind() == "nhd");
+            auto add_refused = w->add(Tgi{9, 9, 9}, std::as_bytes(std::span{"x", 1}), false);
+            CHECK(!add_refused);
+            if (!add_refused) {
+                CHECK(add_refused.error().message.find("neighborhood / world layout lock") !=
+                      std::string::npos);
+            }
+            auto move_refused = w->move(0, 0);
+            CHECK(!move_refused);
+            if (!move_refused) {
+                CHECK(move_refused.error().message.find("neighborhood / world layout lock") !=
+                      std::string::npos);
+            }
             const char hi[] = "Hi";
             auto payload = std::as_bytes(std::span{hi, sizeof(hi) - 1});
             CHECK(w->set_uncompressed(0, payload, false).has_value());

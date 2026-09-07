@@ -18,6 +18,7 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [preview.md](../preview.md) | Inspector preview inventory (what can be shown, difficulty, priority) |
 | [preview-wave2.md](preview-wave2.md) | Wave 2 OBJD/CASP/CLIP/RCOL layout assumptions |
 | [tags.md](../tags.md) | What each Tag means and what bytes the resource holds |
+| [neighborhood-layout.md](../neighborhood-layout.md) | `.nhd`/`.world`/`.dbc` layout lock: safe vs refused |
 
 **TBC-game:** confirm on a local Steam install (`FullBuild0.package`, mmap in place). Optional harness: [testing.md](../testing.md). Do not copy EA files into git.
 

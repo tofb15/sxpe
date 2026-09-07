@@ -139,10 +139,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(columns_menu_, &QMenu::aboutToShow, this, &MainWindow::rebuild_columns_menu);
 
     auto* res = menuBar()->addMenu(tr("&Resource"));
-    act(res, tr("&Add…"), QKeySequence(Qt::CTRL | Qt::Key_I), [this] { add_resource(); });
+    add_resource_act_ =
+        act(res, tr("&Add…"), QKeySequence(Qt::CTRL | Qt::Key_I), [this] { add_resource(); });
     act(res, tr("&Copy"), QKeySequence::Copy, [this] { copy_resources(); });
-    act(res, tr("&Paste"), QKeySequence::Paste, [this] { paste_resources(); });
-    act(res, tr("&Duplicate"), QKeySequence(Qt::CTRL | Qt::Key_D), [this] { duplicate_resource(); });
+    paste_resource_act_ =
+        act(res, tr("&Paste"), QKeySequence::Paste, [this] { paste_resources(); });
+    duplicate_resource_act_ = act(res, tr("&Duplicate"), QKeySequence(Qt::CTRL | Qt::Key_D),
+                                  [this] { duplicate_resource(); });
     act(res, tr("&Replace…"), {}, [this] { replace_resource(); });
     res->addSeparator();
     compressed_act_ = res->addAction(tr("&Compressed"));
@@ -160,7 +163,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     act(res, tr("Copy resource &key"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C),
         [this] { copy_resource_key(); });
-    auto* imp = res->addMenu(tr("&Import"));
+    import_menu_ = res->addMenu(tr("&Import"));
+    auto* imp = import_menu_;
     act(imp, tr("From &file…"), {}, [this] { import_files(); });
     act(imp, tr("From &package(s)…"), {}, [this] {
         if (auto* t = current_tab()) {
@@ -200,8 +204,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("Export &VID…"), {}, [this] { export_vid(); });
     act(res, tr("Open in &hex editor"), {}, [this] { open_external(true); });
     act(res, tr("Open in te&xt editor"), {}, [this] { open_external(false); });
-    act(res, tr("&Delete"), QKeySequence::Delete, [this] { delete_resource(); });
-    connect(res, &QMenu::aboutToShow, this, &MainWindow::sync_flag_actions);
+    delete_resource_act_ =
+        act(res, tr("&Delete"), QKeySequence::Delete, [this] { delete_resource(); });
+    connect(res, &QMenu::aboutToShow, this, [this] {
+        sync_flag_actions();
+        sync_layout_lock_actions();
+    });
 
     auto* tools = menuBar()->addMenu(tr("&Tools"));
     act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
@@ -220,7 +228,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             show_validate_dialog(this, env);
         }
     });
-    act(tools, tr("&Compact / save"), {}, [this] {
+    compact_act_ = act(tools, tr("&Compact / save"), {}, [this] {
         if (auto* t = current_tab()) {
             run("package.compact", {{"sessionId", t->session_id().toStdString()}});
             t->reload();
@@ -281,8 +289,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(help, tr("&Licence"), {}, [this] { show_licence(); });
 
     status_path_ = new QLabel(tr("No package"));
+    status_layout_ = new QLabel;
+    status_layout_->setVisible(false);
+    status_layout_->setStyleSheet(
+        QStringLiteral("QLabel { padding: 1px 6px; border-radius: 3px; "
+                       "background: #5c4a1f; color: #ffe9a8; font-weight: 600; }"));
     status_counts_ = new QLabel;
     statusBar()->addWidget(status_path_, 1);
+    statusBar()->addPermanentWidget(status_layout_);
     statusBar()->addPermanentWidget(status_counts_);
 
     plugins_.scan();
@@ -704,14 +718,19 @@ void MainWindow::update_status() {
     auto* t = current_tab();
     if (!t) {
         status_path_->setText(tr("No package"));
+        status_layout_->clear();
+        status_layout_->setVisible(false);
+        status_layout_->setToolTip({});
         status_counts_->clear();
         setWindowTitle(tr("SXPE"));
         setWindowModified(false);
+        sync_layout_lock_actions();
         return;
     }
     refresh_tab_chrome(t);
     auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
     if (!info.value("ok", false)) {
+        sync_layout_lock_actions();
         return;
     }
     const auto& d = info["data"];
@@ -723,9 +742,23 @@ void MainWindow::update_status() {
         path += " *";
     }
     status_path_->setText(path);
+    const bool locked = d.value("layoutLocked", false);
+    if (locked) {
+        const auto kind = QString::fromStdString(d.value("pathKind", std::string("neighborhood")));
+        status_layout_->setText(tr("Layout lock (%1)").arg(kind));
+        status_layout_->setToolTip(
+            tr("Neighborhood / world layout lock: only in-place payload replace within "
+               "existing hole capacity. Add, delete, reorder, and compact are refused."));
+        status_layout_->setVisible(true);
+    } else {
+        status_layout_->clear();
+        status_layout_->setVisible(false);
+        status_layout_->setToolTip({});
+    }
     status_counts_->setText(tr("%1 shown / %2 in package")
                                 .arg(t->visible_count())
                                 .arg(d.value("indexCount", 0)));
+    sync_layout_lock_actions();
 }
 
 void MainWindow::run_palette() {
@@ -1403,7 +1436,7 @@ void MainWindow::sync_flag_actions() {
         compressed_act_->setChecked(r && r->compressed);
     }
     if (deleted_act_) {
-        deleted_act_->setEnabled(r != nullptr);
+        deleted_act_->setEnabled(r != nullptr && !current_layout_locked());
         deleted_act_->setChecked(r && r->deleted);
     }
     if (nmap_editor_act_) {
@@ -1425,14 +1458,59 @@ void MainWindow::sync_flag_actions() {
     }
 }
 
+bool MainWindow::current_layout_locked() {
+    auto* t = current_tab();
+    if (!t) {
+        return false;
+    }
+    auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
+    return info.value("ok", false) && info["data"].value("layoutLocked", false);
+}
+
+void MainWindow::sync_layout_lock_actions() {
+    const bool locked = current_layout_locked();
+    const bool allow_mutate_layout = !locked;
+    if (add_resource_act_) {
+        add_resource_act_->setEnabled(allow_mutate_layout);
+        add_resource_act_->setToolTip(
+            locked ? tr("Neighborhood / world layout lock: adding resources is not supported")
+                   : QString());
+    }
+    if (paste_resource_act_) {
+        paste_resource_act_->setEnabled(allow_mutate_layout);
+    }
+    if (duplicate_resource_act_) {
+        duplicate_resource_act_->setEnabled(allow_mutate_layout);
+    }
+    if (delete_resource_act_) {
+        delete_resource_act_->setEnabled(allow_mutate_layout);
+        delete_resource_act_->setToolTip(
+            locked ? tr("Neighborhood / world layout lock: deleting resources is not supported")
+                   : QString());
+    }
+    if (deleted_act_) {
+        const auto* r = current_tab() ? current_tab()->current() : nullptr;
+        deleted_act_->setEnabled(r != nullptr && allow_mutate_layout);
+    }
+    if (import_menu_) {
+        import_menu_->setEnabled(allow_mutate_layout);
+    }
+    if (compact_act_) {
+        compact_act_->setEnabled(allow_mutate_layout);
+        compact_act_->setToolTip(
+            locked ? tr("Neighborhood / world layout lock: compact is not supported") : QString());
+    }
+}
+
 void MainWindow::show_resource_context(const QPoint& global) {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
+    const bool locked = current_layout_locked();
     QMenu m(this);
-    m.addAction(tr("&Add…"), this, [this] { add_resource(); });
+    m.addAction(tr("&Add…"), this, [this] { add_resource(); })->setEnabled(!locked);
     m.addAction(tr("&Copy"), this, [this] { copy_resources(); });
-    m.addAction(tr("&Paste"), this, [this] { paste_resources(); });
-    m.addAction(tr("&Duplicate"), this, [this] { duplicate_resource(); });
+    m.addAction(tr("&Paste"), this, [this] { paste_resources(); })->setEnabled(!locked);
+    m.addAction(tr("&Duplicate"), this, [this] { duplicate_resource(); })->setEnabled(!locked);
     m.addAction(tr("&Replace…"), this, [this] { replace_resource(); });
     m.addSeparator();
     auto* cmp = m.addAction(tr("&Compressed"));
@@ -1442,7 +1520,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     connect(cmp, &QAction::triggered, this, [this](bool on) { set_compressed(on); });
     auto* del = m.addAction(tr("De&leted flag"));
     del->setCheckable(true);
-    del->setEnabled(r != nullptr);
+    del->setEnabled(r != nullptr && !locked);
     del->setChecked(r && r->deleted);
     connect(del, &QAction::triggered, this, [this](bool on) { set_deleted(on); });
     m.addAction(tr("D&etails…"), this, [this] { details_resource(); });
@@ -1454,6 +1532,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     });
     m.addAction(tr("Copy resource &key"), this, [this] { copy_resource_key(); });
     auto* imp = m.addMenu(tr("&Import"));
+    imp->setEnabled(!locked);
     imp->addAction(tr("From &file…"), this, [this] { import_files(); });
     imp->addAction(tr("From &package(s)…"), this, [this] {
         if (auto* tab = current_tab()) {
@@ -1512,7 +1591,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addAction(tr("Find &references…"), this, [this] { find_refs(); })->setEnabled(r != nullptr);
     m.addAction(tr("Open in &hex editor"), this, [this] { open_external(true); });
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });
-    m.addAction(tr("&Delete"), this, [this] { delete_resource(); });
+    m.addAction(tr("&Delete"), this, [this] { delete_resource(); })->setEnabled(!locked);
     m.exec(global);
 }
 
