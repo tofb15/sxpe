@@ -503,6 +503,11 @@ void Inspector::load_preview(const nlohmann::json& rid) {
             QStringList lines;
             lines << tr("OBJK version %1").arg(d.value("version", 0));
             lines << tr("%1 components").arg(d.contains("components") ? d["components"].size() : 0);
+            if (d.contains("components")) {
+                for (const auto& c : d["components"]) {
+                    lines << QStringLiteral("  component %1").arg(hex32(c.get<std::uint32_t>()));
+                }
+            }
             if (d.contains("data")) {
                 for (const auto& row : d["data"]) {
                     const auto key = QString::fromStdString(row.value("key", ""));
@@ -515,6 +520,8 @@ void Inspector::load_preview(const nlohmann::json& rid) {
                     }
                 }
             }
+            lines << tr("Visibility %1").arg(d.value("visibility", 0));
+            lines << tr("TGI count %1").arg(d.value("tgiCount", 0));
             show_preview_body(lines.join(QLatin1Char('\n')));
             return;
         }
@@ -527,8 +534,181 @@ void Inspector::load_preview(const nlohmann::json& rid) {
             QStringList lines;
             lines << tr("VPXY version %1").arg(d.value("version", 0));
             lines << tr("%1 entries").arg(d.contains("entries") ? d["entries"].size() : 0);
+            if (d.contains("entries")) {
+                int i = 0;
+                for (const auto& e : d["entries"]) {
+                    lines << tr("  [%1] type %2 id %3")
+                                 .arg(i++)
+                                 .arg(e.value("type", 0))
+                                 .arg(e.value("id", 0));
+                }
+            }
+            if (d.contains("bbox") && d["bbox"].is_array() && d["bbox"].size() == 6) {
+                lines << tr("BBox %1,%2,%3 .. %4,%5,%6")
+                             .arg(d["bbox"][0].get<double>())
+                             .arg(d["bbox"][1].get<double>())
+                             .arg(d["bbox"][2].get<double>())
+                             .arg(d["bbox"][3].get<double>())
+                             .arg(d["bbox"][4].get<double>())
+                             .arg(d["bbox"][5].get<double>());
+            }
             if (d.value("modular", false)) {
                 lines << tr("Modular");
+            }
+            lines << tr("TGI count %1").arg(d.value("tgiCount", 0));
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kObjd) {
+        auto info = bus_.execute("objd.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("OBJD version %1 (common %2)")
+                         .arg(d.value("version", 0))
+                         .arg(d.value("commonVersion", 0));
+            lines << tr("Name GUID %1").arg(hex64(d.value("nameGuid", 0ull)));
+            lines << tr("Desc GUID %1").arg(hex64(d.value("descGuid", 0ull)));
+            const auto iname = QString::fromStdString(d.value("internalName", std::string()));
+            if (!iname.isEmpty()) {
+                lines << tr("Internal name: %1").arg(iname);
+            }
+            const auto inst = QString::fromStdString(d.value("instanceName", std::string()));
+            if (!inst.isEmpty()) {
+                lines << tr("Instance: %1").arg(inst);
+            }
+            lines << tr("Price %1").arg(d.value("price", 0.0));
+            lines << tr("Thumb IID %1").arg(hex64(d.value("thumbIid", 0ull)));
+            if (d.value("partial", false)) {
+                lines << tr("(partial parse)");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kCasp) {
+        auto info = bus_.execute("casp.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("CASP version %1").arg(d.value("version", 0));
+            const auto name = QString::fromStdString(d.value("name", std::string()));
+            if (!name.isEmpty()) {
+                lines << tr("Name: %1").arg(name);
+            }
+            const auto ctn = QString::fromStdString(d.value("clothingTypeName", std::string()));
+            lines << tr("Clothing type %1%2")
+                         .arg(d.value("clothingType", 0))
+                         .arg(ctn.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(ctn));
+            QStringList ages;
+            if (d.contains("ages")) {
+                for (const auto& a : d["ages"]) {
+                    ages << QString::fromStdString(a.get<std::string>());
+                }
+            }
+            lines << tr("Ages: %1").arg(ages.isEmpty() ? tr("(none)") : ages.join(QLatin1String(", ")));
+            const auto spn = QString::fromStdString(d.value("speciesName", std::string()));
+            lines << tr("Species %1%2")
+                         .arg(d.value("species", 0))
+                         .arg(spn.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(spn));
+            QStringList genders;
+            if (d.contains("genders")) {
+                for (const auto& g : d["genders"]) {
+                    genders << QString::fromStdString(g.get<std::string>());
+                }
+            }
+            lines << tr("Gender: %1")
+                         .arg(genders.isEmpty() ? tr("(none)") : genders.join(QLatin1String(", ")));
+            lines << tr("Category flags 0x%1")
+                         .arg(d.value("clothingCategory", 0u), 8, 16, QLatin1Char('0'));
+            if (d.value("partial", false)) {
+                lines << tr("(partial parse — public layout best-effort)");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kClip) {
+        auto info = bus_.execute("clip.info", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("CLIP version %1").arg(d.value("version", 0));
+            lines << tr("Duration %1 s (%2 frames × %3)")
+                         .arg(d.value("durationSeconds", 0.0), 0, 'f', 3)
+                         .arg(d.value("frameCount", 0))
+                         .arg(d.value("frameDuration", 0.0), 0, 'f', 6);
+            const auto anim = QString::fromStdString(d.value("animName", std::string()));
+            if (!anim.isEmpty()) {
+                lines << tr("Anim: %1").arg(anim);
+            }
+            const auto src = QString::fromStdString(d.value("sourceFile", std::string()));
+            if (!src.isEmpty()) {
+                lines << tr("Source: %1").arg(src);
+            }
+            const auto actor = QString::fromStdString(d.value("actorName", std::string()));
+            if (!actor.isEmpty()) {
+                lines << tr("Actor: %1").arg(actor);
+            }
+            lines << tr("%1 tracks").arg(d.value("trackCount", 0));
+            if (d.contains("trackHashes")) {
+                int n = 0;
+                for (const auto& h : d["trackHashes"]) {
+                    if (n++ >= 12) {
+                        lines << QChar(0x2026);
+                        break;
+                    }
+                    lines << QStringLiteral("  hash %1").arg(hex32(h.get<std::uint32_t>()));
+                }
+            }
+            if (d.value("partial", false)) {
+                lines << tr("(partial parse)");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
+    if (pending_type_ == sxpe::resources::kModl || pending_type_ == sxpe::resources::kMlod ||
+        pending_type_ == sxpe::resources::kGeom) {
+        auto info = bus_.execute("rcol.summary", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("RCOL version %1").arg(d.value("version", 0));
+            lines << tr("%1 internal / %2 external")
+                         .arg(d.value("internalCount", 0))
+                         .arg(d.value("externalCount", 0));
+            if (d.value("lodGroups", 0) > 0) {
+                lines << tr("LOD groups %1").arg(d.value("lodGroups", 0));
+            }
+            if (d.value("totalVertices", 0) > 0 || d.value("totalFaces", 0) > 0) {
+                lines << tr("Vertices %1 / faces %2")
+                             .arg(d.value("totalVertices", 0))
+                             .arg(d.value("totalFaces", 0));
+            }
+            if (d.contains("chunks")) {
+                for (const auto& ch : d["chunks"]) {
+                    const auto tag = QString::fromStdString(ch.value("tag", std::string()));
+                    QString row = tag.isEmpty() ? hex32(ch.value("type", 0u)) : tag;
+                    row += QStringLiteral("  %1 B").arg(ch.value("size", 0));
+                    if (ch.value("groupCount", 0) > 0) {
+                        row += tr("  groups %1").arg(ch.value("groupCount", 0));
+                    }
+                    if (ch.value("vertexCount", 0) > 0 || ch.value("faceCount", 0) > 0) {
+                        row += tr("  v%1/f%2")
+                                   .arg(ch.value("vertexCount", 0))
+                                   .arg(ch.value("faceCount", 0));
+                    }
+                    lines << row;
+                }
+            }
+            if (d.value("partial", false)) {
+                lines << tr("(partial parse)");
             }
             show_preview_body(lines.join(QLatin1Char('\n')));
             return;

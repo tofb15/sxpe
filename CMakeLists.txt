@@ -57,6 +57,10 @@ add_library(sxpe_resources
     src/resources/s3sa.cpp
     src/resources/objk.cpp
     src/resources/vpxy.cpp
+    src/resources/objd.cpp
+    src/resources/casp.cpp
+    src/resources/clip.cpp
+    src/resources/rcol.cpp
     src/resources/dir.cpp
 )
 target_link_libraries(sxpe_resources PUBLIC sxpe_games_sims3)
@@ -101,6 +105,9 @@ target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
 
 add_executable(sxpe_objk_vpxy_test tests/objk_vpxy_test.cpp)
 target_link_libraries(sxpe_objk_vpxy_test PRIVATE sxpe_resources)
+
+add_executable(sxpe_preview_wave2_test tests/preview_wave2_test.cpp)
+target_link_libraries(sxpe_preview_wave2_test PRIVATE sxpe_resources)
 
 add_executable(sxpe_s3sa_test tests/s3sa_test.cpp)
 target_link_libraries(sxpe_s3sa_test PRIVATE sxpe_resources)
@@ -150,6 +157,7 @@ add_test(NAME fnv COMMAND sxpe_fnv_test)
 add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
 add_test(NAME objk_vpxy COMMAND sxpe_objk_vpxy_test)
+add_test(NAME preview_wave2 COMMAND sxpe_preview_wave2_test)
 add_test(NAME s3sa COMMAND sxpe_s3sa_test)
 add_test(NAME dir COMMAND sxpe_dir_test)
 add_test(NAME cli_manifest COMMAND sxpe manifest --format json)
