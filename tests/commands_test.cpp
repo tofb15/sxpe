@@ -617,6 +617,74 @@ int main() {
         bus.execute("package.close", json{{"sessionId", cid}});
     }
 
+    // Duplicate NMAP TGI must concatenate names, not last-wins replace.
+    {
+        auto nmap_tgi = json{{"type", sxpe::resources::kNmap}, {"group", 0}, {"instance", 0}};
+        auto make_named = [&](const std::string& sid, std::uint32_t type, std::uint64_t inst,
+                              const std::string& name, const std::string& path) {
+            json rid{{"type", type}, {"group", 0}, {"instance", inst}};
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId", rid},
+                                   {"payloadB64", b64(*raw)}})["ok"] == true);
+            sxpe::resources::Nmap nm;
+            nm.version = 1;
+            nm.entries.push_back({inst, name});
+            auto body = sxpe::resources::write_nmap(nm);
+            CHECK(body.has_value());
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId", nmap_tgi},
+                                   {"payloadB64", b64(*body)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", path}, {"force", true}})["ok"] ==
+                  true);
+        };
+        auto pa = bus.execute("package.new", json::object());
+        auto pb = bus.execute("package.new", json::object());
+        CHECK(pa["ok"] == true && pb["ok"] == true);
+        const auto paid = pa["data"]["sessionId"].get<std::string>();
+        const auto pbid = pb["data"]["sessionId"].get<std::string>();
+        auto na_path = (tmp / "nmap-a.package").string();
+        auto nb_path = (tmp / "nmap-b.package").string();
+        make_named(paid, 1, 0x111, "AlphaMesh", na_path);
+        make_named(pbid, 2, 0x222, "BetaMesh", nb_path);
+        bus.execute("package.close", json{{"sessionId", paid}});
+        bus.execute("package.close", json{{"sessionId", pbid}});
+
+        auto mg = bus.execute("package.new", json::object());
+        CHECK(mg["ok"] == true);
+        const auto mgid = mg["data"]["sessionId"].get<std::string>();
+        auto nimp = bus.execute("resource.importPackage",
+                                json{{"sessionId", mgid},
+                                     {"paths", json::array({na_path, nb_path})},
+                                     {"writeMergeManifest", true}});
+        CHECK(nimp["ok"] == true);
+        auto nlist = bus.execute("resource.list", json{{"sessionId", mgid}, {"limit", 20}});
+        CHECK(nlist["ok"] == true);
+        bool saw_alpha = false;
+        bool saw_beta = false;
+        std::uint32_t nmap_rows = 0;
+        for (const auto& it : nlist["data"]["items"]) {
+            if (it.value("type", 0u) == sxpe::resources::kNmap) {
+                ++nmap_rows;
+            }
+            if (it.value("instance", 0ull) == 0x111 && it.value("name", "") == "AlphaMesh") {
+                saw_alpha = true;
+            }
+            if (it.value("instance", 0ull) == 0x222 && it.value("name", "") == "BetaMesh") {
+                saw_beta = true;
+            }
+        }
+        CHECK(nmap_rows == 1);
+        CHECK(saw_alpha);
+        CHECK(saw_beta);
+        auto ng2 = bus.execute("nmap.get", json{{"sessionId", mgid}});
+        CHECK(ng2["ok"] == true);
+        CHECK(ng2["data"]["entries"].size() == 2);
+        bus.execute("package.close", json{{"sessionId", mgid}});
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;
