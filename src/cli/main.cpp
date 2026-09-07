@@ -364,8 +364,9 @@ void print_validate_text(const json& data) {
     } else {
         const json dir = data.value("dir", json::object());
         const json issues = data.value("issues", json::array());
-        lines = sxpe::commands::format_validate_summary(data.value("ok", false),
-                                                       data.value("indexCount", 0u), dir, issues);
+        lines = sxpe::commands::format_validate_summary(
+            data.value("ok", false), data.value("indexCount", 0u), dir, issues,
+            data.value("layoutLocked", false), data.value("pathKind", std::string{}));
     }
     for (const auto& line : lines) {
         std::cout << line << '\n';

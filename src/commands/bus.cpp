@@ -562,7 +562,7 @@ Result<std::uint32_t> ensure_nmap_index(Package& pkg) {
     }
     if (pkg.layout_locked()) {
         return std::unexpected(err(ErrorCode::refused,
-                                   "this neighborhood file has no name map and cannot gain one"));
+                                   "neighborhood / world layout lock: this file has no name map and cannot gain one"));
     }
     sxpe::resources::Nmap blank;
     blank.version = 1;
@@ -641,7 +641,8 @@ std::vector<Tool> make_catalog() {
          true, false});
     add({"package.save", "Save",
          "Write this session to its current path (in place). Neighborhood .nhd/.world/.dbc "
-         "keep on-disk layout. Does not save other open packages.",
+         "are layout-locked: only in-place payload replace within hole capacity; "
+         "add/delete/reorder/compact are refused. Does not save other open packages.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
     add({"package.saveAs", "Save As",
@@ -660,12 +661,15 @@ std::vector<Tool> make_catalog() {
                      {"force", force_prop()}},
                     json::array({"sessionId", "path"})),
          env_out, false, false, false, true});
-    add({"package.info", "Package info", "Header summary for a session.",
+    add({"package.info", "Package info",
+         "Header summary for a session. Includes layoutLocked and pathKind "
+         "(nhd|world|dbc|package). Neighborhood .nhd/.world/.dbc are layout-locked.",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
     add({"package.validate", "Validate",
          "Sniff + DIR cross-checks on an open session. Returns ok, issues[], indexCount, dir{}, "
-         "and summary[] lines for CLI --format text / GUI.",
+         "layoutLocked, pathKind, and summary[] lines for CLI --format text / GUI "
+         "(summary names neighborhood / world layout lock when locked).",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
     add({"package.diff", "Compare packages",
@@ -1320,6 +1324,7 @@ struct Bus::Impl {
     }
 
     json info(Session& s) {
+        const bool locked = s.pkg.layout_locked();
         return {{"sessionId", s.id},
                 {"path", s.pkg.path().string()},
                 {"readWrite", s.pkg.writable()},
@@ -1333,6 +1338,8 @@ struct Bus::Impl {
                 {"deletedCount", s.pkg.deleted_count()},
                 {"dirPresent", s.pkg.dir_present()},
                 {"mappedBytes", s.pkg.mapped_bytes()},
+                {"layoutLocked", locked},
+                {"pathKind", s.pkg.path_kind()},
                 {"game", "sims3"}};
     }
 
@@ -2230,16 +2237,21 @@ json Bus::Impl::exec(std::string_view id, json args) {
             break;
         }
         const bool valid = issues.empty();
+        const bool locked = s.pkg.layout_locked();
+        const auto kind = s.pkg.path_kind();
         return envelope_ok({{"ok", valid},
                             {"issues", issues},
                             {"indexCount", s.pkg.count()},
                             {"dir", dir},
-                            {"summary", validate_summary_json(valid, s.pkg.count(), dir, issues)}});
+                            {"layoutLocked", locked},
+                            {"pathKind", kind},
+                            {"summary", validate_summary_json(valid, s.pkg.count(), dir, issues,
+                                                              locked, kind)}});
     }
     if (cmd == "package.save" || cmd == "package.compact") {
         if (cmd == "package.compact" && neighborhood_file(s.pkg.path())) {
             return envelope_err(err(ErrorCode::refused,
-                                    "compact rebuilds the file; not supported for .nhd/.world/.dbc"));
+                                    "neighborhood / world layout lock: compact rebuilds the file and is not supported for .nhd/.world/.dbc"));
         }
         if (dry(args)) {
             return envelope_ok({{"dryRun", true}, {"path", s.pkg.path().string()}});

@@ -88,6 +88,8 @@ private:
     void organise_bookmarks();
     void show_resource_context(const QPoint& global);
     void sync_flag_actions();
+    void sync_layout_lock_actions();
+    [[nodiscard]] bool current_layout_locked();
     void open_external(bool hex);
     void show_licence();
     void show_warranty();
@@ -99,12 +101,19 @@ private:
     PluginHost plugins_;
     QTabWidget* tabs_{};
     QLabel* status_path_{};
+    QLabel* status_layout_{};
     QLabel* status_counts_{};
     QMenu* mru_menu_{};
     QMenu* bookmarks_menu_{};
     QMenu* columns_menu_{};
+    QAction* add_resource_act_{};
+    QAction* paste_resource_act_{};
+    QAction* duplicate_resource_act_{};
+    QAction* delete_resource_act_{};
     QAction* compressed_act_{};
     QAction* deleted_act_{};
+    QAction* compact_act_{};
+    QMenu* import_menu_{};
     QAction* preview_dds_act_{};
     QAction* preview_text_act_{};
     QAction* preview_hex_act_{};

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace sxpe::games::sims3 {
@@ -84,6 +85,8 @@ public:
     [[nodiscard]] std::uint64_t mapped_bytes() const { return map_.size(); }
     /// Neighborhood .nhd/.world/.dbc: in-place holes only; cannot add index rows.
     [[nodiscard]] bool layout_locked() const;
+    /// Extension kind: "nhd" | "world" | "dbc" | "package".
+    [[nodiscard]] std::string path_kind() const;
 
 private:
     Package() = default;

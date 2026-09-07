@@ -529,6 +529,10 @@ Result<std::uint32_t> Package::add(Tgi tgi, std::span<const std::byte> data, boo
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
+    if (layout_locked()) {
+        return std::unexpected(err(ErrorCode::refused,
+                                   "neighborhood / world layout lock: adding resources is not supported"));
+    }
     if (entries_.size() >= kMaxIndexEntries) {
         return std::unexpected(err(ErrorCode::cap_exceeded, "index entry cap"));
     }
@@ -598,6 +602,10 @@ Result<std::uint32_t> Package::add_raw(Tgi tgi, std::span<const std::byte> disk,
                                        bool file_size_high_bit) {
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (layout_locked()) {
+        return std::unexpected(err(ErrorCode::refused,
+                                   "neighborhood / world layout lock: adding resources is not supported"));
     }
     if (entries_.size() >= kMaxIndexEntries) {
         return std::unexpected(err(ErrorCode::cap_exceeded, "index entry cap"));
@@ -689,6 +697,23 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
 
 bool Package::layout_locked() const { return neighborhood_path(path_); }
 
+std::string Package::path_kind() const {
+    auto e = path_.extension().string();
+    for (char& c : e) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (e == ".nhd") {
+        return "nhd";
+    }
+    if (e == ".world") {
+        return "world";
+    }
+    if (e == ".dbc") {
+        return "dbc";
+    }
+    return "package";
+}
+
 VoidResult Package::flush_layout() {
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
@@ -699,13 +724,13 @@ VoidResult Package::flush_layout() {
     }
     if (entries_.size() != original_count_) {
         return std::unexpected(err(ErrorCode::refused,
-                                   "adding resources is not supported when saving a neighborhood file"));
+                                   "neighborhood / world layout lock: adding resources is not supported"));
     }
     std::vector<DiskWrite> writes;
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
         if (deleted(i)) {
             return std::unexpected(
-                err(ErrorCode::refused, "deleting resources is not supported when saving a neighborhood file"));
+                err(ErrorCode::refused, "neighborhood / world layout lock: deleting resources is not supported"));
         }
         if (!overrides_[i]) {
             continue;
@@ -881,6 +906,11 @@ VoidResult Package::set_deleted(std::uint32_t i, bool del) {
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
     }
+    if (layout_locked() && del) {
+        return std::unexpected(err(
+            ErrorCode::refused,
+            "neighborhood / world layout lock: deleting resources is not supported"));
+    }
     if (i >= entries_.size()) {
         return std::unexpected(err(ErrorCode::not_found, "index"));
     }
@@ -893,6 +923,10 @@ VoidResult Package::set_deleted(std::uint32_t i, bool del) {
 VoidResult Package::remove(std::uint32_t i) {
     if (!writable_) {
         return std::unexpected(err(ErrorCode::refused, "read-only"));
+    }
+    if (layout_locked()) {
+        return std::unexpected(err(ErrorCode::refused,
+                                   "neighborhood / world layout lock: deleting resources is not supported"));
     }
     if (i >= entries_.size()) {
         return std::unexpected(err(ErrorCode::not_found, "index"));
@@ -911,7 +945,7 @@ VoidResult Package::move(std::uint32_t from, std::uint32_t to) {
     }
     if (layout_locked()) {
         return std::unexpected(
-            err(ErrorCode::refused, "reordering resources is not supported when saving a neighborhood file"));
+            err(ErrorCode::refused, "neighborhood / world layout lock: reordering resources is not supported"));
     }
     if (from >= entries_.size() || to >= entries_.size()) {
         return std::unexpected(err(ErrorCode::not_found, "index"));
