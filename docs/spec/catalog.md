@@ -31,6 +31,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `resource.delete` | n | y | |
 | `resource.setFlags` | n | y | `deleted` is session-only; save omits the row |
 | `stbl.get` / `stbl.set` | | | |
+| `nmap.get` / `nmap.list` / `nmap.set` / `nmap.delete` / `nmap.replace` | y / y / n / n / n | n / n / y / y / y | Name map; replace = one undo batch |
 | `xml.get` / `xml.set` | y / n | n / y | `_XML`/`ITUN`; UTF-8/UTF-16 sniff; cap 4 MiB |
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |

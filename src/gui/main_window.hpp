@@ -72,6 +72,7 @@ private:
     void duplicate_resource();
     void details_resource();
     void open_stbl();
+    void open_nmap();
     void open_xml();
     void export_s3sa();
     void import_s3sa();
@@ -106,6 +107,7 @@ private:
     QAction* preview_text_act_{};
     QAction* preview_hex_act_{};
     QAction* dbc_checkpoint_act_{};
+    QAction* nmap_editor_act_{};
     QStringList mru_;
     QStringList bookmarks_;
 };
