@@ -57,6 +57,7 @@ add_library(sxpe_resources
     src/resources/s3sa.cpp
     src/resources/objk.cpp
     src/resources/vpxy.cpp
+    src/resources/dir.cpp
 )
 target_link_libraries(sxpe_resources PUBLIC sxpe_games_sims3)
 
@@ -104,6 +105,9 @@ target_link_libraries(sxpe_objk_vpxy_test PRIVATE sxpe_resources)
 add_executable(sxpe_s3sa_test tests/s3sa_test.cpp)
 target_link_libraries(sxpe_s3sa_test PRIVATE sxpe_resources)
 
+add_executable(sxpe_dir_test tests/dir_test.cpp)
+target_link_libraries(sxpe_dir_test PRIVATE sxpe_resources)
+
 set(_sxpe_qt_hint "${CMAKE_CURRENT_SOURCE_DIR}/../qt/6.8.2/msvc2022_64")
 if(EXISTS "${_sxpe_qt_hint}/lib/cmake/Qt6/Qt6Config.cmake")
     list(PREPEND CMAKE_PREFIX_PATH "${_sxpe_qt_hint}")
@@ -147,6 +151,7 @@ add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
 add_test(NAME objk_vpxy COMMAND sxpe_objk_vpxy_test)
 add_test(NAME s3sa COMMAND sxpe_s3sa_test)
+add_test(NAME dir COMMAND sxpe_dir_test)
 add_test(NAME cli_manifest COMMAND sxpe manifest --format json)
 add_test(NAME cli_hash COMMAND sxpe hash fnv --text a --width 32 --format json)
 add_test(NAME cli_list COMMAND sxpe resource list --package

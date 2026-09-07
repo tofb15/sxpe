@@ -150,6 +150,7 @@ These are **buy-mode definitions**: name/description GUIDs (into STBL), price, f
 
 | Tag | Type ids | What the bytes are |
 | --- | --- | --- |
+| **DIR** | `E86B1EEF` | **Compression directory.** Optional list of TGI + uncompressed size. EA TS3 packages omit it (MemSize is already in the index). 20-byte records. |
 | **S3SA** | `073FAA07` | **Script assembly.** .NET DLL (PE) wrapped for the game. `s3sa.importDll` / `exportDll` wrap and decrypt community v1. Never load it with `LoadLibrary`. |
 | **_XML** | `0333406C` | **XML resource.** Tuning, instantiator doors (`kInstantiator`), snippets. UTF-8 or UTF-16, often with a BOM. |
 | **ITUN** | `03B33DDF` | **Interaction tuning.** XML for autonomy, ads, pie-menu (TTAB-like). |
