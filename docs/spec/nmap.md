@@ -28,3 +28,16 @@ Read for display; rewrite when renaming resources if we own the NMAP. Do not inv
 - Duplicate instance ids are kept as extra rows; the Name column uses last-wins (`name_index`).
 - After import the (single) NMAP row is moved to package index 0, matching s3pe merge order. SXMM stays at the end.
 - SXMM stores each source's original name table (`nameMap`). `package.unmerge` writes that table back into the child; it does not copy the concatenated merge NMAP.
+
+## Editor (CLI / MCP / GUI)
+
+| id | notes |
+| --- | --- |
+| `nmap.get` / `nmap.list` | Raw rows; `duplicates[]` with `effectiveName` (last-wins, same as Name column) |
+| `nmap.set` | One instance; updates last matching row when duplicates exist |
+| `nmap.delete` | Remove all rows for an instance |
+| `nmap.replace` | Replace entire table in **one** write / one undo — batch editor save |
+
+GUI: **Resource → Editors → Name map…** (enabled when an NMAP is selected or the package has an NMAP). Edit multiple names, search, add/delete rows, save once via `nmap.replace`.
+
+CLI: `sxpe nmap list|set|delete|replace`. Optional `--entries '[{instance,name},…]'` for replace.

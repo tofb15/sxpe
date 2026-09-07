@@ -34,6 +34,21 @@ int main() {
         CHECK(n2.has_value() && lookup_name(*n2, 0xABC) == "MeshLOD");
     }
 
+    // Duplicate instance rows: display / lookup is last-wins (Name column policy).
+    Nmap dup;
+    dup.entries.push_back({0x111, "First"});
+    dup.entries.push_back({0x222, "Only"});
+    dup.entries.push_back({0x111, "LastWins"});
+    CHECK(lookup_name(dup, 0x111) == "LastWins");
+    CHECK(lookup_name(dup, 0x222) == "Only");
+    auto dups = nmap_duplicates(dup);
+    CHECK(dups.size() == 1);
+    if (!dups.empty()) {
+        CHECK(dups[0].instance == 0x111);
+        CHECK(dups[0].count == 2);
+        CHECK(dups[0].effective_name == "LastWins");
+    }
+
     std::vector<std::byte> px(4);
     px[0] = std::byte{0};
     px[1] = std::byte{0};

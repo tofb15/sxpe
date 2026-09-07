@@ -190,6 +190,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     res->addSeparator();
     auto* editors = res->addMenu(tr("E&ditors"));
     act(editors, tr("&String table…"), {}, [this] { open_stbl(); });
+    nmap_editor_act_ = editors->addAction(tr("&Name map…"), this, [this] { open_nmap(); });
     act(editors, tr("&XML…"), {}, [this] { open_xml(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
@@ -1129,6 +1130,42 @@ void MainWindow::open_stbl() {
     }
 }
 
+void MainWindow::open_nmap() {
+    auto* t = current_tab();
+    if (!t) {
+        return;
+    }
+    const auto* r = t->current();
+    nlohmann::json rid;
+    const nlohmann::json* rid_ptr = nullptr;
+    if (r && r->type == sxpe::resources::kNmap) {
+        rid = rid_json(*r);
+        rid_ptr = &rid;
+    } else {
+        // Prefer package NMAP when another row is selected (or none).
+        auto listed = bus_.execute(
+            "resource.list",
+            {{"sessionId", t->session_id().toStdString()},
+             {"filter", {{"tag", "NMAP"}}},
+             {"limit", 1}});
+        if (!listed.value("ok", false) || !listed["data"].contains("items") ||
+            listed["data"]["items"].empty()) {
+            QMessageBox::information(this, tr("SXPE"),
+                                     tr("This package has no name map (NMAP)."));
+            return;
+        }
+        const auto& it = listed["data"]["items"][0];
+        rid = {{"type", it.value("type", 0u)},
+               {"group", it.value("group", 0u)},
+               {"instance", it.value("instance", 0ull)},
+               {"ordinal", it.value("ordinal", 0u)}};
+        rid_ptr = &rid;
+    }
+    if (show_nmap_editor(this, bus_, t->session_id(), rid_ptr)) {
+        t->reload();
+    }
+}
+
 void MainWindow::open_xml() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1335,6 +1372,23 @@ void MainWindow::sync_flag_actions() {
         deleted_act_->setEnabled(r != nullptr);
         deleted_act_->setChecked(r && r->deleted);
     }
+    if (nmap_editor_act_) {
+        bool enable = false;
+        if (t) {
+            if (r && r->type == sxpe::resources::kNmap) {
+                enable = true;
+            } else {
+                auto listed = bus_.execute(
+                    "resource.list",
+                    {{"sessionId", t->session_id().toStdString()},
+                     {"filter", {{"tag", "NMAP"}}},
+                     {"limit", 1}});
+                enable = listed.value("ok", false) && listed["data"].contains("items") &&
+                         !listed["data"]["items"].empty();
+            }
+        }
+        nmap_editor_act_->setEnabled(enable);
+    }
 }
 
 void MainWindow::show_resource_context(const QPoint& global) {
@@ -1386,6 +1440,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addSeparator();
     auto* editors = m.addMenu(tr("E&ditors"));
     auto* stbl = editors->addAction(tr("&String table…"), this, [this] { open_stbl(); });
+    auto* nmap = editors->addAction(tr("&Name map…"), this, [this] { open_nmap(); });
     auto* xml = editors->addAction(tr("&XML…"), this, [this] { open_xml(); });
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
@@ -1393,6 +1448,17 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
     editors->addAction(tr("Export &VID…"), this, [this] { export_vid(); });
+    bool has_nmap = false;
+    if (t) {
+        auto listed = bus_.execute(
+            "resource.list",
+            {{"sessionId", t->session_id().toStdString()},
+             {"filter", {{"tag", "NMAP"}}},
+             {"limit", 1}});
+        has_nmap = listed.value("ok", false) && listed["data"].contains("items") &&
+                   !listed["data"]["items"].empty();
+    }
+    nmap->setEnabled((r && r->type == sxpe::resources::kNmap) || has_nmap);
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
         xml->setEnabled(r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun);
@@ -1401,6 +1467,13 @@ void MainWindow::show_resource_context(const QPoint& global) {
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));
+    } else {
+        stbl->setEnabled(false);
+        xml->setEnabled(false);
+        s3sa->setEnabled(false);
+        clip->setEnabled(false);
+        dds->setEnabled(false);
+        snap->setEnabled(false);
     }
     m.addAction(tr("Open in &hex editor"), this, [this] { open_external(true); });
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });

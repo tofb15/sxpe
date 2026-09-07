@@ -199,7 +199,10 @@ void print_global_help(const Bus& bus) {
                  "--instance 0 --path nmap.bin --force\n";
     std::cout << "  sxpe resource rename --package door.package --type 0x0333406C --group 0 "
                  "--instance 0x1 --name NRaas.NoCD --force\n";
+    std::cout << "  sxpe nmap list --package mod.package\n";
     std::cout << "  sxpe nmap set --package mod.package --instance 0x1 --name NRaas.NoCD --force\n";
+    std::cout << "  sxpe nmap delete --package mod.package --instance 0x1 --force\n";
+    std::cout << "  sxpe nmap replace --package mod.package --entries '[{\"instance\":1,\"name\":\"Door\"}]' --force\n";
     std::cout << "  sxpe xml get --package mod.package --type 0x0333406C --group 0 --instance 0x1\n";
     std::cout << "  sxpe xml set --package mod.package --type 0x0333406C --group 0 --instance 0x1 --text '<root/>' --force\n";
     std::cout << "  sxpe package new --package new.package --force\n";
@@ -504,7 +507,7 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "stbl.get" || id == "nmap.get" || id == "xml.get";
+           id == "search.bytes" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get";
 }
 
 bool skip_oneshot_open(const std::string& id) {

@@ -31,6 +31,8 @@
 
 #include <algorithm>
 #include <span>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace sxpe::gui {
 
@@ -357,6 +359,167 @@ bool show_stbl_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
         dlg.accept();
     });
     dlg.resize(640, 420);
+    return dlg.exec() == QDialog::Accepted;
+}
+
+
+bool show_nmap_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      const nlohmann::json* resource_id) {
+    nlohmann::json args{{"sessionId", session.toStdString()}};
+    if (resource_id) {
+        args["resourceId"] = *resource_id;
+    }
+    auto got = bus.execute("nmap.get", args);
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(
+            parent, QObject::tr("SXPE"),
+            QString::fromStdString(got.contains("error")
+                                       ? got["error"].value("message", "No name map (NMAP).")
+                                       : "No name map (NMAP)."));
+        return false;
+    }
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Name map"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* warn = new QLabel;
+    warn->setWordWrap(true);
+    warn->setStyleSheet(QStringLiteral("color: #a60;"));
+    auto refresh_warn = [warn](const nlohmann::json& dups) {
+        if (!dups.is_array() || dups.empty()) {
+            warn->setText(QObject::tr(
+                "Duplicate instance rows are kept after merge concat; the Name column uses "
+                "last-wins."));
+            return;
+        }
+        QStringList bits;
+        for (const auto& d : dups) {
+            bits << QObject::tr("%1× %2 → “%3”")
+                        .arg(d.value("count", 0u))
+                        .arg(QString("%1").arg(d.value("instance", 0ull), 16, 16, QLatin1Char('0')).toUpper())
+                        .arg(QString::fromStdString(d.value("effectiveName", "")));
+        }
+        warn->setText(QObject::tr("Warning: duplicate instance rows (display last-wins): %1")
+                          .arg(bits.join(QStringLiteral("; "))));
+    };
+    refresh_warn(got["data"].value("duplicates", nlohmann::json::array()));
+    lay->addWidget(warn);
+
+    auto* search = new QLineEdit;
+    search->setPlaceholderText(QObject::tr("Search instance or name…"));
+    lay->addWidget(search);
+
+    auto* table = new QTableWidget(0, 2);
+    table->setHorizontalHeaderLabels({QObject::tr("Instance (hex)"), QObject::tr("Name")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    auto fill_row = [](QTableWidget* table, int row, std::uint64_t inst, const QString& name) {
+        table->setItem(row, 0,
+                       new QTableWidgetItem(QString("%1").arg(inst, 16, 16, QLatin1Char('0')).toUpper()));
+        table->setItem(row, 1, new QTableWidgetItem(name));
+    };
+    for (const auto& e : got["data"]["entries"]) {
+        const int row = table->rowCount();
+        table->insertRow(row);
+        fill_row(table, row, e.value("instance", 0ull),
+                 QString::fromStdString(e.value("name", "")));
+    }
+    auto recompute_dups = [table, refresh_warn] {
+        nlohmann::json entries = nlohmann::json::array();
+        for (int row = 0; row < table->rowCount(); ++row) {
+            const auto inst_s = table->item(row, 0) ? table->item(row, 0)->text() : QString();
+            const auto name = table->item(row, 1) ? table->item(row, 1)->text() : QString();
+            entries.push_back({{"instance", inst_s.toULongLong(nullptr, 16)},
+                               {"name", name.toStdString()}});
+        }
+        // Local last-wins duplicate scan (same policy as nmap_duplicates).
+        std::unordered_map<std::uint64_t, std::uint32_t> counts;
+        std::unordered_map<std::uint64_t, std::string> last;
+        for (const auto& e : entries) {
+            const auto inst = e.value("instance", 0ull);
+            counts[inst] += 1;
+            last.insert_or_assign(inst, e.value("name", ""));
+        }
+        nlohmann::json dups = nlohmann::json::array();
+        std::unordered_set<std::uint64_t> seen;
+        for (const auto& e : entries) {
+            const auto inst = e.value("instance", 0ull);
+            if (counts[inst] < 2 || !seen.insert(inst).second) {
+                continue;
+            }
+            dups.push_back({{"instance", inst},
+                            {"count", counts[inst]},
+                            {"effectiveName", last[inst]}});
+        }
+        refresh_warn(dups);
+    };
+    QObject::connect(table, &QTableWidget::itemChanged, &dlg, [recompute_dups](QTableWidgetItem*) {
+        recompute_dups();
+    });
+
+    auto apply_filter = [table, search] {
+        const auto q = search->text().trimmed().toLower();
+        for (int row = 0; row < table->rowCount(); ++row) {
+            if (q.isEmpty()) {
+                table->setRowHidden(row, false);
+                continue;
+            }
+            const auto a = table->item(row, 0) ? table->item(row, 0)->text().toLower() : QString();
+            const auto b = table->item(row, 1) ? table->item(row, 1)->text().toLower() : QString();
+            table->setRowHidden(row, !(a.contains(q) || b.contains(q)));
+        }
+    };
+    QObject::connect(search, &QLineEdit::textChanged, &dlg, [apply_filter](const QString&) {
+        apply_filter();
+    });
+
+    auto* btns = new QHBoxLayout;
+    auto* add = new QPushButton(QObject::tr("Add"));
+    auto* del = new QPushButton(QObject::tr("Delete"));
+    btns->addWidget(add);
+    btns->addWidget(del);
+    btns->addStretch();
+    QObject::connect(add, &QPushButton::clicked, &dlg, [table, recompute_dups, apply_filter] {
+        const int row = table->rowCount();
+        table->insertRow(row);
+        table->setItem(row, 0, new QTableWidgetItem(QStringLiteral("0000000000000000")));
+        table->setItem(row, 1, new QTableWidgetItem());
+        recompute_dups();
+        apply_filter();
+    });
+    QObject::connect(del, &QPushButton::clicked, &dlg, [table, recompute_dups] {
+        const int row = table->currentRow();
+        if (row >= 0) {
+            table->removeRow(row);
+            recompute_dups();
+        }
+    });
+    lay->addLayout(btns);
+    lay->addWidget(table, 1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        nlohmann::json entries = nlohmann::json::array();
+        for (int row = 0; row < table->rowCount(); ++row) {
+            const auto inst_s = table->item(row, 0) ? table->item(row, 0)->text() : QString();
+            const auto name = table->item(row, 1) ? table->item(row, 1)->text() : QString();
+            entries.push_back({{"instance", inst_s.toULongLong(nullptr, 16)},
+                               {"name", name.toStdString()}});
+        }
+        nlohmann::json save{{"sessionId", session.toStdString()}, {"entries", entries}};
+        if (resource_id) {
+            save["resourceId"] = *resource_id;
+        }
+        auto env = bus.execute("nmap.replace", save);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(720, 480);
     return dlg.exec() == QDialog::Accepted;
 }
 
@@ -729,7 +892,7 @@ void show_contents_dialog(QWidget* parent) {
         "column cannot be hidden.</p>"
         "<h3>Resource</h3>"
         "<p>Add, copy, paste, duplicate, replace; compression and deleted flags; details; "
-        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, XML/ITUN, S3SA DLL, "
+        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, Name map/NMAP, XML/ITUN, S3SA DLL, "
         "CLIP, DDS, SNAP PNG, VID); open in hex/text editor; delete.</p>"
         "<ul>"
         "<li><b>Add…</b> — Ctrl+I</li>"

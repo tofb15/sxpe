@@ -846,19 +846,51 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId", "id"})),
          env_out, false, true, false, false});
     add({"nmap.get", "NMAP get",
-         "Merged name-map entries. These strings are the Name column on resource.list.",
+         "Name-map rows (instance↔name). Optional resourceId selects one NMAP; otherwise "
+         "all NMAP resources are concatenated. duplicates[] lists instance ids that appear "
+         "more than once; effectiveName is last-wins (same as the Name column).",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId"})),
+         env_out, true, false, true, false});
+    add({"nmap.list", "NMAP list",
+         "Alias of nmap.get for CLI (sxpe nmap list).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId"})),
          env_out, true, false, true, false});
     add({"nmap.set", "NMAP set",
          "Set the display name for an instance (the Name column). Creates a name map "
-         "if the package has none. Prefer resource.rename when you have a resourceId.",
+         "if the package has none. Prefer resource.rename when you have a resourceId. "
+         "Updates the last matching row when duplicates exist (last-wins).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"instance", {{"type", "integer"}}},
                      {"name", {{"type", "string"}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "instance", "name"})),
+         env_out, false, true, false, false});
+    add({"nmap.delete", "NMAP delete",
+         "Remove all name-map rows for an instance id. dryRun available.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"instance", {{"type", "integer"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "instance"})),
+         env_out, false, true, false, false});
+    add({"nmap.replace", "NMAP replace",
+         "Replace the entire name map in one write (one undo). Pass entries as "
+         "[{instance,name},…]. Creates a name map if needed. Prefer this for batch edits.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"entries",
+                      {{"type", "array"},
+                       {"items",
+                        {{"type", "object"},
+                         {"properties",
+                          {{"instance", {{"type", "integer"}}},
+                           {"name", {{"type", "string"}}}}},
+                         {"required", json::array({"instance", "name"})}}}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "entries"})),
          env_out, false, true, false, false});
     add({"resource.rename", "Rename resource",
          "Set the NMAP display name for a resource (creates a name map if needed). "
@@ -2590,13 +2622,173 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return envelope_ok({{"count", t->entries.size()}});
     }
-    if (cmd == "nmap.get") {
+    if (cmd == "nmap.get" || cmd == "nmap.list") {
+        sxpe::resources::Nmap names;
+        if (args.contains("resourceId")) {
+            auto i = need_idx();
+            if (!i) {
+                return envelope_err(i.error());
+            }
+            if (s.pkg.entry(*i).tgi.type != kNmap) {
+                return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not an NMAP"));
+            }
+            auto body = s.pkg.uncompressed(*i);
+            if (!body) {
+                return envelope_err(body.error());
+            }
+            auto n = sxpe::resources::parse_nmap(*body);
+            if (!n) {
+                return envelope_err(n.error());
+            }
+            names = std::move(*n);
+        } else {
+            names = load_nmap(s.pkg);
+        }
         json arr = json::array();
-        auto names = load_nmap(s.pkg);
         for (const auto& e : names.entries) {
             arr.push_back({{"instance", e.instance}, {"name", e.name}});
         }
-        return envelope_ok({{"entries", arr}});
+        json dups = json::array();
+        for (const auto& d : sxpe::resources::nmap_duplicates(names)) {
+            dups.push_back({{"instance", d.instance},
+                            {"count", d.count},
+                            {"effectiveName", d.effective_name}});
+        }
+        return envelope_ok({{"entries", arr},
+                            {"duplicates", dups},
+                            {"duplicatePolicy", "last-wins"}});
+    }
+    if (cmd == "nmap.replace") {
+        if (!args.contains("entries") || !args["entries"].is_array()) {
+            return envelope_err(err(ErrorCode::invalid_argument, "entries must be an array"));
+        }
+        if (args["entries"].size() > sxpe::core::caps::kMaxTableEntries) {
+            return envelope_err(err(ErrorCode::cap_exceeded, "nmap count"));
+        }
+        std::optional<std::uint32_t> ni;
+        if (args.contains("resourceId")) {
+            auto i = need_idx();
+            if (!i) {
+                return envelope_err(i.error());
+            }
+            if (s.pkg.entry(*i).tgi.type != kNmap) {
+                return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not an NMAP"));
+            }
+            ni = *i;
+        } else {
+            bool have = false;
+            for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
+                if (s.pkg.entry(i).tgi.type == kNmap) {
+                    have = true;
+                    break;
+                }
+            }
+            if (!have && dry(args)) {
+                return envelope_ok({{"dryRun", true},
+                                    {"count", args["entries"].size()},
+                                    {"wouldCreateMap", true}});
+            }
+            auto found = ensure_nmap_index(s.pkg);
+            if (!found) {
+                return envelope_err(found.error());
+            }
+            ni = *found;
+        }
+        sxpe::resources::Nmap n;
+        n.version = 1;
+        if (!dry(args)) {
+            auto body = s.pkg.uncompressed(*ni);
+            if (body) {
+                if (auto cur = sxpe::resources::parse_nmap(*body)) {
+                    n.version = cur->version ? cur->version : 1;
+                }
+            }
+        }
+        n.entries.reserve(args["entries"].size());
+        for (const auto& row : args["entries"]) {
+            if (!row.is_object() || !row.contains("instance") || !row.contains("name")) {
+                return envelope_err(
+                    err(ErrorCode::invalid_argument, "each entry needs instance and name"));
+            }
+            const auto name = row.at("name").get<std::string>();
+            if (name.size() > sxpe::core::caps::kMaxNameBytes) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "nmap name"));
+            }
+            n.entries.push_back({as_u64(row.at("instance")), name});
+        }
+        json dups = json::array();
+        for (const auto& d : sxpe::resources::nmap_duplicates(n)) {
+            dups.push_back({{"instance", d.instance},
+                            {"count", d.count},
+                            {"effectiveName", d.effective_name}});
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"count", n.entries.size()},
+                                {"duplicates", dups},
+                                {"duplicatePolicy", "last-wins"}});
+        }
+        snapshot(s, *ni);
+        auto out = sxpe::resources::write_nmap(n);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        auto r = s.pkg.set_uncompressed(*ni, *out, false);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"count", n.entries.size()},
+                            {"duplicates", dups},
+                            {"duplicatePolicy", "last-wins"}});
+    }
+    if (cmd == "nmap.delete") {
+        const auto inst = as_u64(args.at("instance"));
+        std::optional<std::uint32_t> ni;
+        if (args.contains("resourceId")) {
+            auto i = need_idx();
+            if (!i) {
+                return envelope_err(i.error());
+            }
+            if (s.pkg.entry(*i).tgi.type != kNmap) {
+                return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not an NMAP"));
+            }
+            ni = *i;
+        } else {
+            auto found = ensure_nmap_index(s.pkg);
+            if (!found) {
+                return envelope_err(found.error());
+            }
+            ni = *found;
+        }
+        auto body = s.pkg.uncompressed(*ni);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        auto n = sxpe::resources::parse_nmap(*body);
+        if (!n) {
+            return envelope_err(n.error());
+        }
+        const auto before = n->entries.size();
+        n->entries.erase(std::remove_if(n->entries.begin(), n->entries.end(),
+                                        [&](const auto& e) { return e.instance == inst; }),
+                         n->entries.end());
+        const auto removed = before - n->entries.size();
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"instance", inst}, {"removed", removed}});
+        }
+        if (removed == 0) {
+            return envelope_ok({{"instance", inst}, {"removed", 0}});
+        }
+        snapshot(s, *ni);
+        auto out = sxpe::resources::write_nmap(*n);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        auto r = s.pkg.set_uncompressed(*ni, *out, false);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"instance", inst}, {"removed", removed}});
     }
     if (cmd == "nmap.set" || cmd == "resource.rename") {
         std::uint64_t inst = 0;
@@ -2646,15 +2838,15 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!n) {
             return envelope_err(n.error());
         }
-        bool found = false;
-        for (auto& e : n->entries) {
-            if (e.instance == inst) {
-                e.name = name;
-                found = true;
-                break;
+        int last = -1;
+        for (std::size_t i = 0; i < n->entries.size(); ++i) {
+            if (n->entries[i].instance == inst) {
+                last = static_cast<int>(i);
             }
         }
-        if (!found) {
+        if (last >= 0) {
+            n->entries[static_cast<std::size_t>(last)].name = name;
+        } else {
             n->entries.push_back({inst, name});
         }
         if (dry(args)) {

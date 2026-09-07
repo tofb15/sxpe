@@ -1054,6 +1054,114 @@ int main() {
         bus.execute("package.close", json{{"sessionId", xsid}});
     }
 
+
+    // Issue #24: NMAP table editor — batch replace once + duplicate last-wins policy.
+    {
+        auto fresh = bus.execute("package.new", json::object());
+        CHECK(fresh["ok"] == true);
+        const auto nsid = fresh["data"]["sessionId"].get<std::string>();
+        sxpe::resources::Nmap nm;
+        nm.version = 1;
+        nm.entries.push_back({0x10, "Alpha"});
+        nm.entries.push_back({0x20, "Beta"});
+        nm.entries.push_back({0x10, "AlphaLast"});  // duplicate → Name column last-wins
+        auto body = sxpe::resources::write_nmap(nm);
+        CHECK(body.has_value());
+        json nmap_rid{{"type", sxpe::resources::kNmap}, {"group", 0}, {"instance", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", nsid},
+                               {"resourceId", nmap_rid},
+                               {"payloadB64", b64(*body)}})["ok"] == true);
+
+        auto listed = bus.execute("nmap.list", json{{"sessionId", nsid}});
+        CHECK(listed["ok"] == true);
+        CHECK(listed["data"]["entries"].size() == 3);
+        CHECK(listed["data"]["duplicatePolicy"] == "last-wins");
+        CHECK(listed["data"]["duplicates"].size() == 1);
+        CHECK(listed["data"]["duplicates"][0].value("instance", 0ull) == 0x10);
+        CHECK(listed["data"]["duplicates"][0].value("count", 0u) == 2);
+        CHECK(listed["data"]["duplicates"][0].value("effectiveName", "") == "AlphaLast");
+
+        // Name column effective name is last-wins.
+        json xml_rid{{"type", sxpe::resources::kXml}, {"group", 0}, {"instance", 0x10}};
+        const std::string xml = "<?xml version=\"1.0\"?><r/>";
+        std::vector<std::byte> raw(xml.size());
+        for (std::size_t i = 0; i < xml.size(); ++i) {
+            raw[i] = static_cast<std::byte>(static_cast<unsigned char>(xml[i]));
+        }
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", nsid},
+                               {"resourceId", xml_rid},
+                               {"payloadB64", b64(raw)}})["ok"] == true);
+        auto rlist = bus.execute("resource.list", json{{"sessionId", nsid}, {"limit", 20}});
+        CHECK(rlist["ok"] == true);
+        bool saw_last = false;
+        for (const auto& it : rlist["data"]["items"]) {
+            if (it.value("instance", 0ull) == 0x10 && it.value("type", 0u) == sxpe::resources::kXml) {
+                CHECK(it.value("name", "") == "AlphaLast");
+                saw_last = true;
+            }
+        }
+        CHECK(saw_last);
+
+        // Edit multiple names in one dialog save (nmap.replace) — single undo.
+        auto rep = bus.execute(
+            "nmap.replace",
+            json{{"sessionId", nsid},
+                 {"resourceId", nmap_rid},
+                 {"entries",
+                  json::array({{{"instance", 0x10}, {"name", "Door"}},
+                               {{"instance", 0x20}, {"name", "Window"}},
+                               {{"instance", 0x30}, {"name", "Roof"}}})}});
+        CHECK(rep["ok"] == true);
+        CHECK(rep["data"].value("count", 0u) == 3);
+        CHECK(rep["data"]["duplicates"].empty());
+
+        auto after = bus.execute("nmap.get", json{{"sessionId", nsid}, {"resourceId", nmap_rid}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"]["entries"].size() == 3);
+        CHECK(after["data"]["entries"][0].value("name", "") == "Door");
+        CHECK(after["data"]["entries"][1].value("name", "") == "Window");
+        CHECK(after["data"]["entries"][2].value("name", "") == "Roof");
+
+        CHECK(bus.execute("undo", json{{"sessionId", nsid}})["ok"] == true);
+        auto und = bus.execute("nmap.get", json{{"sessionId", nsid}, {"resourceId", nmap_rid}});
+        CHECK(und["ok"] == true);
+        CHECK(und["data"]["entries"].size() == 3);
+        CHECK(und["data"]["duplicates"].size() == 1);
+        CHECK(und["data"]["duplicates"][0].value("effectiveName", "") == "AlphaLast");
+
+        CHECK(bus.execute("redo", json{{"sessionId", nsid}})["ok"] == true);
+        auto red = bus.execute("nmap.get", json{{"sessionId", nsid}, {"resourceId", nmap_rid}});
+        CHECK(red["data"]["entries"].size() == 3);
+        CHECK(red["data"]["entries"][2].value("name", "") == "Roof");
+
+        auto del = bus.execute(
+            "nmap.delete", json{{"sessionId", nsid}, {"resourceId", nmap_rid}, {"instance", 0x20}});
+        CHECK(del["ok"] == true);
+        CHECK(del["data"].value("removed", 0u) == 1);
+        auto after_del = bus.execute("nmap.get", json{{"sessionId", nsid}, {"resourceId", nmap_rid}});
+        CHECK(after_del["data"]["entries"].size() == 2);
+
+        // nmap.set updates last duplicate row when duplicates remain.
+        auto with_dups = bus.execute(
+            "nmap.replace",
+            json{{"sessionId", nsid},
+                 {"entries",
+                  json::array({{{"instance", 1}, {"name", "A"}},
+                               {{"instance", 1}, {"name", "B"}}})}});
+        CHECK(with_dups["ok"] == true);
+        CHECK(bus.execute("nmap.set",
+                          json{{"sessionId", nsid}, {"instance", 1}, {"name", "C"}})["ok"] == true);
+        auto gs = bus.execute("nmap.get", json{{"sessionId", nsid}});
+        CHECK(gs["data"]["entries"].size() == 2);
+        CHECK(gs["data"]["entries"][0].value("name", "") == "A");
+        CHECK(gs["data"]["entries"][1].value("name", "") == "C");
+        CHECK(gs["data"]["duplicates"][0].value("effectiveName", "") == "C");
+
+        bus.execute("package.close", json{{"sessionId", nsid}});
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;
