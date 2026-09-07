@@ -844,17 +844,23 @@ void show_external_programs_dialog(QWidget* parent) {
     QSettings s("SXPE", "SXPE");
     auto* hex = new QLineEdit(s.value("ext/hex").toString());
     auto* text = new QLineEdit(s.value("ext/text").toString());
+    auto* s3sa = new QLineEdit(s.value("ext/s3sa").toString());
     hex->setPlaceholderText(QObject::tr("e.g. C:\\Tools\\hex.exe {path}"));
     text->setPlaceholderText(QObject::tr("e.g. notepad {path}"));
+    s3sa->setPlaceholderText(QObject::tr("e.g. ilspy {path}   or   dnSpy {path}"));
     form->addRow(QObject::tr("Hex editor"), hex);
     form->addRow(QObject::tr("Text editor"), text);
-    form->addRow(new QLabel(QObject::tr("{path} is replaced with the exported file.")));
+    form->addRow(QObject::tr("S3SA viewer"), s3sa);
+    form->addRow(new QLabel(
+        QObject::tr("{path} is replaced with the exported file. S3SA View exports a temp DLL "
+                    "(never LoadLibrary); the temp is deleted when the viewer exits.")));
     auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     form->addRow(box);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
         s.setValue("ext/hex", hex->text());
         s.setValue("ext/text", text->text());
+        s.setValue("ext/s3sa", s3sa->text());
         dlg.accept();
     });
     dlg.exec();
@@ -894,7 +900,7 @@ void show_contents_dialog(QWidget* parent) {
         "column cannot be hidden.</p>"
         "<h3>Resource</h3>"
         "<p>Add, copy, paste, duplicate, replace; compression and deleted flags; details; "
-        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, Name map/NMAP, XML/ITUN, S3SA DLL, "
+        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, Name map/NMAP, XML/ITUN, S3SA export/import/view DLL, "
         "CLIP, DDS, SNAP PNG, VID); open in hex/text editor; delete.</p>"
         "<ul>"
         "<li><b>Add…</b> — Ctrl+I</li>"
@@ -917,7 +923,7 @@ void show_contents_dialog(QWidget* parent) {
         "</ul>"
         "<h3>Settings</h3>"
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
-        "built-in handlers, external programs, save settings.</p>"
+        "built-in handlers, external programs (hex/text/S3SA viewer), save settings.</p>"
         "<h3>Help</h3>"
         "<p>Contents (this window), About, Warranty, Licence.</p>"
         "<h3>Context menus</h3>"

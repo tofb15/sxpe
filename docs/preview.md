@@ -78,7 +78,7 @@ No pixels. A few decoded fields beat hex.
 
 | Tag | Types | Preview | Difficulty | Priority |
 | --- | --- | --- | --- | --- |
-| `S3SA` | `073FAA07` | Wrapper fields + decrypted PE offset (`s3sa.info`). Import/export DLL. Never `LoadLibrary`. | S | **P0** |
+| `S3SA` | `073FAA07` | Wrapper fields + decrypted PE offset (`s3sa.info`). Import/export/view DLL (`s3sa.view` + `ext/s3sa`). Never `LoadLibrary`. | S | **P0** |
 | `OBJK` | `02DC343F` | Version, component IDs, data keys (`objk.get`). Not a full object editor. | S | **P0/done** |
 | `VPXY` | `736884F1` | Version, entry types, bounding box (`vpxy.get`). Not a mesh viewer. | S | **P0/done** |
 | `OBJD` | `319E4F1D` | Catalog name/desc GUIDs, price, thumbnail IID (`objd.get`) | M | **done** |

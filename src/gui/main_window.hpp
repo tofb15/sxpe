@@ -78,6 +78,7 @@ private:
     void open_xml();
     void export_s3sa();
     void import_s3sa();
+    void view_s3sa();
     void clip_export();
     void replace_dds();
     void replace_snap();

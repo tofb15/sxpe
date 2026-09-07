@@ -568,6 +568,49 @@ int main() {
     char mz2[2]{};
     in_dll.read(mz2, 2);
     CHECK(in_dll.gcount() == 2 && mz2[0] == 'M' && mz2[1] == 'Z');
+
+    auto view = bus.execute("s3sa.view", json{{"sessionId", s3id}, {"resourceId", s3rid}});
+    CHECK(view["ok"] == true);
+    CHECK(view["data"].value("loadLibrary", true) == false);
+    CHECK(view["data"].value("spawned", true) == false);
+    CHECK(view["data"].contains("path"));
+    CHECK(view["data"].contains("note"));
+    const auto view_path = view["data"]["path"].get<std::string>();
+    CHECK(std::filesystem::exists(view_path));
+    {
+        std::ifstream vf(view_path, std::ios::binary);
+        char mz3[2]{};
+        vf.read(mz3, 2);
+        CHECK(vf.gcount() == 2 && mz3[0] == 'M' && mz3[1] == 'Z');
+    }
+    std::filesystem::remove(view_path);
+
+    auto view_spawn = bus.execute(
+        "s3sa.view",
+        json{{"sessionId", s3id},
+             {"resourceId", s3rid},
+             {"viewer", "true {path}"},
+             {"force", true}});
+    CHECK(view_spawn["ok"] == true);
+    CHECK(view_spawn["data"].value("loadLibrary", true) == false);
+    CHECK(view_spawn["data"].value("spawned", false) == true);
+    const auto spawn_path = view_spawn["data"]["path"].get<std::string>();
+    // Detached `true` exits quickly; best-effort remove if still present.
+    if (std::filesystem::exists(spawn_path)) {
+        std::filesystem::remove(spawn_path);
+    }
+
+    auto man_tools = bus.execute("manifest", json::object());
+    CHECK(man_tools["ok"] == true);
+    bool saw_view = false;
+    for (const auto& tool : man_tools["data"]["tools"]) {
+        if (tool.value("name", "") == "s3sa.view") {
+            saw_view = true;
+            CHECK(tool["annotations"]["readOnlyHint"] == true);
+        }
+    }
+    CHECK(saw_view);
+
     bus.execute("package.close", json{{"sessionId", s3id}});
 
     {

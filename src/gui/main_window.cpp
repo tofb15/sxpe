@@ -198,6 +198,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("&XML…"), {}, [this] { open_xml(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
+    act(editors, tr("&View S3SA…"), {}, [this] { view_s3sa(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
     act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
@@ -1296,6 +1297,40 @@ void MainWindow::export_s3sa() {
                            {"force", true}});
 }
 
+
+void MainWindow::view_s3sa() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r || r->type != sxpe::resources::kS3sa) {
+        return;
+    }
+    QSettings s("SXPE", "SXPE");
+    const auto cmd = s.value("ext/s3sa").toString();
+    if (cmd.trimmed().isEmpty()) {
+        QMessageBox::information(
+            this, tr("SXPE"),
+            tr("Set an S3SA viewer under Settings → External programs (ILSpy, dnSpy, …). "
+               "Use {path}. SXPE never LoadLibrarys the assembly."));
+        return;
+    }
+    auto env = run("s3sa.view", {{"sessionId", t->session_id().toStdString()},
+                                 {"resourceId", rid_json(*r)},
+                                 {"force", true}});
+    if (!env.value("ok", false)) {
+        return;
+    }
+    const auto path = QString::fromStdString(env["data"].value("path", std::string()));
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, tr("SXPE"), tr("s3sa.view returned no path."));
+        return;
+    }
+    QString err;
+    if (!plugins_.run_user_command_cleanup(cmd, path, &err)) {
+        QMessageBox::warning(this, tr("SXPE"), err);
+        QFile::remove(path);
+    }
+}
+
 void MainWindow::clip_export() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1559,6 +1594,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* xml = editors->addAction(tr("&XML…"), this, [this] { open_xml(); });
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
+    auto* s3sa_view = editors->addAction(tr("&View S3SA…"), this, [this] { view_s3sa(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
@@ -1579,6 +1615,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         xml->setEnabled(r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         s3sa_in->setEnabled(true);
+        s3sa_view->setEnabled(r->type == sxpe::resources::kS3sa);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));
@@ -1586,6 +1623,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         stbl->setEnabled(false);
         xml->setEnabled(false);
         s3sa->setEnabled(false);
+        s3sa_view->setEnabled(false);
         clip->setEnabled(false);
         dds->setEnabled(false);
         snap->setEnabled(false);
