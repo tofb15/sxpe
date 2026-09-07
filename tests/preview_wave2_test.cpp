@@ -94,21 +94,30 @@ int main() {
     }
 
     {
-        // CASP: version, offset, 0 presets, name, fields
+        // CASP: version, offset, 0 presets, name, fields + I64GT TGI table
         std::vector<std::byte> bytes;
         wu32(bytes, 0x12);
-        wu32(bytes, 100);  // ref offset (unused by parser beyond read)
-        wu32(bytes, 0);    // presets
+        const auto ref_at = bytes.size();
+        wu32(bytes, 0);  // placeholder
+        wu32(bytes, 0);  // presets
         w7utf16be(bytes, "Top_Shirt");
         wf32(bytes, 10.0f);
         wu8(bytes, 0);
         wu32(bytes, 5);  // Top
         wu32(bytes, 0);
-        // age adult|ya = 0x30, species human=1, gender male|female = 0x3 << 4 => 0x31
-        // DWORD: age | (sg << 8) | (hand << 16)
         const std::uint32_t age_gender = 0x30u | (0x31u << 8);
         wu32(bytes, age_gender);
         wu32(bytes, 0x2);  // category Everyday bit
+        for (int i = 0; i < 8; ++i) {
+            wu8(bytes, 0);
+        }
+        const auto tgi_at = bytes.size();
+        const auto ref_off = static_cast<std::uint32_t>(tgi_at - 8);
+        std::memcpy(bytes.data() + ref_at, &ref_off, 4);
+        wu8(bytes, 1);
+        wu64(bytes, 0xABCDull);
+        wu32(bytes, 0x11);
+        wu32(bytes, 0x0333406Cu);
 
         auto p = sxpe::resources::parse_casp(bytes);
         CHECK(p.has_value());
@@ -117,6 +126,10 @@ int main() {
         CHECK(p->age_flags == 0x30);
         CHECK(p->species == 1);
         CHECK(p->gender_flags == 3);
+        CHECK(p->tgis.size() == 1);
+        CHECK(p->tgis[0].type == 0x0333406Cu);
+        CHECK(p->tgis[0].group == 0x11);
+        CHECK(p->tgis[0].instance == 0xABCDull);
         auto ages = sxpe::resources::casp_age_names(p->age_flags);
         CHECK(ages.size() == 2);
         CHECK(std::string(sxpe::resources::casp_clothing_type_name(5)) == "Top");

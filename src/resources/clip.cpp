@@ -48,8 +48,7 @@ Result<ClipInfo> parse_clip(std::span<const std::byte> bytes) {
         !take_u32(bytes, p, unk0) || !take_u32(bytes, p, unk1) || !take_u32(bytes, p, end_off)) {
         return std::unexpected(err(ErrorCode::corrupt, "clip header"));
     }
-    // Offsets are relative to the field that holds them (SimsWiki CLIP).
-    // clip_off field is at absolute 12; section at 12 + clip_off.
+    // Relative field offsets — see docs/spec/preview-wave2.md (CLIP).
     const std::size_t clip_field = 12;
     const std::size_t actor_field = 20;
     std::size_t clip_at = clip_field + clip_off;
@@ -119,7 +118,7 @@ Result<ClipInfo> parse_clip(std::span<const std::byte> bytes) {
                 info.partial = true;
                 break;
             }
-            // frame data offset, hash, offset, scale, frames, type
+            // Skip to joint-rule hash; layout in docs/spec/preview-wave2.md.
             tp += 4;
             std::uint32_t hash = 0;
             if (!take_u32(bytes, tp, hash)) {
@@ -127,7 +126,7 @@ Result<ClipInfo> parse_clip(std::span<const std::byte> bytes) {
                 break;
             }
             info.track_hashes.push_back(hash);
-            tp += 4 + 4 + 2 + 2;  // offset, scale, frames, type
+            tp += 4 + 4 + 2 + 2;
         }
     }
     (void)s3_size;

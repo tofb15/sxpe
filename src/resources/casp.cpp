@@ -143,6 +143,43 @@ Result<Casp> parse_casp(std::span<const std::byte> bytes) {
     if (!take_u32(bytes, p, ref_off)) {
         return std::unexpected(err(ErrorCode::corrupt, "casp offset"));
     }
+    // SimsWiki: offset is from end of version+offset header (absolute = ref_off + 8).
+    const std::size_t tgi_at = static_cast<std::size_t>(ref_off) + 8;
+    auto parse_i64gt = [&](std::size_t at) {
+        if (at >= bytes.size()) {
+            return;
+        }
+        std::size_t tp = at;
+        std::uint8_t count = 0;
+        if (!take_u8(bytes, tp, count)) {
+            return;
+        }
+        if (count > sxpe::core::caps::kMaxTableEntries) {
+            c.partial = true;
+            return;
+        }
+        const std::size_t need = static_cast<std::size_t>(count) * 16;
+        if (tp + need > bytes.size()) {
+            c.partial = true;
+            return;
+        }
+        c.tgis.reserve(count);
+        for (std::uint8_t i = 0; i < count; ++i) {
+            sxpe::games::sims3::Tgi t{};
+            std::uint64_t inst = 0;
+            std::uint32_t group = 0;
+            std::uint32_t type = 0;
+            if (!take_u64(bytes, tp, inst) || !take_u32(bytes, tp, group) ||
+                !take_u32(bytes, tp, type)) {
+                c.partial = true;
+                return;
+            }
+            t.instance = inst;
+            t.group = group;
+            t.type = type;
+            c.tgis.push_back(t);
+        }
+    };
     std::uint32_t preset_count = 0;
     if (!take_u32(bytes, p, preset_count)) {
         return std::unexpected(err(ErrorCode::corrupt, "casp presets"));
@@ -165,19 +202,23 @@ Result<Casp> parse_casp(std::span<const std::byte> bytes) {
     }
     if (!take_7bit_utf16be(bytes, p, c.name)) {
         c.partial = true;
+        parse_i64gt(tgi_at);
         return c;
     }
     std::uint8_t unused = 0;
     if (!take_f32(bytes, p, c.sort_priority) || !take_u8(bytes, p, unused)) {
         c.partial = true;
+        parse_i64gt(tgi_at);
         return c;
     }
     if (!take_u32(bytes, p, c.clothing_type) || !take_u32(bytes, p, c.type_flags) ||
         !take_u32(bytes, p, c.age_gender) || !take_u32(bytes, p, c.clothing_category)) {
         c.partial = true;
+        parse_i64gt(tgi_at);
         return c;
     }
     decode_age_gender(c);
+    parse_i64gt(tgi_at);
     return c;
 }
 

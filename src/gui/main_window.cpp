@@ -6,6 +6,9 @@
 #include "resource_model.hpp"
 
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/xml.hpp"
+
+#include <vector>
 
 #include <QAction>
 #include <QApplication>
@@ -305,7 +308,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     statusBar()->addPermanentWidget(status_layout_);
     statusBar()->addPermanentWidget(status_counts_);
 
-    plugins_.scan();
     mru_ = st.value("mru").toStringList();
     bookmarks_ = st.value("bookmarks").toStringList();
     rebuild_mru();
@@ -1331,6 +1333,7 @@ void MainWindow::view_s3sa() {
     }
     auto env = run("s3sa.view", {{"sessionId", t->session_id().toStdString()},
                                  {"resourceId", rid_json(*r)},
+                                 {"keepTemp", true},
                                  {"force", true}});
     if (!env.value("ok", false)) {
         return;
@@ -1628,7 +1631,33 @@ void MainWindow::show_resource_context(const QPoint& global) {
     nmap->setEnabled((r && r->type == sxpe::resources::kNmap) || has_nmap);
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
-        xml->setEnabled(r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun);
+        bool xml_ok = r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun;
+        if (!xml_ok) {
+            // Match bus xml.get: enable when a short peek looks like XML.
+            auto peek = bus_.execute(
+                "hex.get",
+                {{"sessionId", t->session_id().toStdString()},
+                 {"resourceId", rid_json(*r)},
+                 {"maxBytes", 64}});
+            if (peek.value("ok", false) && peek["data"].contains("hex")) {
+                const auto hex = peek["data"].value("hex", std::string{});
+                std::vector<std::byte> raw;
+                raw.reserve(hex.size() / 2);
+                for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+                    try {
+                        raw.push_back(std::byte{static_cast<unsigned char>(
+                            std::stoul(hex.substr(i, 2), nullptr, 16))});
+                    } catch (...) {
+                        raw.clear();
+                        break;
+                    }
+                }
+                if (!raw.empty()) {
+                    xml_ok = sxpe::resources::looks_like_xml(raw);
+                }
+            }
+        }
+        xml->setEnabled(xml_ok);
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         s3sa_in->setEnabled(true);
         s3sa_view->setEnabled(r->type == sxpe::resources::kS3sa);

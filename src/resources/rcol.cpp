@@ -110,8 +110,7 @@ void parse_geom_chunk(std::span<const std::byte> chunk, RcolChunk& out) {
             out.has_mesh_counts = true;
             return;
         }
-        // Only first ItemCount entry's BytesPerFacePoint is read above — wiki shows
-        // repetition of BYTE BytesPerFacePoint. Read remaining if any.
+        // Remaining BytesPerFacePoint bytes — see docs/spec/preview-wave2.md (GEOM).
         for (std::uint32_t i = 1; i < item_count; ++i) {
             std::uint8_t b = 0;
             if (!take_u8(chunk, p, b)) {
@@ -154,9 +153,7 @@ void parse_mlod_chunk(std::span<const std::byte> chunk, RcolChunk& out) {
             return;
         }
         const std::size_t start = p;
-        // After subset_bytes field, layout has NameHash..PrimitiveCount before bbox.
-        // VertexCount @ +40, PrimitiveCount @ +44 from start of subset body
-        // (11 dwords before VertexCount: name..MinVertexIndex).
+        // Vertex/Primitive counts at fixed subset offsets — docs/spec/preview-wave2.md (MLOD).
         if (p + 48 > chunk.size()) {
             out.has_mesh_counts = true;
             return;
@@ -282,7 +279,7 @@ Result<RcolSummary> parse_rcol_summary(std::span<const std::byte> bytes) {
         }
         sum.chunks.push_back(std::move(ch));
     }
-    // Bare GEOM resources sometimes put the chunk at offset 0 without a useful RCOL table.
+    // Bare GEOM (no RCOL table) — docs/spec/preview-wave2.md.
     if (sum.chunks.empty() && fourcc_eq(bytes, 0, "GEOM")) {
         RcolChunk ch;
         ch.type = kGeom;

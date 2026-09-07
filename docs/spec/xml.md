@@ -11,7 +11,7 @@ Types: `_XML` (`0x0333406C`), `ITUN` (`0x03B33DDF`). Payloads that sniff as XML 
 
 GUI: **Resource → Editors → XML…** (plain text dialog). Same bus commands.
 
-Encoding values: `utf-8`, `utf-8-bom`, `utf-16le`, `utf-16be`. On `xml.set`, default is the sniff of the existing payload so UTF-16LE mods round-trip.
+Encoding values: `utf-8`, `utf-8-bom`, `utf-16le` (no BOM), `utf-16le-bom`, `utf-16be`, `utf-16be-bom`. On `xml.set`, default is the sniff of the existing payload so BOM-less UTF-16LE stays BOM-less.
 
 ## Cap
 
