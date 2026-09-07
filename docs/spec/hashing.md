@@ -26,7 +26,27 @@ See [s3sa.md](s3sa.md). Do not use FNV-1a. Do not split the 64-bit hash across g
 
 ## CLIP instance
 
-FNV-1 64 of the clip name after **age-letter substitution** per SimsWiki CLIP (`0x6B20C4F3`): top bit and XOR masks. Exact mask table **TBC-game** / wiki; do not copy s3pi `FNV64CLIP`.
+FNV-1 64 of the clip name after **age-letter substitution** per SimsWiki CLIP (`0x6B20C4F3`). Implemented in `fnv64_clip` (do not copy s3pi `FNV64CLIP`).
+
+Names: `x_anim` (one actor) or `x2y_anim` (two actors). `a` and `o` are defaults.
+
+1. Lowercase ASCII.
+2. Hash the name with non-default `x`/`y` replaced by `a` (`o` stays `o`).
+3. If every actor is `a` or `o`: clear bit 63.
+4. Else: set bit 63. XOR the high byte with the primary age mask and, for two-actor names, the second-highest byte with the target mask.
+
+| Mask | Age letter |
+| --- | --- |
+| `0x01` | b |
+| `0x02` | p |
+| `0x03` | c |
+| `0x04` | t |
+| `0x05` | h |
+| `0x06` | e |
+
+Names without an `x_` / `x2y_` prefix hash as plain FNV-1 64 lowercase (no top-bit change).
+
+Vectors (lowercase): `walk` = FNV-1 64(`walk`); `a_walk` = FNV-1 64(`a_walk`) with bit 63 clear; `t_walk` = FNV-1 64(`a_walk`) with bit 63 set and high byte XOR `0x04`. See `tests/fnv_test.cpp`.
 
 Community filename:
 
