@@ -65,7 +65,7 @@ Surveyed **in place** (mmap/read; no copies into git): Steam `fallback.package` 
 
 Still open (follow-ups, not blocking this harness):
 
-- On-disk **deleted** encoding (group high byte vs hole vs other). Session flag stays in-memory.
+- On-disk **deleted**: none. Session flag; save omits the row (confirmed: no trash index, no `0xFFE0`, group high byte = EP flags). See [index.md](spec/index.md).
 - DIR record layout — need a package that actually contains a DIR.
 - NMAP name encoding beyond ASCII/UTF-8 without NUL.
 - FNV Unicode rules beyond lowercase ASCII.

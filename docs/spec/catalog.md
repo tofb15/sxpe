@@ -28,6 +28,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `resource.export` | y | n | write path; openWorld |
 | `resource.importFiles` | n | y | `--force` / dryRun |
 | `resource.delete` | n | y | |
+| `resource.setFlags` | n | y | `deleted` is session-only; save omits the row |
 | `stbl.get` / `stbl.set` | | | |
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |

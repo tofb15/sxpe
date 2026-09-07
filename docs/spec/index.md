@@ -52,7 +52,14 @@ struct IndexEntry {
 
 ## Deleted
 
-Encoding still **TBC-game** (not CompressedFlags high-16, which is always `1` on EA rows; FullBuild0 group high byte is `0`). SXPE tracks a session flag without claiming on-disk encoding. Follow-up: find a package with deleted rows.
+TS3 DBPF **2.0 has no on-disk deleted bit**. Evidence (2026-09-07, in-place mmap; see [testing.md](../testing.md)):
+
+- No trash/hole index (header unknown3 is zeros; SimsTek: trash index is DBPF **&lt; 2.0** only).
+- CompressedFlags low 16 is only `0` or `0xFFFF` across 198 local packages + FullBuild0 (never `0xFFE0`).
+- Group high byte is **EP/product flags** (delta packs `p02`…`p20` use 8, 16, … 152 on every row), not a deleted flag. s3pi exposes this as EpFlags and returns only the low 24 bits as `ResourceGroup`.
+- s3pe’s `IsDeleted` is a **RAM flag**; save omits the index row (same as SXPE `write_file`).
+
+SXPE: `resource.setFlags deleted` is a session flag. `package.save` / `saveAs` / `compact` drop those rows. After reopen, `deletedCount` is 0 — the resource is gone, not struck through.
 
 ## Caps
 
