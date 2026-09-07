@@ -32,6 +32,10 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `stbl.get` / `stbl.set` | | | |
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |
+| `objd.get` | y | n | OBJD Common name/desc GUIDs, price, thumb IID |
+| `casp.get` | y | n | CASP clothing type / age-gender flags |
+| `clip.info` | y | n | CLIP duration + track hashes (no playback) |
+| `rcol.summary` | y | n | MODL/MLOD/GEOM chunk and mesh counts |
 | `undo` / `redo` | n | y | Session mutation stack (50) |
 | `s3sa.info` | y | n | Wrapper + decrypted PE facts. Never LoadLibrary |
 | `s3sa.exportDll` | y | n | Decrypt then write PE |

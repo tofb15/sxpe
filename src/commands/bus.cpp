@@ -7,7 +7,11 @@
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/dir.hpp"
 #include "sxpe/resources/nmap.hpp"
+#include "sxpe/resources/casp.hpp"
+#include "sxpe/resources/clip.hpp"
+#include "sxpe/resources/objd.hpp"
 #include "sxpe/resources/objk.hpp"
+#include "sxpe/resources/rcol.hpp"
 #include "sxpe/resources/s3sa.hpp"
 #include "sxpe/resources/png.hpp"
 #include "sxpe/resources/stbl.hpp"
@@ -870,6 +874,26 @@ std::vector<Tool> make_catalog() {
          env_out, true, false, true, false});
     add({"vpxy.get", "VPXY get",
          "Parse VPXY version, entry types, and bounding box (wiki 0x736884F1). Not a mesh viewer.",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"objd.get", "OBJD get",
+         "Catalog Common header: name/desc GUIDs, price, thumb IID (wiki 0x319E4F1D / Catalog Resource).",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"casp.get", "CASP get",
+         "CAS part clothing type and age/gender flags (wiki 0x034AEECB; best-effort).",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"clip.info", "CLIP info",
+         "CLIP duration and track/hash names (wiki 0x6B20C4F3). No playback.",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"rcol.summary", "RCOL summary",
+         "MODL/MLOD/GEOM chunk tags and vertex/face/LOD counts (RCOL scan; no mesh view).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
@@ -2450,7 +2474,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return envelope_ok(data);
     }
-    if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "graph.get") {
+    if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "objd.get" || cmd == "casp.get" ||
+        cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
@@ -2554,6 +2579,159 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"bbox", bbox},
                                     {"modular", v->modular},
                                     {"tgiCount", v->tgi_count},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
+        if (cmd == "objd.get" || (cmd == "graph.get" && type == sxpe::resources::kObjd)) {
+            auto o = sxpe::resources::parse_objd(*body);
+            if (!o) {
+                if (cmd == "objd.get") {
+                    return envelope_err(o.error());
+                }
+            } else {
+                json nodes = json::array();
+                nodes.push_back({{"id", "nameGuid"},
+                                 {"label", "nameGuid"},
+                                 {"valueKind", "u64"},
+                                 {"value", o->name_guid},
+                                 {"children", json::array()}});
+                nodes.push_back({{"id", "price"},
+                                 {"label", "price"},
+                                 {"valueKind", "f32"},
+                                 {"value", o->price},
+                                 {"children", json::array()}});
+                return envelope_ok({{"type", "OBJD"},
+                                    {"version", o->version},
+                                    {"commonVersion", o->common_version},
+                                    {"nameGuid", o->name_guid},
+                                    {"descGuid", o->desc_guid},
+                                    {"internalName", o->internal_name},
+                                    {"internalDesc", o->internal_desc},
+                                    {"price", o->price},
+                                    {"thumbIid", o->thumb_iid},
+                                    {"instanceName", o->instance_name},
+                                    {"partial", o->partial},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
+        if (cmd == "casp.get" || (cmd == "graph.get" && type == sxpe::resources::kCasp)) {
+            auto c = sxpe::resources::parse_casp(*body);
+            if (!c) {
+                if (cmd == "casp.get") {
+                    return envelope_err(c.error());
+                }
+            } else {
+                json ages = json::array();
+                for (const auto& a : sxpe::resources::casp_age_names(c->age_flags)) {
+                    ages.push_back(a);
+                }
+                json genders = json::array();
+                for (const auto& g : sxpe::resources::casp_gender_names(c->gender_flags)) {
+                    genders.push_back(g);
+                }
+                const char* ctn = sxpe::resources::casp_clothing_type_name(c->clothing_type);
+                const char* spn = sxpe::resources::casp_species_name(c->species);
+                json nodes = json::array();
+                nodes.push_back({{"id", "clothingType"},
+                                 {"label", "clothingType"},
+                                 {"valueKind", "u32"},
+                                 {"value", c->clothing_type},
+                                 {"children", json::array()}});
+                return envelope_ok({{"type", "CASP"},
+                                    {"version", c->version},
+                                    {"name", c->name},
+                                    {"sortPriority", c->sort_priority},
+                                    {"clothingType", c->clothing_type},
+                                    {"clothingTypeName", ctn ? ctn : ""},
+                                    {"typeFlags", c->type_flags},
+                                    {"ageGender", c->age_gender},
+                                    {"ageFlags", c->age_flags},
+                                    {"ages", ages},
+                                    {"species", c->species},
+                                    {"speciesName", spn ? spn : ""},
+                                    {"genderFlags", c->gender_flags},
+                                    {"genders", genders},
+                                    {"clothingCategory", c->clothing_category},
+                                    {"partial", c->partial},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
+        if (cmd == "clip.info" || (cmd == "graph.get" && type == sxpe::resources::kClip)) {
+            auto c = sxpe::resources::parse_clip(*body);
+            if (!c) {
+                if (cmd == "clip.info") {
+                    return envelope_err(c.error());
+                }
+            } else {
+                json hashes = json::array();
+                for (auto h : c->track_hashes) {
+                    hashes.push_back(h);
+                }
+                json nodes = json::array();
+                nodes.push_back({{"id", "duration"},
+                                 {"label", "durationSeconds"},
+                                 {"valueKind", "f32"},
+                                 {"value", c->duration_seconds},
+                                 {"children", json::array()}});
+                if (!c->anim_name.empty()) {
+                    nodes.push_back({{"id", "animName"},
+                                     {"label", "animName"},
+                                     {"valueKind", "string"},
+                                     {"value", c->anim_name},
+                                     {"children", json::array()}});
+                }
+                return envelope_ok({{"type", "CLIP"},
+                                    {"version", c->version},
+                                    {"frameDuration", c->frame_duration},
+                                    {"frameCount", c->frame_count},
+                                    {"durationSeconds", c->duration_seconds},
+                                    {"animName", c->anim_name},
+                                    {"sourceFile", c->source_file},
+                                    {"actorName", c->actor_name},
+                                    {"trackCount", c->track_count},
+                                    {"trackHashes", hashes},
+                                    {"partial", c->partial},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
+        if (cmd == "rcol.summary" ||
+            (cmd == "graph.get" && (type == sxpe::resources::kModl || type == sxpe::resources::kMlod ||
+                                    type == sxpe::resources::kGeom))) {
+            auto r = sxpe::resources::parse_rcol_summary(*body);
+            if (!r) {
+                if (cmd == "rcol.summary") {
+                    return envelope_err(r.error());
+                }
+            } else {
+                json chunks = json::array();
+                json nodes = json::array();
+                for (const auto& ch : r->chunks) {
+                    json row{{"type", ch.type},
+                             {"tag", ch.tag},
+                             {"size", ch.size},
+                             {"vertexCount", ch.vertex_count},
+                             {"faceCount", ch.face_count},
+                             {"groupCount", ch.group_count}};
+                    chunks.push_back(row);
+                    nodes.push_back({{"id", "chunk/" + (ch.tag.empty() ? std::to_string(ch.type) : ch.tag)},
+                                     {"label", ch.tag.empty() ? "chunk" : ch.tag},
+                                     {"valueKind", "u32"},
+                                     {"value", ch.size},
+                                     {"children", json::array()}});
+                }
+                return envelope_ok({{"type", "RCOL"},
+                                    {"version", r->version},
+                                    {"internalCount", r->internal_count},
+                                    {"externalCount", r->external_count},
+                                    {"chunks", chunks},
+                                    {"totalVertices", r->total_vertices},
+                                    {"totalFaces", r->total_faces},
+                                    {"lodGroups", r->lod_groups},
+                                    {"partial", r->partial},
                                     {"rawSize", body->size()},
                                     {"nodes", nodes}});
             }
