@@ -29,6 +29,9 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `resource.importFiles` | n | y | `--force` / dryRun |
 | `resource.delete` | n | y | |
 | `stbl.get` / `stbl.set` | | | |
+| `objk.get` | y | n | OBJK version / component IDs / data keys |
+| `vpxy.get` | y | n | VPXY version / entries / bbox |
+| `undo` / `redo` | n | y | Session mutation stack (50) |
 | `s3sa.info` | y | n | Today: size / MZ offset / NMAP hint. Extend per [s3sa.md](s3sa.md) |
 | `s3sa.exportDll` | y | n | Today: slice from first `MZ`. Fix: decrypt then write PE |
 | `hash.fnv` | y | n | |

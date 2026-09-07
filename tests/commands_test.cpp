@@ -158,6 +158,17 @@ int main() {
     auto got3 = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
     CHECK(got3["data"]["entries"][0]["text"] == "Bye");
 
+    auto und_set = bus.execute("undo", json{{"sessionId", sid}});
+    CHECK(und_set["ok"] == true);
+    auto after_und = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
+    CHECK(after_und["data"]["entries"][0]["text"] == "Hi");
+    auto red_set = bus.execute("redo", json{{"sessionId", sid}});
+    CHECK(red_set["ok"] == true);
+    CHECK(red_set["data"]["redone"] == true);
+    auto after_red = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
+    CHECK(after_red["data"]["entries"][0]["text"] == "Bye");
+    CHECK(bus.execute("redo", json{{"sessionId", sid}})["ok"] == false);
+
     auto outp = (tmp / "hi.bin").string();
     auto exp = bus.execute("resource.export",
                            json{{"sessionId", sid}, {"resourceId", rid}, {"path", outp}, {"force", true}});
@@ -277,6 +288,66 @@ int main() {
 
     auto bad = bus.execute("package.open", json{{"path", dest + "-missing"}});
     CHECK(bad["ok"] == false);
+
+    auto us = bus.execute("package.new", json::object());
+    CHECK(us["ok"] == true);
+    const auto uid = us["data"]["sessionId"].get<std::string>();
+    auto uadd = bus.execute(
+        "resource.add",
+        json{{"sessionId", uid},
+             {"resourceId", json{{"type", 9}, {"group", 0}, {"instance", 9}}},
+             {"payloadB64", b64(*raw)}});
+    CHECK(uadd["ok"] == true);
+    CHECK(bus.execute("resource.list", json{{"sessionId", uid}, {"limit", 10}})["data"]["items"].size() ==
+          1);
+    CHECK(bus.execute("undo", json{{"sessionId", uid}})["ok"] == true);
+    CHECK(bus.execute("resource.list", json{{"sessionId", uid}, {"limit", 10}})["data"]["items"].size() ==
+          0);
+    CHECK(bus.execute("redo", json{{"sessionId", uid}})["ok"] == true);
+    CHECK(bus.execute("resource.list", json{{"sessionId", uid}, {"limit", 10}})["data"]["items"].size() ==
+          1);
+    bus.execute("package.close", json{{"sessionId", uid}});
+
+    auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+        const auto* p = reinterpret_cast<const std::byte*>(&v);
+        o.insert(o.end(), p, p + 4);
+    };
+    std::vector<std::byte> objk_body;
+    objk_body.push_back(std::byte{1});
+    wu32(objk_body, 0x23177498u);
+    objk_body.push_back(std::byte{1});
+    wu32(objk_body, 11);
+    const char* k = "scriptClass";
+    objk_body.insert(objk_body.end(), reinterpret_cast<const std::byte*>(k),
+                     reinterpret_cast<const std::byte*>(k) + 11);
+    objk_body.push_back(std::byte{0});
+    wu32(objk_body, 8);
+    const char* cls = "My.Class";
+    objk_body.insert(objk_body.end(), reinterpret_cast<const std::byte*>(cls),
+                     reinterpret_cast<const std::byte*>(cls) + 8);
+    objk_body.push_back(std::byte{1});
+    const auto tgi_off = static_cast<std::uint32_t>(objk_body.size());
+    objk_body.push_back(std::byte{0});
+    std::vector<std::byte> objk_bytes;
+    wu32(objk_bytes, 7);
+    wu32(objk_bytes, tgi_off);
+    wu32(objk_bytes, 1);
+    objk_bytes.insert(objk_bytes.end(), objk_body.begin(), objk_body.end());
+    auto osess = bus.execute("package.new", json::object());
+    const auto oid = osess["data"]["sessionId"].get<std::string>();
+    auto objk_rid = json{{"type", sxpe::resources::kObjk}, {"group", 0}, {"instance", 1}};
+    CHECK(bus.execute("resource.add",
+                      json{{"sessionId", oid},
+                           {"resourceId", objk_rid},
+                           {"payloadB64", b64(objk_bytes)}})["ok"] == true);
+    auto og = bus.execute("objk.get", json{{"sessionId", oid}, {"resourceId", objk_rid}});
+    CHECK(og["ok"] == true);
+    CHECK(og["data"]["version"] == 7);
+    CHECK(og["data"]["data"][0]["key"] == "scriptClass");
+    auto gg = bus.execute("graph.get", json{{"sessionId", oid}, {"resourceId", objk_rid}});
+    CHECK(gg["ok"] == true);
+    CHECK(gg["data"]["type"] == "OBJK");
+    bus.execute("package.close", json{{"sessionId", oid}});
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
