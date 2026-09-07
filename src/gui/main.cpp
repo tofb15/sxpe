@@ -43,6 +43,9 @@ int main(int argc, char** argv) {
     sxpe::gui::MainWindow w;
     const auto args = QCoreApplication::arguments();
     const bool smoke = args.contains("--smoke");
+    if (smoke) {
+        w.set_smoke_mode(true);
+    }
     QString open;
     for (int i = 1; i < args.size(); ++i) {
         if (args[i].startsWith('-')) {
@@ -51,11 +54,15 @@ int main(int argc, char** argv) {
         open = args[i];
         break;
     }
+    bool opened = false;
     if (!open.isEmpty()) {
-        w.open_path(open, !smoke);
+        opened = w.open_path(open, !smoke);
     }
     if (smoke) {
-        w.smoke_filter({});
+        // Open synthetic package and list/filter resources (headless / offscreen CI).
+        if (open.isEmpty() || !opened || !w.smoke_filter({})) {
+            return 1;
+        }
         return 0;
     }
     w.show();
