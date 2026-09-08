@@ -1933,6 +1933,205 @@ int main() {
     }
 
 
+    // Issue #66: cancel mid-import rolls session back (no corrupt package); GUI/CLI share bus.
+    {
+        auto cancel_dir = tmp / "cancel-66";
+        std::filesystem::remove_all(cancel_dir);
+        std::filesystem::create_directories(cancel_dir);
+
+        auto write_tiny = [&](const std::filesystem::path& path, std::uint64_t inst,
+                              const std::string& payload) {
+            auto created = bus.execute("package.new", json::object());
+            CHECK(created["ok"] == true);
+            const auto sid = created["data"]["sessionId"].get<std::string>();
+            std::vector<std::byte> bytes(payload.size());
+            for (std::size_t i = 0; i < payload.size(); ++i) {
+                bytes[i] = static_cast<std::byte>(payload[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", 0x12345678},
+                                         {"group", 0},
+                                         {"instance", inst}}},
+                                   {"payloadB64", b64(bytes)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid},
+                                   {"path", path.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        };
+
+        json paths = json::array();
+        for (int i = 0; i < 8; ++i) {
+            auto path = cancel_dir / ("c-" + std::to_string(i) + ".package");
+            write_tiny(path, static_cast<std::uint64_t>(5000 + i),
+                       "cancel-payload-" + std::to_string(i));
+            paths.push_back(path.string());
+        }
+
+        // Seed session with a marker resource that must survive cancel.
+        auto sess = bus.execute("package.new", json::object());
+        CHECK(sess["ok"] == true);
+        const auto sid = sess["data"]["sessionId"].get<std::string>();
+        const std::string marker = "baseline-must-survive-cancel";
+        std::vector<std::byte> mbytes(marker.size());
+        for (std::size_t i = 0; i < marker.size(); ++i) {
+            mbytes[i] = static_cast<std::byte>(marker[i]);
+        }
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid},
+                               {"resourceId",
+                                json{{"type", 0xABCDEF01},
+                                     {"group", 7},
+                                     {"instance", 99}}},
+                               {"payloadB64", b64(mbytes)}})["ok"] == true);
+        auto before = bus.execute("package.info", json{{"sessionId", sid}});
+        CHECK(before["ok"] == true);
+        const auto baseline = before["data"].value("indexCount", 0u);
+        CHECK(baseline == 1);
+
+        // Cancel after two successful packages via cancel_check (simulates GUI Cancel).
+        int packages_done_seen = 0;
+        bus.clear_cancel();
+        bus.set_cancel_check([&] {
+            return packages_done_seen >= 2;
+        });
+        bus.set_progress_handler([&](const json& ev) {
+            if (ev.value("phase", "") == "package" && ev.value("ok", false)) {
+                packages_done_seen = ev.value("packagesDone", packages_done_seen);
+            }
+        });
+        auto imp = bus.execute("resource.importPackage",
+                               json{{"sessionId", sid},
+                                    {"paths", paths},
+                                    {"force", true},
+                                    {"reportProgress", true}});
+        bus.clear_progress_handler();
+        bus.clear_cancel_check();
+        bus.clear_cancel();
+
+        CHECK(imp["ok"] == false);
+        CHECK(imp["error"].value("code", "") == "refused");
+        CHECK(imp["error"].value("message", std::string{}) == "cancelled");
+        CHECK(imp["error"].value("side_effects", "") == "none");
+        CHECK(imp.contains("data"));
+        CHECK(imp["data"].value("cancelled", false) == true);
+        CHECK(imp["data"].value("rolledBack", true) == true);
+        CHECK(imp["data"].value("indexCount", 999u) == baseline);
+
+        auto after = bus.execute("package.info", json{{"sessionId", sid}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"].value("indexCount", 0u) == baseline);
+        CHECK(after["data"].value("dirty", true) == true);  // seed add left dirty
+
+        auto got = bus.execute("resource.read",
+                               json{{"sessionId", sid},
+                                    {"resourceId",
+                                     json{{"type", 0xABCDEF01},
+                                          {"group", 7},
+                                          {"instance", 99}}},
+                                    {"includePayload", true}});
+        CHECK(got["ok"] == true);
+        // payloadB64 round-trip
+        CHECK(got["data"].contains("payloadB64"));
+
+        // request_cancel() path (CLI SIGINT): flag set during execute via progress start.
+        bus.clear_cancel();
+        bus.set_progress_handler([&](const json& ev) {
+            if (ev.value("phase", "") == "start") {
+                bus.request_cancel();
+            }
+        });
+        auto imp2 = bus.execute("resource.importPackage",
+                                json{{"sessionId", sid},
+                                     {"paths", paths},
+                                     {"force", true},
+                                     {"reportProgress", true}});
+        bus.clear_progress_handler();
+        bus.clear_cancel();
+        CHECK(imp2["ok"] == false);
+        CHECK(imp2["error"].value("message", std::string{}) == "cancelled");
+        CHECK(imp2["data"].value("rolledBack", false) == true);
+        auto after2 = bus.execute("package.info", json{{"sessionId", sid}});
+        CHECK(after2["data"].value("indexCount", 0u) == baseline);
+
+        // Force-replace then cancel: pre-existing payload restored.
+        {
+            // Build package that force-replaces our marker TGI.
+            auto created = bus.execute("package.new", json::object());
+            const auto psid = created["data"]["sessionId"].get<std::string>();
+            const std::string evil = "should-not-stick";
+            std::vector<std::byte> ebytes(evil.size());
+            for (std::size_t i = 0; i < evil.size(); ++i) {
+                ebytes[i] = static_cast<std::byte>(evil[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", psid},
+                                   {"resourceId",
+                                    json{{"type", 0xABCDEF01},
+                                         {"group", 7},
+                                         {"instance", 99}}},
+                                   {"payloadB64", b64(ebytes)}})["ok"] == true);
+            // Add filler so cancel can fire mid-job after first package starts mutating.
+            for (int i = 0; i < 5; ++i) {
+                CHECK(bus.execute(
+                    "resource.add",
+                    json{{"sessionId", psid},
+                         {"resourceId",
+                          json{{"type", 0x11111111},
+                               {"group", 0},
+                               {"instance", static_cast<std::uint64_t>(7000 + i)}}},
+                         {"payloadB64", b64(mbytes)}})["ok"] == true);
+            }
+            auto force_path = cancel_dir / "force-src.package";
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", psid},
+                                   {"path", force_path.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", psid}});
+
+            int seen_pkg = 0;
+            bus.set_cancel_check([&] { return seen_pkg >= 1; });
+            bus.set_progress_handler([&](const json& ev) {
+                if (ev.value("phase", "") == "package" && ev.value("ok", false)) {
+                    seen_pkg = ev.value("packagesDone", seen_pkg);
+                }
+            });
+            // Import force-src + remaining tinies so cancel fires after first package.
+            json mix = json::array();
+            mix.push_back(force_path.string());
+            for (const auto& p : paths) {
+                mix.push_back(p);
+            }
+            auto fim = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", mix},
+                                        {"force", true},
+                                        {"duplicateTgiPolicy", "force"},
+                                        {"reportProgress", true}});
+            bus.clear_progress_handler();
+            bus.clear_cancel_check();
+            CHECK(fim["ok"] == false);
+            CHECK(fim["data"].value("cancelled", false) == true);
+            auto got2 = bus.execute("resource.read",
+                                    json{{"sessionId", sid},
+                                         {"resourceId",
+                                          json{{"type", 0xABCDEF01},
+                                               {"group", 7},
+                                               {"instance", 99}}},
+                                         {"includePayload", true}});
+            CHECK(got2["ok"] == true);
+            // Still baseline marker, not evil overwrite.
+            CHECK(got2["data"].value("payloadB64", "") == b64(mbytes));
+            auto info3 = bus.execute("package.info", json{{"sessionId", sid}});
+            CHECK(info3["data"].value("indexCount", 0u) == baseline);
+        }
+
+        bus.execute("package.close", json{{"sessionId", sid}});
+    }
+
+
     // Issue #64: merge conflict hygiene — leftover Sims3Pack manifests + duplicate TGI policy.
     {
         auto hyg = tmp / "hygiene-64";

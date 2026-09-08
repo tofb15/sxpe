@@ -57,7 +57,7 @@ Errors:
 
 Human views: `--format text` or `--format table`. Agents should keep `--format json` (default).
 
-`--progress` (merge/import): JSON progress events on **stderr**; stdout stays the final envelope.
+`--progress` (merge/import/scan): JSON progress events on **stderr**; stdout stays the final envelope. **Ctrl+C / SIGINT** cooperatively cancels merge/import/scan and rolls the session back (`error.message=cancelled`, `side_effects=none`).
 
 Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / `cursor`; lists do not include payloads.
 

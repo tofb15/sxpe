@@ -196,10 +196,13 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
     const char* cmd = dbc ? "resource.importDbc" : "resource.importPackage";
     QProgressDialog progress(
         dbc ? QObject::tr("Importing DBC…") : QObject::tr("Importing packages…"),
-        QString(), 0, paths.size(), parent);
+        QObject::tr("Cancel"), 0, paths.size(), parent);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
     progress.setValue(0);
+    progress.setCancelButtonText(QObject::tr("Cancel"));
+    bus.clear_cancel();
+    bus.set_cancel_check([&] { return progress.wasCanceled(); });
     bus.set_progress_handler([&](const nlohmann::json& ev) {
         const int done = ev.value("packagesDone", 0);
         const int total = ev.value("packagesTotal", paths.size());
@@ -221,8 +224,18 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
                                  {"duplicateTgiPolicy", "force"},
                                  {"reportProgress", true}});
     bus.clear_progress_handler();
+    bus.clear_cancel_check();
+    bus.clear_cancel();
     progress.setValue(progress.maximum());
     if (!env.value("ok", false)) {
+        const bool cancelled = env.contains("data") && env["data"].value("cancelled", false);
+        if (cancelled) {
+            QMessageBox::information(
+                parent, QObject::tr("SXPE"),
+                QObject::tr("Import cancelled. The open package was rolled back to its "
+                            "pre-import state."));
+            return;
+        }
         QMessageBox::warning(parent, QObject::tr("SXPE"),
                              QString::fromStdString(env["error"].value("message", env.dump())));
         return;

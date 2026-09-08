@@ -450,10 +450,13 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     for (const auto& p : paths) {
         arr.push_back(p.toStdString());
     }
-    QProgressDialog progress(tr("Merging packages…"), QString(), 0, paths.size(), this);
+    QProgressDialog progress(tr("Merging packages…"), tr("Cancel"), 0, paths.size(), this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
     progress.setValue(0);
+    progress.setCancelButtonText(tr("Cancel"));
+    bus_.clear_cancel();
+    bus_.set_cancel_check([&] { return progress.wasCanceled(); });
     bus_.set_progress_handler([&](const nlohmann::json& ev) {
         const int done = ev.value("packagesDone", 0);
         const int total = ev.value("packagesTotal", paths.size());
@@ -478,10 +481,18 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
                              {"duplicateTgiPolicy", "force"},
                              {"reportProgress", true}});
     bus_.clear_progress_handler();
+    bus_.clear_cancel_check();
+    bus_.clear_cancel();
     QApplication::restoreOverrideCursor();
     progress.setValue(progress.maximum());
     if (!env.value("ok", false) || env["data"].value("imported", 0) == 0) {
         bus_.execute("package.close", {{"sessionId", sid.toStdString()}});
+        const bool cancelled = env.contains("data") && env["data"].value("cancelled", false);
+        if (cancelled) {
+            QMessageBox::information(this, tr("SXPE"),
+                                     tr("Merge cancelled. No package was kept."));
+            return;
+        }
         warn_if_err(env.value("ok", false)
                         ? nlohmann::json{{"ok", false},
                                          {"error", {{"message", tr("Nothing was imported.").toStdString()}}}}
