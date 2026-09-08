@@ -1,4 +1,5 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/names.hpp"
 #include "sxpe/version.hpp"
 
 #include <nlohmann/json.hpp>
@@ -7,23 +8,22 @@
 #include <cctype>
 #include <iostream>
 #include <optional>
-#include <sstream>
 #include <string>
+#include <string_view>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace {
 
 using nlohmann::json;
 using sxpe::commands::Bus;
 
-std::string mcp_name(std::string id) {
-    std::replace(id.begin(), id.end(), '.', '_');
-    return id;
-}
+std::string mcp_name(std::string_view id) { return sxpe::commands::mcp_tool_name(id); }
 
-std::string dotted(std::string name) {
-    std::replace(name.begin(), name.end(), '_', '.');
-    return name;
-}
+std::string dotted(std::string_view name) { return sxpe::commands::bus_id_from_mcp_name(name); }
 
 std::optional<json> read_message() {
     std::string header;
@@ -78,7 +78,9 @@ std::optional<json> read_message() {
 
 void write_message(const json& msg) {
     const auto body = msg.dump();
-    std::cout << "Content-Length: " << body.size() << "\r\n\r\n" << body << std::flush;
+    const auto frame = sxpe::commands::mcp_frame(body);
+    std::cout.write(frame.data(), static_cast<std::streamsize>(frame.size()));
+    std::cout.flush();
 }
 
 json initialize_result() {
@@ -154,6 +156,10 @@ json call_tool(Bus& bus, const json& params) {
 }  // namespace
 
 int main() {
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
     Bus bus;

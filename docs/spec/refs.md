@@ -29,4 +29,4 @@ repeat indexCount:
 | `resource.listRefs` | Outbound TGIs from this REFS / OBJK / VPXY / CASP |
 | `resource.findRefs` | Inbound (who points at a target TGI) |
 
-GUI: **Resource → Editors → Reference table…**. Find references dialog has Inbound / Outbound. CLI/MCP: `refs get|set`, `resource list-refs` / `resource_listRefs`.
+GUI: **Resource → Editors → Reference table…**. Find references dialog has Inbound / Outbound. CLI/MCP: `refs get|set`, `resource list-refs` / `resource_list-refs`.

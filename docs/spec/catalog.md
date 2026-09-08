@@ -2,7 +2,7 @@
 
 Source of truth for GUI, CLI, and MCP. Architecture: [DESIGN.md](../../DESIGN.md).
 
-CLI: `sxpe <noun> <verb>` · MCP: `noun_verb` · ids: dotted `noun.verb`.
+CLI: `sxpe <noun> <verb>` (kebab verbs: `find-refs`) · MCP: `noun_kebab-verb` (`resource_find-refs`) · ids: dotted `noun.verb`.
 
 ## Envelope
 
@@ -27,8 +27,8 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.unmerge` | n | y | Recreate sources from SXMM; refuse if missing |
 | `folder.scan` | y | n | Read-only recursive `*.package` hygiene; empty/corrupt/wrong-game + duplicate TGI sample; `summary[]` |
 | `sims3pack.info` / `sims3pack.list` / `sims3pack.extract` / `sims3pack.pack` | y / y / y* / n | n | TS3Pack inspect + limited pack (`openWorld`); no Store/DRM |
-| `resource.list` | y | n | `limit` default 100, `cursor` |
-| `resource.read` | y | n | metadata default; `maxBytes` |
+| `resource.list` | y | n | `limit` default 100, max 500, `cursor`; `returned` + `total`; CLI `--all` |
+| `resource.read` | y | n | metadata default; `includePayload` base64 cap 1 MiB; prefer `resource.export` |
 | `resource.findRefs` | y | n | Inbound TGI refs (REFS/OBJK/VPXY/CASP + optional byteScan) |
 | `resource.export` | y | n | write path; openWorld |
 | `resource.importFiles` | n | y | `--force` / dryRun |
@@ -36,7 +36,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `resource.delete` | n | y | |
 | `resource.setFlags` | n | y | `deleted` is session-only; save omits the row |
 | `stbl.get` / `stbl.set` | | | |
-| `nmap.get` / `nmap.list` / `nmap.set` / `nmap.delete` / `nmap.replace` | y / y / n / n / n | n / n / y / y / y | Name map; replace = one undo batch |
+| `nmap.get` / `nmap.list` / `nmap.set` / `nmap.delete` / `nmap.replace` | y / y / n / n / n | n / n / y / y / y | Name map; replace = one undo batch; set/replace/delete optional `compress` (default false) |
 | `xml.get` / `xml.set` | y / n | n / y | `_XML`/`ITUN`; UTF-8/UTF-16 sniff; cap 4 MiB |
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |

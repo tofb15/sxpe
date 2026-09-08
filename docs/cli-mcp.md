@@ -20,8 +20,9 @@ What SXPE is: [README](../README.md). Recipes: [workflows](workflows.md). GUI: [
 ## Bus model
 
 - **Ids:** dotted `noun.verb` (e.g. `resource.list`, `package.validate`).
-- **CLI:** `sxpe <noun> <verb> [flags]`.
-- **MCP:** tool name `noun_verb` (same id with `_`).
+- **CLI:** `sxpe <noun> <verb> [flags]`. Camel verbs are kebab: `resource.findRefs` → `sxpe resource find-refs`.
+- **MCP:** tool name `noun_` + kebab verb (`resource_find-refs`, `app_check-update`). Same table as CLI; `manifest.mcpName` is the source of truth. Old camel MCP names (`resource_findRefs`) still resolve.
+- **`resource.list`:** JSON includes `returned` and `total` (matching count). Default page is 100 (max 500). CLI `--format table` prints `Showing N of total`; `--all` walks pages.
 - **Sessions:** many commands take `sessionId` after `package.open`. One-shot CLI often uses `--package PATH` (open → run → save if writing → close).
 - **Huge packages:** `package.open` with `--writable` demotes to read-only at ≥256 MiB (`openedReadOnlyDueToSize`) unless `--force-writable`. Preview/list stay index-first; see [testing.md](testing.md#huge-package-open-performance-issue-65).
 
@@ -99,6 +100,7 @@ Flags: `--max-packages`, `--max-total-bytes`, `--max-resources`; optional `--che
 sxpe --version
 sxpe app checkUpdate --format text
 sxpe resource list --package path/to/file.package --format json --limit 50
+sxpe resource list --package path/to/file.package --format table --all
 sxpe package info --package path/to/file.package
 sxpe resource rename --package path/to/file.package \
   --type 0x0333406C --group 0 --instance 0x1 --name NRaas.NoCD --force
