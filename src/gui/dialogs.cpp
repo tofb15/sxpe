@@ -1506,7 +1506,7 @@ void show_contents_dialog(QWidget* parent) {
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
         "built-in handlers (first-party only; plugins permanently unsupported), external programs (hex/text/S3SA viewer — not DLL plugins), save settings.</p>"
         "<h3>Help</h3>"
-        "<p>Contents (this window), <b>Common tasks</b> (links to workflows.md), "
+        "<p>Contents (this window), <b>Welcome</b>, <b>Common tasks</b> (links to workflows.md), "
         "Check for update (GitHub Releases; never auto-downloads), "
         "<b>Feedback</b> (GitHub Issues), About, Warranty, Licence.</p>"
         "<h3>Context menus</h3>"
@@ -2913,6 +2913,30 @@ void show_merge_assistant_dialog(
     dlg.exec();
 }
 
+void show_welcome_dialog(QWidget* parent, const std::function<void()>& open_merge_assistant) {
+    const QString prerelease = QObject::tr(
+        "SXPE is a pre-release build. Bugs may still be present. "
+        "Back up important packages before you modify them.");
+    QMessageBox box(parent);
+    box.setWindowTitle(QObject::tr("Welcome to SXPE"));
+    box.setIcon(QMessageBox::Information);
+    box.setText(QObject::tr("New here? Start with Help → Common tasks."));
+    box.setInformativeText(prerelease + QStringLiteral("\n\n") +
+                           QObject::tr("To combine a folder of custom-content packages into one "
+                                       "file, use Tools → Merge packages… (Merge assistant). "
+                                       "It previews count and size, merges with an SXMM "
+                                       "manifest, and can validate afterwards."));
+    auto* tasks = box.addButton(QObject::tr("Common tasks…"), QMessageBox::AcceptRole);
+    auto* merge = box.addButton(QObject::tr("Merge assistant…"), QMessageBox::ActionRole);
+    box.addButton(QObject::tr("Dismiss"), QMessageBox::RejectRole);
+    box.exec();
+    if (box.clickedButton() == tasks) {
+        show_common_tasks_dialog(parent);
+    } else if (box.clickedButton() == merge && open_merge_assistant) {
+        open_merge_assistant();
+    }
+}
+
 void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
                                   const std::function<void()>& open_merge_assistant) {
     if (smoke_mode) {
@@ -2927,34 +2951,16 @@ void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
         return;
     }
 
-    const QString prerelease = QObject::tr(
-        "SXPE is a pre-release build. Bugs may still be present. "
-        "Back up important packages before you modify them.");
-
     if (!seen_welcome) {
         st.setValue(QStringLiteral("onboarding/seenFirstRunTip"), true);
         st.setValue(QStringLiteral("onboarding/seenPrereleaseNote"), true);
-        QMessageBox box(parent);
-        box.setWindowTitle(QObject::tr("Welcome to SXPE"));
-        box.setIcon(QMessageBox::Information);
-        box.setText(QObject::tr("New here? Start with Help → Common tasks."));
-        box.setInformativeText(prerelease + QStringLiteral("\n\n") +
-                               QObject::tr("To combine a folder of custom-content packages into one "
-                                           "file, use Tools → Merge packages… (Merge assistant). "
-                                           "It previews count and size, merges with an SXMM "
-                                           "manifest, and can validate afterwards."));
-        auto* tasks = box.addButton(QObject::tr("Common tasks…"), QMessageBox::AcceptRole);
-        auto* merge = box.addButton(QObject::tr("Merge assistant…"), QMessageBox::ActionRole);
-        box.addButton(QObject::tr("Dismiss"), QMessageBox::RejectRole);
-        box.exec();
-        if (box.clickedButton() == tasks) {
-            show_common_tasks_dialog(parent);
-        } else if (box.clickedButton() == merge && open_merge_assistant) {
-            open_merge_assistant();
-        }
+        show_welcome_dialog(parent, open_merge_assistant);
         return;
     }
 
+    const QString prerelease = QObject::tr(
+        "SXPE is a pre-release build. Bugs may still be present. "
+        "Back up important packages before you modify them.");
     st.setValue(QStringLiteral("onboarding/seenPrereleaseNote"), true);
     QMessageBox box(parent);
     box.setWindowTitle(QObject::tr("Pre-release notice"));
