@@ -1,0 +1,89 @@
+# MAINTAINER-ONLY - not end-user documentation.
+# GitHub Actions workflow to attach portable artifacts on version tags (v0.7.0, …).
+# Live copy: .github/workflows/release.yml (same contents).
+# See docs/ci/README.md and docs/building.md.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-portable:
+    name: Windows portable zip
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: "6.8.2"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+          archives: qtbase
+
+      - uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 -BuildDir build -SkipBuild
+          Get-ChildItem dist -Filter "*.zip" | ForEach-Object { $_.FullName }
+
+      - name: Upload Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/sxpe-*-windows-x64.zip
+          fail_on_unmatched_files: true
+          body_path: docs/releases/v0.7.0.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  linux-cli:
+    name: Linux CLI/MCP tarball
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install ninja and CMake 3.28
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++ wget
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.sh
+          sudo sh cmake-3.28.6-linux-x86_64.sh --skip-license --prefix=/usr/local
+          cmake --version
+          g++ --version
+
+      - name: Configure, build, test
+        run: |
+          cmake --preset default
+          cmake --build --preset default --parallel
+          ctest --preset default --output-on-failure
+
+      - name: Package CLI+MCP
+        run: ./scripts/package-linux.sh --skip-build --no-gui
+
+      - name: Upload Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/sxpe-*-linux-x64-cli.tar.gz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

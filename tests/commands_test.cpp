@@ -5,17 +5,37 @@
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/merge_hygiene.hpp"
 #include "sxpe/resources/xml.hpp"
+#include "sxpe/resources/objd.hpp"
+#include "sxpe/resources/casp.hpp"
+#include "sxpe/resources/clip.hpp"
+#include "sxpe/resources/rcol.hpp"
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 
 #ifndef SXPE_SYNTHETIC_DIR
 #error "SXPE_SYNTHETIC_DIR required for sims3pack fixture tests"
 #endif
 
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 #include <nlohmann/json.hpp>
 #include <span>
 #include <string>
@@ -60,6 +80,47 @@ int main() {
 
     auto h = bus.execute("hash.fnv", json{{"text", "a"}, {"width", 32}});
     CHECK(h["ok"] == true);
+
+    const json latest_fixture = {{"tag_name", "v0.7.0"},
+                                 {"html_url", "https://github.com/tofb15/sxpe/releases/tag/v0.7.0"},
+                                 {"assets", json::array({json{{"name", "sxpe-0.7.0-windows-x64.zip"}}})}};
+    auto upd = bus.execute("app.checkUpdate", json{{"currentVersion", "0.7.0"},
+                                                   {"latestJson", latest_fixture.dump()}});
+    CHECK(upd["ok"] == true);
+    CHECK(upd["data"]["status"] == "upToDate");
+    CHECK(upd["data"]["downloads"] == false);
+    CHECK(upd["data"]["tagName"] == "v0.7.0");
+    CHECK(upd["data"]["assets"].is_array());
+    CHECK(upd["data"]["assets"].size() == 1);
+
+    auto upd_new = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.6.0"},
+             {"latestJsonPath",
+              (std::filesystem::path(SXPE_SYNTHETIC_DIR) / "github-latest.json").string()}});
+    CHECK(upd_new["ok"] == true);
+    CHECK(upd_new["data"]["status"] == "newerAvailable");
+    CHECK(upd_new["data"]["downloads"] == false);
+
+    auto upd_pre = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.6.0"},
+             {"latestJsonPath",
+              (std::filesystem::path(SXPE_SYNTHETIC_DIR) / "github-releases-prerelease.json")
+                  .string()}});
+    CHECK(upd_pre["ok"] == true);
+    CHECK(upd_pre["data"]["status"] == "newerAvailable");
+    CHECK(upd_pre["data"]["tagName"] == "v0.7.0");
+    CHECK(upd_pre["data"]["downloads"] == false);
+
+    auto upd_drafts = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.7.0"},
+             {"latestJsonPath",
+              (std::filesystem::path(SXPE_SYNTHETIC_DIR) / "github-releases-draft-only.json")
+                  .string()}});
+    CHECK(upd_drafts["ok"] == true);
+    CHECK(upd_drafts["data"]["status"] == "notFound");
 
     auto np = bus.execute("package.new", json::object());
     CHECK(np["ok"] == true);
@@ -151,6 +212,58 @@ int main() {
     char mag[4]{};
     df.read(mag, 4);
     CHECK(df.gcount() == 4 && mag[0] == 'D' && mag[1] == 'D' && mag[2] == 'S');
+    CHECK(dinfo["data"].value("decodeSupported", false) == true);
+
+    // dds.replace round-trip from exported path
+    auto drep = bus.execute("dds.replace", json{{"sessionId", sid},
+                                                {"resourceId", img_rid},
+                                                {"path", dds_out}});
+    CHECK(drep["ok"] == true);
+    CHECK(drep["data"].value("width", 0) == 4);
+    CHECK(drep["data"].value("format", "") == "A8R8G8B8");
+
+    // Cubemap refused by dds.replace (synthetic header + one DXT1 block)
+    {
+        std::vector<std::byte> cube;
+        auto put = [&](std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            cube.insert(cube.end(), p, p + 4);
+        };
+        put(0x20534444);
+        put(124);
+        put(0x1007);
+        put(4);
+        put(4);
+        put(8);
+        put(0);
+        put(1);
+        cube.insert(cube.end(), 44, std::byte{0});
+        put(32);
+        put(0x4);
+        put(0x31545844);
+        put(0);
+        put(0);
+        put(0);
+        put(0);
+        put(0);
+        put(0x1000);
+        put(0x200);  // cubemap
+        put(0);
+        put(0);
+        put(0);
+        cube.insert(cube.end(), 8, std::byte{0});
+        auto cube_path = (tmp / "cube.dds").string();
+        {
+            std::ofstream cf(cube_path, std::ios::binary);
+            cf.write(reinterpret_cast<const char*>(cube.data()),
+                     static_cast<std::streamsize>(cube.size()));
+        }
+        auto crep = bus.execute("dds.replace", json{{"sessionId", sid},
+                                                    {"resourceId", img_rid},
+                                                    {"path", cube_path}});
+        CHECK(crep["ok"] == false);
+        CHECK(crep["error"].value("message", "").find("cubemap") != std::string::npos);
+    }
 
     auto got = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
     CHECK(got["ok"] == true);
@@ -664,11 +777,109 @@ int main() {
         const auto cid = cs["data"]["sessionId"].get<std::string>();
         const auto clip_rid =
             json{{"type", sxpe::resources::kClip}, {"group", 0}, {"instance", 1}};
-        std::vector<std::byte> clip_body{std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu16 = [](std::vector<std::byte>& o, std::uint16_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 2);
+        };
+        auto wf32 = [](std::vector<std::byte>& o, float v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wcstr = [](std::vector<std::byte>& o, const char* s) {
+            while (*s) {
+                o.push_back(static_cast<std::byte>(static_cast<unsigned char>(*s++)));
+            }
+            o.push_back(std::byte{0});
+        };
+        std::vector<std::byte> s3;
+        const char mag[] = "_S3Clip_";
+        s3.insert(s3.end(), reinterpret_cast<const std::byte*>(mag),
+                  reinterpret_cast<const std::byte*>(mag) + 8);
+        wu32(s3, 2);
+        wu32(s3, 0);
+        wf32(s3, 1.0f / 30.0f);
+        wu16(s3, 30);
+        wu16(s3, 0);
+        wu32(s3, 1);
+        wu32(s3, 0);
+        const auto rules_off_field = s3.size();
+        wu32(s3, 0);
+        wu32(s3, 0);
+        const auto anim_off_field = s3.size();
+        wu32(s3, 0);
+        const auto src_off_field = s3.size();
+        wu32(s3, 0);
+        auto patch_u32 = [&](std::size_t at, std::uint32_t v) {
+            std::memcpy(s3.data() + at, &v, 4);
+        };
+        const auto anim_at = s3.size();
+        wcstr(s3, "a_walk");
+        const auto src_at = s3.size();
+        wcstr(s3, "walk.mb");
+        const auto rules_at = s3.size();
+        wu32(s3, 0);
+        wu32(s3, 0xABCDu);
+        wf32(s3, 0.0f);
+        wf32(s3, 1.0f);
+        wu16(s3, 1);
+        wu16(s3, 0x112);
+        patch_u32(rules_off_field, static_cast<std::uint32_t>(rules_at));
+        patch_u32(anim_off_field, static_cast<std::uint32_t>(anim_at));
+        patch_u32(src_off_field, static_cast<std::uint32_t>(src_at));
+        std::vector<std::byte> header;
+        wu32(header, sxpe::resources::kClip);
+        wu32(header, 0);
+        wu32(header, static_cast<std::uint32_t>(s3.size()));
+        wu32(header, 44);
+        wu32(header, 0);
+        wu32(header, 0);
+        wu32(header, 0);
+        wu32(header, 0);
+        wu32(header, 1);
+        wu32(header, 0);
+        for (int i = 0; i < 16; ++i) {
+            header.push_back(std::byte{0});
+        }
+        std::vector<std::byte> clip_body = header;
+        clip_body.insert(clip_body.end(), s3.begin(), s3.end());
+
         CHECK(bus.execute("resource.add",
                           json{{"sessionId", cid},
                                {"resourceId", clip_rid},
                                {"payloadB64", b64(clip_body)}})["ok"] == true);
+
+        auto info = bus.execute("clip.info",
+                                json{{"sessionId", cid}, {"resourceId", clip_rid}});
+        CHECK(info["ok"] == true);
+        CHECK(info["data"]["animName"] == "a_walk");
+        CHECK(info["data"]["sourceFile"] == "walk.mb");
+        CHECK(info["data"]["trackCount"] == 1);
+        CHECK(info["data"].contains("safeFields"));
+
+        auto set = bus.execute(
+            "clip.set",
+            json{{"sessionId", cid},
+                 {"resourceId", clip_rid},
+                 {"animName", "t_walk"},
+                 {"sourceFile", "renamed.mb"},
+                 {"actorName", "actor0"},
+                 {"trackHashes", json::array({json{{"index", 0}, {"hash", 0x1111u}}})}});
+        CHECK(set["ok"] == true);
+        CHECK(set["data"]["animName"] == "t_walk");
+        CHECK(set["data"]["sourceFile"] == "renamed.mb");
+        CHECK(set["data"]["actorName"] == "actor0");
+        CHECK(set["data"]["trackHashes"][0] == 0x1111u);
+
+        auto info2 = bus.execute("clip.info",
+                                 json{{"sessionId", cid}, {"resourceId", clip_rid}});
+        CHECK(info2["ok"] == true);
+        CHECK(info2["data"]["animName"] == "t_walk");
+
         auto exp = bus.execute(
             "clip.exportAs",
             json{{"sessionId", cid}, {"resourceId", clip_rid}, {"name", "a_walk"}});
@@ -676,6 +887,20 @@ int main() {
         constexpr std::uint64_t kFrozenAWalk = 0x11a06ab91bca6bdeull;
         CHECK(exp["data"]["resourceId"]["instance"].get<std::uint64_t>() == kFrozenAWalk);
         CHECK(exp["data"]["resourceId"]["type"].get<std::uint32_t>() == sxpe::resources::kClip);
+
+        auto batch = bus.execute(
+            "clip.exportAsBatch",
+            json{{"sessionId", cid},
+                 {"dryRun", true},
+                 {"items",
+                  json::array({json{{"resourceId", clip_rid}, {"name", "t_walk"}},
+                               json{{"resourceId", clip_rid}, {"name", "a2a_sit"}}})}});
+        CHECK(batch["ok"] == true);
+        CHECK(batch["data"]["succeeded"] == 2);
+        CHECK(batch["data"]["failed"] == 0);
+        CHECK(batch["data"]["results"].size() == 2);
+        CHECK(batch["data"]["results"][0]["data"]["dryRun"] == true);
+
         bus.execute("package.close", json{{"sessionId", cid}});
     }
 
@@ -1743,6 +1968,1283 @@ int main() {
         CHECK(uinfo["data"].value("pathKind", "") == "package");
         bus.execute("package.close", json{{"sessionId", uid}});
         bus.execute("package.close", json{{"sessionId", nid}});
+    }
+
+
+    // Issue #63: large-merge resilience — synthetic many-small packages, caps, progress,
+    // explicit checkpoint, temp hygiene (no EA files).
+    {
+        auto merge_dir = tmp / "large-merge-63";
+        std::filesystem::remove_all(merge_dir);
+        std::filesystem::create_directories(merge_dir);
+
+        auto write_tiny = [&](const std::filesystem::path& path, std::uint64_t inst,
+                              const std::string& payload) {
+            auto created = bus.execute("package.new", json::object());
+            CHECK(created["ok"] == true);
+            const auto sid = created["data"]["sessionId"].get<std::string>();
+            std::vector<std::byte> bytes(payload.size());
+            for (std::size_t i = 0; i < payload.size(); ++i) {
+                bytes[i] = static_cast<std::byte>(payload[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", 0x12345678},
+                                         {"group", 0},
+                                         {"instance", inst}}},
+                                   {"payloadB64", b64(bytes)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid},
+                                   {"path", path.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        };
+
+        constexpr int kMany = 40;
+        json paths = json::array();
+        for (int i = 0; i < kMany; ++i) {
+            auto path = merge_dir / ("tiny-" + std::to_string(i) + ".package");
+            write_tiny(path, static_cast<std::uint64_t>(1000 + i),
+                       "sxpe-synthetic-" + std::to_string(i));
+            paths.push_back(path.string());
+        }
+
+        auto count_sxpe_tmps = [&](const std::filesystem::path& dir) {
+            int n = 0;
+            std::error_code ec;
+            for (auto it = std::filesystem::directory_iterator(dir, ec);
+                 !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+                const auto name = it->path().filename().string();
+                if (name.find(".sxpe-tmp-") != std::string::npos) {
+                    ++n;
+                }
+            }
+            return n;
+        };
+
+        // Caps: refuse before work when too many packages.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto capped = bus.execute("resource.importPackage",
+                                      json{{"sessionId", sid},
+                                           {"paths", paths},
+                                           {"force", true},
+                                           {"maxPackages", 5},
+                                           {"reportProgress", false}});
+            CHECK(capped["ok"] == false);
+            CHECK(capped["error"].value("code", "") == "cap_exceeded");
+            CHECK(capped["error"].value("message", std::string{}).find("split the job") !=
+                  std::string::npos);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Caps: refuse oversized total input bytes.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto capped = bus.execute("resource.importPackage",
+                                      json{{"sessionId", sid},
+                                           {"paths", paths},
+                                           {"force", true},
+                                           {"maxTotalBytes", 1},
+                                           {"reportProgress", false}});
+            CHECK(capped["ok"] == false);
+            CHECK(capped["error"].value("code", "") == "cap_exceeded");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Happy path: many small packages + progress events; no leftover temps.
+        {
+            std::vector<json> seen;
+            bus.set_progress_handler([&](const json& ev) { seen.push_back(ev); });
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", paths},
+                                        {"force", true},
+                                        {"writeMergeManifest", true},
+                                        {"reportProgress", true}});
+            bus.clear_progress_handler();
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("imported", 0) == kMany);
+            CHECK(imp["data"].value("packages", 0) == kMany);
+            CHECK(imp["data"].contains("progress"));
+            CHECK(imp["data"]["progress"].is_array());
+            CHECK(imp["data"]["progress"].size() >= static_cast<std::size_t>(kMany + 2));
+            CHECK(!seen.empty());
+            CHECK(seen.front().value("phase", "") == "start");
+            CHECK(seen.back().value("phase", "") == "done");
+            auto out = (merge_dir / "merged-many.package").string();
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", out}, {"force", true}})["ok"] ==
+                  true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            CHECK(count_sxpe_tmps(merge_dir) == 0);
+        }
+
+        // Explicit checkpoint between packages remaps without mysterious autosave.
+        {
+            auto ck = merge_dir / "checkpoint.package";
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            json first_two = json::array({paths[0], paths[1], paths[2]});
+            auto imp = bus.execute(
+                "resource.importPackage",
+                json{{"sessionId", sid},
+                     {"paths", first_two},
+                     {"force", true},
+                     {"writeMergeManifest", true},
+                     {"checkpointBetweenPackages", true},
+                     {"checkpointPath", ck.string()},
+                     {"reportProgress", true}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("checkpointBetweenPackages", false) == true);
+            CHECK(std::filesystem::exists(ck));
+            bool saw_ck = false;
+            for (const auto& ev : imp["data"]["progress"]) {
+                if (ev.value("phase", "") == "checkpoint" && ev.value("ok", false)) {
+                    saw_ck = true;
+                }
+            }
+            CHECK(saw_ck);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            CHECK(count_sxpe_tmps(merge_dir) == 0);
+        }
+
+        // Mid-merge failure (bad path after good ones) leaves no orphan sxpe temps.
+        {
+            json mixed = json::array();
+            mixed.push_back(paths[0]);
+            mixed.push_back(paths[1]);
+            mixed.push_back((merge_dir / "does-not-exist.package").string());
+            mixed.push_back(paths[2]);
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto ck = merge_dir / "fail-checkpoint.package";
+            auto imp = bus.execute(
+                "resource.importPackage",
+                json{{"sessionId", sid},
+                     {"paths", mixed},
+                     {"force", true},
+                     {"checkpointBetweenPackages", true},
+                     {"checkpointPath", ck.string()},
+                     {"reportProgress", true}});
+            // Partial success still ok envelope when some imported.
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("failed", 0) >= 1);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            CHECK(count_sxpe_tmps(merge_dir) == 0);
+        }
+
+        // checkpointBetweenPackages without path is refused (explicit, not autosave).
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto bad = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({paths[0]})},
+                                        {"force", true},
+                                        {"checkpointBetweenPackages", true}});
+            CHECK(bad["ok"] == false);
+            CHECK(bad["error"].value("message", std::string{}).find("checkpointPath") !=
+                  std::string::npos);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+    }
+
+
+    // Issue #66: cancel mid-import rolls session back (no corrupt package); GUI/CLI share bus.
+    {
+        auto cancel_dir = tmp / "cancel-66";
+        std::filesystem::remove_all(cancel_dir);
+        std::filesystem::create_directories(cancel_dir);
+
+        auto write_tiny = [&](const std::filesystem::path& path, std::uint64_t inst,
+                              const std::string& payload) {
+            auto created = bus.execute("package.new", json::object());
+            CHECK(created["ok"] == true);
+            const auto sid = created["data"]["sessionId"].get<std::string>();
+            std::vector<std::byte> bytes(payload.size());
+            for (std::size_t i = 0; i < payload.size(); ++i) {
+                bytes[i] = static_cast<std::byte>(payload[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", 0x12345678},
+                                         {"group", 0},
+                                         {"instance", inst}}},
+                                   {"payloadB64", b64(bytes)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid},
+                                   {"path", path.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        };
+
+        json paths = json::array();
+        for (int i = 0; i < 8; ++i) {
+            auto path = cancel_dir / ("c-" + std::to_string(i) + ".package");
+            write_tiny(path, static_cast<std::uint64_t>(5000 + i),
+                       "cancel-payload-" + std::to_string(i));
+            paths.push_back(path.string());
+        }
+
+        // Seed session with a marker resource that must survive cancel.
+        auto sess = bus.execute("package.new", json::object());
+        CHECK(sess["ok"] == true);
+        const auto sid = sess["data"]["sessionId"].get<std::string>();
+        const std::string marker = "baseline-must-survive-cancel";
+        std::vector<std::byte> mbytes(marker.size());
+        for (std::size_t i = 0; i < marker.size(); ++i) {
+            mbytes[i] = static_cast<std::byte>(marker[i]);
+        }
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid},
+                               {"resourceId",
+                                json{{"type", 0xABCDEF01},
+                                     {"group", 7},
+                                     {"instance", 99}}},
+                               {"payloadB64", b64(mbytes)}})["ok"] == true);
+        auto before = bus.execute("package.info", json{{"sessionId", sid}});
+        CHECK(before["ok"] == true);
+        const auto baseline = before["data"].value("indexCount", 0u);
+        CHECK(baseline == 1);
+
+        // Cancel after two successful packages via cancel_check (simulates GUI Cancel).
+        int packages_done_seen = 0;
+        bus.clear_cancel();
+        bus.set_cancel_check([&] {
+            return packages_done_seen >= 2;
+        });
+        bus.set_progress_handler([&](const json& ev) {
+            if (ev.value("phase", "") == "package" && ev.value("ok", false)) {
+                packages_done_seen = ev.value("packagesDone", packages_done_seen);
+            }
+        });
+        auto imp = bus.execute("resource.importPackage",
+                               json{{"sessionId", sid},
+                                    {"paths", paths},
+                                    {"force", true},
+                                    {"reportProgress", true}});
+        bus.clear_progress_handler();
+        bus.clear_cancel_check();
+        bus.clear_cancel();
+
+        CHECK(imp["ok"] == false);
+        CHECK(imp["error"].value("code", "") == "refused");
+        CHECK(imp["error"].value("message", std::string{}) == "cancelled");
+        CHECK(imp["error"].value("side_effects", "") == "none");
+        CHECK(imp.contains("data"));
+        CHECK(imp["data"].value("cancelled", false) == true);
+        CHECK(imp["data"].value("rolledBack", true) == true);
+        CHECK(imp["data"].value("indexCount", 999u) == baseline);
+
+        auto after = bus.execute("package.info", json{{"sessionId", sid}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"].value("indexCount", 0u) == baseline);
+        CHECK(after["data"].value("dirty", true) == true);  // seed add left dirty
+
+        auto got = bus.execute("resource.read",
+                               json{{"sessionId", sid},
+                                    {"resourceId",
+                                     json{{"type", 0xABCDEF01},
+                                          {"group", 7},
+                                          {"instance", 99}}},
+                                    {"includePayload", true}});
+        CHECK(got["ok"] == true);
+        // payloadB64 round-trip
+        CHECK(got["data"].contains("payloadB64"));
+
+        // request_cancel() path (CLI SIGINT): flag set during execute via progress start.
+        bus.clear_cancel();
+        bus.set_progress_handler([&](const json& ev) {
+            if (ev.value("phase", "") == "start") {
+                bus.request_cancel();
+            }
+        });
+        auto imp2 = bus.execute("resource.importPackage",
+                                json{{"sessionId", sid},
+                                     {"paths", paths},
+                                     {"force", true},
+                                     {"reportProgress", true}});
+        bus.clear_progress_handler();
+        bus.clear_cancel();
+        CHECK(imp2["ok"] == false);
+        CHECK(imp2["error"].value("message", std::string{}) == "cancelled");
+        CHECK(imp2["data"].value("rolledBack", false) == true);
+        auto after2 = bus.execute("package.info", json{{"sessionId", sid}});
+        CHECK(after2["data"].value("indexCount", 0u) == baseline);
+
+        // Force-replace then cancel: pre-existing payload restored.
+        {
+            // Build package that force-replaces our marker TGI.
+            auto created = bus.execute("package.new", json::object());
+            const auto psid = created["data"]["sessionId"].get<std::string>();
+            const std::string evil = "should-not-stick";
+            std::vector<std::byte> ebytes(evil.size());
+            for (std::size_t i = 0; i < evil.size(); ++i) {
+                ebytes[i] = static_cast<std::byte>(evil[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", psid},
+                                   {"resourceId",
+                                    json{{"type", 0xABCDEF01},
+                                         {"group", 7},
+                                         {"instance", 99}}},
+                                   {"payloadB64", b64(ebytes)}})["ok"] == true);
+            // Add filler so cancel can fire mid-job after first package starts mutating.
+            for (int i = 0; i < 5; ++i) {
+                CHECK(bus.execute(
+                    "resource.add",
+                    json{{"sessionId", psid},
+                         {"resourceId",
+                          json{{"type", 0x11111111},
+                               {"group", 0},
+                               {"instance", static_cast<std::uint64_t>(7000 + i)}}},
+                         {"payloadB64", b64(mbytes)}})["ok"] == true);
+            }
+            auto force_path = cancel_dir / "force-src.package";
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", psid},
+                                   {"path", force_path.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", psid}});
+
+            int seen_pkg = 0;
+            bus.set_cancel_check([&] { return seen_pkg >= 1; });
+            bus.set_progress_handler([&](const json& ev) {
+                if (ev.value("phase", "") == "package" && ev.value("ok", false)) {
+                    seen_pkg = ev.value("packagesDone", seen_pkg);
+                }
+            });
+            // Import force-src + remaining tinies so cancel fires after first package.
+            json mix = json::array();
+            mix.push_back(force_path.string());
+            for (const auto& p : paths) {
+                mix.push_back(p);
+            }
+            auto fim = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", mix},
+                                        {"force", true},
+                                        {"duplicateTgiPolicy", "force"},
+                                        {"reportProgress", true}});
+            bus.clear_progress_handler();
+            bus.clear_cancel_check();
+            CHECK(fim["ok"] == false);
+            CHECK(fim["data"].value("cancelled", false) == true);
+            auto got2 = bus.execute("resource.read",
+                                    json{{"sessionId", sid},
+                                         {"resourceId",
+                                          json{{"type", 0xABCDEF01},
+                                               {"group", 7},
+                                               {"instance", 99}}},
+                                         {"includePayload", true}});
+            CHECK(got2["ok"] == true);
+            // Still baseline marker, not evil overwrite.
+            CHECK(got2["data"].value("payloadB64", "") == b64(mbytes));
+            auto info3 = bus.execute("package.info", json{{"sessionId", sid}});
+            CHECK(info3["data"].value("indexCount", 0u) == baseline);
+        }
+
+        bus.execute("package.close", json{{"sessionId", sid}});
+    }
+
+
+    // Issue #64: merge conflict hygiene — leftover Sims3Pack manifests + duplicate TGI policy.
+    {
+        auto hyg = tmp / "hygiene-64";
+        std::filesystem::remove_all(hyg);
+        std::filesystem::create_directories(hyg);
+
+        const auto leftover_type = static_cast<int>(sxpe::resources::kSims3PackLeftoverManifest);
+        CHECK(sxpe::resources::is_leftover_manifest_tgi(
+            sxpe::resources::kSims3PackLeftoverManifest, 0, 0));
+        CHECK(!sxpe::resources::is_leftover_manifest_tgi(
+            sxpe::resources::kSims3PackLeftoverManifest, 0, 1));
+
+        auto mk_pkg = [&](const std::string& name, int type, int instance,
+                          bool with_leftover) -> std::string {
+            auto sess = bus.execute("package.new", json::object());
+            CHECK(sess["ok"] == true);
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", type}, {"group", 0}, {"instance", instance}}},
+                                   {"payloadB64", b64(*raw)}})["ok"] == true);
+            if (with_leftover) {
+                CHECK(bus.execute(
+                          "resource.add",
+                          json{{"sessionId", sid},
+                               {"resourceId",
+                                json{{"type", leftover_type}, {"group", 0}, {"instance", 0}}},
+                               {"payloadB64", b64(*raw)}})["ok"] == true);
+            }
+            auto path = (hyg / name).string();
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", path}, {"force", true}})["ok"] ==
+                  true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            return path;
+        };
+
+        const auto pa = mk_pkg("left-a.package", 101, 101, true);
+        const auto pb = mk_pkg("left-b.package", 102, 102, true);
+
+        // Default strip: leftovers gone; validate clean for leftover_manifest.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa, pb})},
+                                        {"force", true},
+                                        {"writeMergeManifest", true}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("leftoverManifestPolicy", "") == "strip");
+            CHECK(imp["data"]["strippedLeftovers"].is_array());
+            CHECK(imp["data"]["strippedLeftovers"].size() == 2);
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 50}});
+            CHECK(list["ok"] == true);
+            int leftovers = 0;
+            int content = 0;
+            for (const auto& it : list["data"]["items"]) {
+                if (it["type"] == leftover_type && it["instance"] == 0) {
+                    ++leftovers;
+                }
+                if (it["type"] == 101 || it["type"] == 102) {
+                    ++content;
+                }
+            }
+            CHECK(leftovers == 0);
+            CHECK(content == 2);
+            auto val = bus.execute("package.validate", json{{"sessionId", sid}});
+            CHECK(val["ok"] == true);
+            CHECK(val["data"].value("ok", false) == true);
+            bool saw_leftover_issue = false;
+            for (const auto& iss : val["data"]["issues"]) {
+                if (iss == "leftover_manifest") {
+                    saw_leftover_issue = true;
+                }
+            }
+            CHECK(!saw_leftover_issue);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // keep: leftovers present; validate flags hotspot.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa})},
+                                        {"force", true},
+                                        {"leftoverManifestPolicy", "keep"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"]["strippedLeftovers"].empty());
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 50}});
+            int leftovers = 0;
+            for (const auto& it : list["data"]["items"]) {
+                if (it["type"] == leftover_type && it["instance"] == 0) {
+                    ++leftovers;
+                }
+            }
+            CHECK(leftovers == 1);
+            auto val = bus.execute("package.validate", json{{"sessionId", sid}});
+            CHECK(val["ok"] == true);
+            CHECK(val["data"].value("ok", false) == false);
+            bool saw = false;
+            for (const auto& iss : val["data"]["issues"]) {
+                if (iss == "leftover_manifest") {
+                    saw = true;
+                }
+            }
+            CHECK(saw);
+            CHECK(val["data"]["conflictHotspots"].is_array());
+            CHECK(val["data"]["conflictHotspots"].size() >= 1);
+            bool summary_hot = false;
+            for (const auto& line : val["data"]["summary"]) {
+                if (line.is_string() &&
+                    line.get<std::string>().find("Conflict hotspots") != std::string::npos) {
+                    summary_hot = true;
+                }
+            }
+            CHECK(summary_hot);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // warn: copied + listed in warnings.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa})},
+                                        {"force", true},
+                                        {"leftoverManifestPolicy", "warn"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"]["warnings"].is_array());
+            CHECK(imp["data"]["warnings"].size() == 1);
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 50}});
+            int leftovers = 0;
+            for (const auto& it : list["data"]["items"]) {
+                if (it["type"] == leftover_type && it["instance"] == 0) {
+                    ++leftovers;
+                }
+            }
+            CHECK(leftovers == 1);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Duplicate TGI policy: two sources share type/group/instance.
+        const auto d1 = mk_pkg("dup-a.package", 201, 201, false);
+        const auto d2 = mk_pkg("dup-b.package", 201, 201, false);
+
+        // fail (default without force)
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.importPackage",
+                              json{{"sessionId", sid},
+                                   {"paths", json::array({d1})},
+                                   {"force", true},
+                                   {"leftoverManifestPolicy", "strip"}})["ok"] == true);
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({d2})},
+                                        {"force", false},
+                                        {"duplicateTgiPolicy", "fail"}});
+            CHECK(imp["ok"] == false || imp["data"].value("failed", 0) >= 1 ||
+                  imp["data"].value("imported", 0) == 0);
+            // When first package already filled dest, second with fail should error.
+            if (imp["ok"] == true) {
+                CHECK(imp["data"].value("failed", 0) >= 1);
+            }
+            CHECK(imp.contains("data") ? imp["data"].value("duplicateTgiPolicy", "") == "fail" ||
+                                             !imp["ok"]
+                                       : !imp["ok"]);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // skip: dest kept, duplicate listed
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.importPackage",
+                              json{{"sessionId", sid},
+                                   {"paths", json::array({d1})},
+                                   {"force", true}})["ok"] == true);
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({d2})},
+                                        {"duplicateTgiPolicy", "skip"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("duplicateTgiPolicy", "") == "skip");
+            CHECK(imp["data"]["duplicates"].is_array());
+            CHECK(imp["data"]["duplicates"].size() >= 1);
+            CHECK(imp["data"]["duplicates"][0].value("action", "") == "skip");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // force: overwrite + listed
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.importPackage",
+                              json{{"sessionId", sid},
+                                   {"paths", json::array({d1})},
+                                   {"force", true}})["ok"] == true);
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({d2})},
+                                        {"duplicateTgiPolicy", "force"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("duplicateTgiPolicy", "") == "force");
+            CHECK(imp["data"]["duplicates"].size() >= 1);
+            CHECK(imp["data"]["duplicates"][0].value("action", "") == "force");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // importDbc shares leftover strip (DBC-equivalent parity)
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importDbc",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa})},
+                                        {"force", true}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("leftoverManifestPolicy", "") == "strip");
+            CHECK(imp["data"]["strippedLeftovers"].size() == 1);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+    }
+
+
+    // Issue #65: huge-package open performance — synthetic large index, RO threshold, preview caps.
+    {
+        auto huge = tmp / "huge-65";
+        std::filesystem::remove_all(huge);
+        std::filesystem::create_directories(huge);
+
+        auto poke_u32 = [](std::vector<std::byte>& o, std::size_t off, std::uint32_t v) {
+            for (int i = 0; i < 4; ++i) {
+                o[off + static_cast<std::size_t>(i)] = static_cast<std::byte>((v >> (8 * i)) & 0xFFu);
+            }
+        };
+
+        // Large-index package: N empty rows, payloads share offset 96 / size 0 (O(index) open).
+        const auto n_entries = sxpe::core::caps::kLargeIndexBenchmarkEntries;
+        {
+            const std::uint32_t index_size = 4u + n_entries * 32u;
+            std::vector<std::byte> file(96u + index_size, std::byte{0});
+            file[0] = std::byte{'D'};
+            file[1] = std::byte{'B'};
+            file[2] = std::byte{'P'};
+            file[3] = std::byte{'F'};
+            poke_u32(file, 4, 2);           // major
+            poke_u32(file, 0x24, n_entries);
+            poke_u32(file, 0x2C, index_size);
+            poke_u32(file, 0x3C, 3);        // index version
+            poke_u32(file, 0x40, 96);       // index pos
+            std::size_t off = 96;
+            poke_u32(file, off, 0);  // indexType = 0 (no shared)
+            off += 4;
+            for (std::uint32_t i = 0; i < n_entries; ++i) {
+                poke_u32(file, off + 0, 1);              // type
+                poke_u32(file, off + 4, 0);              // group
+                poke_u32(file, off + 8, 0);              // instance hi
+                poke_u32(file, off + 12, i);             // instance lo
+                poke_u32(file, off + 16, 96);            // chunk
+                poke_u32(file, off + 20, 0x80000000u);   // file_size high bit, len 0
+                poke_u32(file, off + 24, 0);             // mem_size
+                poke_u32(file, off + 28, 0);             // flags
+                off += 32;
+            }
+            auto path = huge / "large-index.package";
+            {
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(file.data()),
+                        static_cast<std::streamsize>(file.size()));
+            }
+
+            auto t0 = std::chrono::steady_clock::now();
+            auto opened = bus.execute("package.open", json{{"path", path.string()}});
+            auto ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count());
+            CHECK(opened["ok"] == true);
+            CHECK(opened["data"].value("indexCount", 0u) == n_entries);
+            CHECK(opened["data"].contains("openMs"));
+            CHECK(ms <= sxpe::core::caps::kLargeIndexOpenBudgetMs);
+            CHECK(opened["data"].value("openMs", 999999ull) <=
+                  sxpe::core::caps::kLargeIndexOpenBudgetMs);
+            const auto sid = opened["data"]["sessionId"].get<std::string>();
+
+            auto t_list0 = std::chrono::steady_clock::now();
+            auto page1 = bus.execute("resource.list",
+                                     json{{"sessionId", sid}, {"limit", 100}});
+            auto page2 = bus.execute(
+                "resource.list",
+                json{{"sessionId", sid},
+                     {"limit", 100},
+                     {"cursor", page1["data"].value("nextCursor", "")}});
+            auto list_ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t_list0)
+                    .count());
+            CHECK(page1["ok"] == true);
+            CHECK(page1["data"]["items"].size() == 100);
+            CHECK(page1["data"].value("truncated", false) == true);
+            CHECK(page2["ok"] == true);
+            CHECK(page2["data"]["items"].size() == 100);
+            // Two paged lists must stay snappy (name cache + no payload decode).
+            CHECK(list_ms <= sxpe::core::caps::kLargeIndexOpenBudgetMs);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Oversized mem_size row: open/list OK; decode/preview refuse with cap_exceeded.
+        {
+            const std::uint32_t mem =
+                sxpe::core::caps::kMaxLivePreviewBytes + (1u << 20);
+            std::vector<std::byte> file(96 + 4 + 32, std::byte{0});
+            file[0] = std::byte{'D'};
+            file[1] = std::byte{'B'};
+            file[2] = std::byte{'P'};
+            file[3] = std::byte{'F'};
+            poke_u32(file, 4, 2);
+            poke_u32(file, 0x24, 1);
+            poke_u32(file, 0x2C, 4 + 32);
+            poke_u32(file, 0x3C, 3);
+            poke_u32(file, 0x40, 96);
+            poke_u32(file, 96, 0);
+            std::size_t off = 100;
+            poke_u32(file, off + 0, 0x00B2D882);  // _IMG-ish
+            poke_u32(file, off + 4, 0);
+            poke_u32(file, off + 8, 0);
+            poke_u32(file, off + 12, 1);
+            poke_u32(file, off + 16, 96);
+            poke_u32(file, off + 20, 0x80000000u);  // empty on disk
+            poke_u32(file, off + 24, mem);
+            poke_u32(file, off + 28, 0x0000FFFFu);  // compressed
+            auto path = huge / "huge-resource.package";
+            {
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(file.data()),
+                        static_cast<std::streamsize>(file.size()));
+            }
+            auto opened = bus.execute("package.open", json{{"path", path.string()}});
+            CHECK(opened["ok"] == true);
+            const auto sid = opened["data"]["sessionId"].get<std::string>();
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 10}});
+            CHECK(list["ok"] == true);
+            CHECK(list["data"]["items"].size() == 1);
+            CHECK(list["data"]["items"][0].value("memSize", 0u) == mem);
+            auto hex = bus.execute(
+                "hex.get",
+                json{{"sessionId", sid},
+                     {"resourceId", list["data"]["items"][0]},
+                     {"maxBytes", 256}});
+            CHECK(hex["ok"] == false);
+            CHECK(hex["error"].value("code", "") == "cap_exceeded");
+            auto text = bus.execute(
+                "text.get",
+                json{{"sessionId", sid},
+                     {"resourceId", list["data"]["items"][0]},
+                     {"maxBytes", 256}});
+            CHECK(text["ok"] == false);
+            CHECK(text["error"].value("code", "") == "cap_exceeded");
+            auto readp = bus.execute(
+                "resource.read",
+                json{{"sessionId", sid},
+                     {"resourceId", list["data"]["items"][0]},
+                     {"includePayload", true},
+                     {"maxBytes", 256}});
+            CHECK(readp["ok"] == false);
+            CHECK(readp["error"].value("code", "") == "cap_exceeded");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Entry above kMaxResourceBytes: package still opens (index path).
+        {
+            const std::uint32_t mem = sxpe::core::caps::kMaxResourceBytes + 1;
+            std::vector<std::byte> file(96 + 4 + 32, std::byte{0});
+            file[0] = std::byte{'D'};
+            file[1] = std::byte{'B'};
+            file[2] = std::byte{'P'};
+            file[3] = std::byte{'F'};
+            poke_u32(file, 4, 2);
+            poke_u32(file, 0x24, 1);
+            poke_u32(file, 0x2C, 4 + 32);
+            poke_u32(file, 0x3C, 3);
+            poke_u32(file, 0x40, 96);
+            poke_u32(file, 96, 0);
+            std::size_t off = 100;
+            poke_u32(file, off + 0, 1);
+            poke_u32(file, off + 4, 0);
+            poke_u32(file, off + 8, 0);
+            poke_u32(file, off + 12, 9);
+            poke_u32(file, off + 16, 96);
+            poke_u32(file, off + 20, 0x80000000u);
+            poke_u32(file, off + 24, mem);
+            poke_u32(file, off + 28, 0);
+            auto path = huge / "oversize-entry.package";
+            {
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(file.data()),
+                        static_cast<std::streamsize>(file.size()));
+            }
+            auto opened = bus.execute("package.open", json{{"path", path.string()}});
+            CHECK(opened["ok"] == true);
+            CHECK(opened["data"].value("indexCount", 0) == 1);
+            bus.execute("package.close",
+                        json{{"sessionId", opened["data"]["sessionId"].get<std::string>()}});
+        }
+
+        // Auto read-only above kOpenReadOnlyBytes (sparse file — no full disk write).
+        {
+            auto path = huge / "sparse-ro.package";
+            {
+                std::vector<std::byte> header(100, std::byte{0});
+                header[0] = std::byte{'D'};
+                header[1] = std::byte{'B'};
+                header[2] = std::byte{'P'};
+                header[3] = std::byte{'F'};
+                poke_u32(header, 4, 2);
+                poke_u32(header, 0x24, 0);
+                poke_u32(header, 0x2C, 4);
+                poke_u32(header, 0x3C, 3);
+                poke_u32(header, 0x40, 96);
+                poke_u32(header, 96, 0);
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(header.data()),
+                        static_cast<std::streamsize>(header.size()));
+            }
+            std::filesystem::resize_file(path, sxpe::core::caps::kOpenReadOnlyBytes);
+            auto demoted = bus.execute(
+                "package.open", json{{"path", path.string()}, {"writable", true}});
+            CHECK(demoted["ok"] == true);
+            CHECK(demoted["data"].value("openedReadOnlyDueToSize", false) == true);
+            CHECK(demoted["data"].value("readWrite", true) == false);
+            bus.execute("package.close",
+                        json{{"sessionId", demoted["data"]["sessionId"].get<std::string>()}});
+
+            auto forced = bus.execute(
+                "package.open",
+                json{{"path", path.string()}, {"writable", true}, {"forceWritable", true}});
+            CHECK(forced["ok"] == true);
+            CHECK(forced["data"].value("openedReadOnlyDueToSize", true) == false);
+            CHECK(forced["data"].value("readWrite", false) == true);
+            bus.execute("package.close",
+                        json{{"sessionId", forced["data"]["sessionId"].get<std::string>()}});
+        }
+    }
+
+
+    // Issue #68: locked package → actionable bus error; Mods path warning when exclusive unavailable.
+    {
+        auto tmp68 = std::filesystem::temp_directory_path() / "sxpe-m68";
+        std::error_code ec68;
+        std::filesystem::remove_all(tmp68, ec68);
+        std::filesystem::create_directories(tmp68, ec68);
+        sxpe::commands::Bus bus68;
+        auto mk = bus68.execute("package.new", json::object());
+        CHECK(mk["ok"] == true);
+        const auto sid = mk["data"]["sessionId"].get<std::string>();
+        auto pkg_path = (tmp68 / "plain.package").string();
+        CHECK(bus68.execute("package.saveAs",
+                            json{{"sessionId", sid}, {"path", pkg_path}, {"force", true}})["ok"] ==
+              true);
+        bus68.execute("package.close", json{{"sessionId", sid}});
+
+#ifndef _WIN32
+        const int holder = ::open(pkg_path.c_str(), O_RDWR);
+        CHECK(holder >= 0);
+        if (holder >= 0) {
+            CHECK(flock(holder, LOCK_EX | LOCK_NB) == 0);
+            auto blocked = bus68.execute("package.open",
+                                         json{{"path", pkg_path}, {"writable", true}});
+            CHECK(blocked["ok"] == false);
+            CHECK(blocked["error"]["code"] == "io");
+            CHECK(blocked["error"]["message"].get<std::string>().find(
+                      "close the game or copy the file first") != std::string::npos);
+
+            auto mods_dir =
+                tmp68 / "Documents" / "Electronic Arts" / "The Sims 3" / "Mods" / "Packages";
+            std::filesystem::create_directories(mods_dir, ec68);
+            auto mods_pkg = mods_dir / "cc.package";
+            std::filesystem::copy_file(pkg_path, mods_pkg, ec68);
+            const int mods_holder = ::open(mods_pkg.c_str(), O_RDWR);
+            CHECK(mods_holder >= 0);
+            if (mods_holder >= 0) {
+                CHECK(flock(mods_holder, LOCK_EX | LOCK_NB) == 0);
+                auto warned = bus68.execute(
+                    "package.open", json{{"path", mods_pkg.string()}, {"writable", false}});
+                CHECK(warned["ok"] == true);
+                CHECK(warned["data"].contains("warnings"));
+                bool saw = false;
+                for (const auto& w : warned["data"]["warnings"]) {
+                    if (w.is_string() &&
+                        w.get<std::string>().find("Mods") != std::string::npos) {
+                        saw = true;
+                    }
+                }
+                CHECK(saw);
+                const auto warned_sid = warned["data"]["sessionId"].get<std::string>();
+                bus68.execute("package.close", json{{"sessionId", warned_sid}});
+                flock(mods_holder, LOCK_UN);
+                ::close(mods_holder);
+            }
+
+            // Save while dest is exclusively locked must surface the same message.
+            auto edit = bus68.execute("package.open",
+                                      json{{"path", pkg_path}, {"writable", false}});
+            // RO open ok while we hold exclusive flock.
+            CHECK(edit["ok"] == true);
+            const auto edit_sid = edit["data"]["sessionId"].get<std::string>();
+            // Cannot save-as over locked dest from a different session file — use new package.
+            auto mk2 = bus68.execute("package.new", json::object());
+            CHECK(mk2["ok"] == true);
+            const auto mk2_sid = mk2["data"]["sessionId"].get<std::string>();
+            auto save_blocked = bus68.execute(
+                "package.saveAs",
+                json{{"sessionId", mk2_sid}, {"path", pkg_path}, {"force", true}});
+            CHECK(save_blocked["ok"] == false);
+            CHECK(save_blocked["error"]["message"].get<std::string>().find(
+                      "close the game or copy the file first") != std::string::npos);
+            bus68.execute("package.close", json{{"sessionId", mk2_sid}});
+            bus68.execute("package.close", json{{"sessionId", edit_sid}});
+
+            flock(holder, LOCK_UN);
+            ::close(holder);
+        }
+#else
+        // Windows: exclusive share-mode 0 holder.
+        std::wstring wpath = std::filesystem::path(pkg_path).wstring();
+        HANDLE holder = CreateFileW(wpath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(holder != INVALID_HANDLE_VALUE);
+        if (holder != INVALID_HANDLE_VALUE) {
+            auto blocked = bus68.execute("package.open",
+                                         json{{"path", pkg_path}, {"writable", true}});
+            CHECK(blocked["ok"] == false);
+            CHECK(blocked["error"]["message"].get<std::string>().find(
+                      "close the game or copy the file first") != std::string::npos);
+            CloseHandle(holder);
+        }
+#endif
+        std::filesystem::remove_all(tmp68, ec68);
+    }
+
+
+
+
+    // Issue #56: objd.set / casp.set — dryRun, undo, reopen matches Preview fields.
+    {
+        auto wu8 = [](std::vector<std::byte>& o, std::uint8_t v) { o.push_back(std::byte{v}); };
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        auto wf32 = [](std::vector<std::byte>& o, float v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto w7 = [&](std::vector<std::byte>& o, std::string_view s) {
+            wu8(o, static_cast<std::uint8_t>(s.size()));
+            const auto* p = reinterpret_cast<const std::byte*>(s.data());
+            o.insert(o.end(), p, p + s.size());
+        };
+        auto w7u = [&](std::vector<std::byte>& o, std::string_view ascii) {
+            wu8(o, static_cast<std::uint8_t>(ascii.size()));
+            for (char c : ascii) {
+                wu8(o, 0);
+                wu8(o, static_cast<std::uint8_t>(c));
+            }
+        };
+
+        std::vector<std::byte> body;
+        wu32(body, 0);
+        w7(body, "Inst");
+        wu32(body, 0x0C);
+        wu64(body, 0x1122334455667788ull);
+        wu64(body, 0x99AABBCCDDEEFF00ull);
+        w7(body, "Chair");
+        w7(body, "A chair");
+        wf32(body, 125.5f);
+        wf32(body, 1.0f);
+        wf32(body, 0.0f);
+        wu8(body, 1);
+        wu64(body, 0xABCDEF0123456789ull);
+        const auto tgi_off = static_cast<std::uint32_t>(body.size());
+        wu8(body, 0);
+        std::vector<std::byte> objd_bytes;
+        wu32(objd_bytes, 0x16);
+        wu32(objd_bytes, tgi_off);
+        wu32(objd_bytes, 1);
+        objd_bytes.insert(objd_bytes.end(), body.begin(), body.end());
+
+        auto sid_env = bus.execute("package.new", json::object());
+        CHECK(sid_env["ok"] == true);
+        const auto sid56 = sid_env["data"]["sessionId"].get<std::string>();
+        json orid{{"type", sxpe::resources::kObjd}, {"group", 0}, {"instance", 56}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid56},
+                               {"resourceId", orid},
+                               {"payloadB64", b64(objd_bytes)}})["ok"] == true);
+
+        bool saw_objd_set = false, saw_casp_set = false;
+        auto man56 = bus.execute("manifest", json::object());
+        for (const auto& tool : man56["data"]["tools"]) {
+            if (tool["name"] == "objd.set") {
+                saw_objd_set = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == false);
+                CHECK(tool["mcpName"] == "objd_set");
+            }
+            if (tool["name"] == "casp.set") {
+                saw_casp_set = true;
+                CHECK(tool["mcpName"] == "casp_set");
+            }
+        }
+        CHECK(saw_objd_set);
+        CHECK(saw_casp_set);
+
+        auto dryo = bus.execute("objd.set", json{{"sessionId", sid56},
+                                                 {"resourceId", orid},
+                                                 {"price", 250.0},
+                                                 {"dryRun", true}});
+        CHECK(dryo["ok"] == true);
+        CHECK(dryo["data"]["dryRun"] == true);
+        auto stillo = bus.execute("objd.get", json{{"sessionId", sid56}, {"resourceId", orid}});
+        CHECK(stillo["data"]["price"] == 125.5);
+
+        CHECK(bus.execute("objd.set",
+                          json{{"sessionId", sid56},
+                               {"resourceId", orid},
+                               {"price", 250.0},
+                               {"internalName", "Sofa"},
+                               {"nameGuid", 0x1}})["ok"] == true);
+        auto aftero = bus.execute("objd.get", json{{"sessionId", sid56}, {"resourceId", orid}});
+        CHECK(aftero["ok"] == true);
+        CHECK(aftero["data"]["price"] == 250.0);
+        CHECK(aftero["data"]["internalName"] == "Sofa");
+        CHECK(aftero["data"]["nameGuid"] == 1);
+        CHECK(aftero["data"]["thumbIid"] == 0xABCDEF0123456789ull);
+        CHECK(bus.execute("undo", json{{"sessionId", sid56}})["ok"] == true);
+        auto undo = bus.execute("objd.get", json{{"sessionId", sid56}, {"resourceId", orid}});
+        CHECK(undo["data"]["price"] == 125.5);
+        CHECK(undo["data"]["internalName"] == "Chair");
+
+        // CASP
+        std::vector<std::byte> casp_bytes;
+        wu32(casp_bytes, 0x12);
+        const auto ref_at = casp_bytes.size();
+        wu32(casp_bytes, 0);
+        wu32(casp_bytes, 0);
+        w7u(casp_bytes, "Top_Shirt");
+        wf32(casp_bytes, 10.0f);
+        wu8(casp_bytes, 0);
+        wu32(casp_bytes, 5);
+        wu32(casp_bytes, 0);
+        const std::uint32_t age_gender = 0x30u | (0x31u << 8);
+        wu32(casp_bytes, age_gender);
+        wu32(casp_bytes, 0x2);
+        for (int i = 0; i < 8; ++i) {
+            wu8(casp_bytes, 0);
+        }
+        const auto tgi_at = casp_bytes.size();
+        const auto ref_off = static_cast<std::uint32_t>(tgi_at - 8);
+        std::memcpy(casp_bytes.data() + ref_at, &ref_off, 4);
+        wu8(casp_bytes, 1);
+        wu64(casp_bytes, 0xABCDull);
+        wu32(casp_bytes, 0x11);
+        wu32(casp_bytes, 0x0333406Cu);
+
+        json crid{{"type", sxpe::resources::kCasp}, {"group", 0}, {"instance", 57}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid56},
+                               {"resourceId", crid},
+                               {"payloadB64", b64(casp_bytes)}})["ok"] == true);
+        CHECK(bus.execute("casp.set",
+                          json{{"sessionId", sid56},
+                               {"resourceId", crid},
+                               {"name", "Top_Edited"},
+                               {"clothingType", 6},
+                               {"ageFlags", 0x20},
+                               {"species", 1},
+                               {"genderFlags", 2}})["ok"] == true);
+        auto afterc = bus.execute("casp.get", json{{"sessionId", sid56}, {"resourceId", crid}});
+        CHECK(afterc["ok"] == true);
+        CHECK(afterc["data"]["name"] == "Top_Edited");
+        CHECK(afterc["data"]["clothingType"] == 6);
+        CHECK(afterc["data"]["ageFlags"] == 0x20);
+        CHECK(afterc["data"]["genderFlags"] == 2);
+        CHECK(afterc["data"]["tgiCount"] == 1);
+        CHECK(bus.execute("undo", json{{"sessionId", sid56}})["ok"] == true);
+        auto undoc = bus.execute("casp.get", json{{"sessionId", sid56}, {"resourceId", crid}});
+        CHECK(undoc["data"]["name"] == "Top_Shirt");
+        CHECK(undoc["data"]["clothingType"] == 5);
+    }
+
+    // Issue #57: refs.get / refs.set — dryRun, undo, round-trip; listRefs outbound.
+    {
+        auto wu16 = [](std::vector<std::byte>& o, std::uint16_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 2);
+        };
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        auto wtgi = [&](std::vector<std::byte>& o, std::uint32_t type, std::uint32_t group,
+                        std::uint64_t inst) {
+            wu32(o, type);
+            wu32(o, group);
+            wu64(o, inst);
+        };
+        std::vector<std::byte> refs_bytes;
+        wu16(refs_bytes, 1);
+        wu32(refs_bytes, 1);
+        wtgi(refs_bytes, 0x0333406Cu, 0, 0x42);
+        wu16(refs_bytes, 5);
+        wu32(refs_bytes, 1);
+        wu16(refs_bytes, 0);
+
+        auto sid_env = bus.execute("package.new", json::object());
+        CHECK(sid_env["ok"] == true);
+        const auto sid57 = sid_env["data"]["sessionId"].get<std::string>();
+        json rrid{{"type", sxpe::resources::kRefs}, {"group", 0}, {"instance", 57}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid57},
+                               {"resourceId", rrid},
+                               {"payloadB64", b64(refs_bytes)}})["ok"] == true);
+
+        bool saw_refs_set = false, saw_list = false;
+        auto man57 = bus.execute("manifest", json::object());
+        for (const auto& tool : man57["data"]["tools"]) {
+            if (tool["name"] == "refs.set") {
+                saw_refs_set = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == false);
+                CHECK(tool["mcpName"] == "refs_set");
+            }
+            if (tool["name"] == "resource.listRefs") {
+                saw_list = true;
+                CHECK(tool["mcpName"] == "resource_listRefs");
+            }
+        }
+        CHECK(saw_refs_set);
+        CHECK(saw_list);
+
+        auto got = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(got["ok"] == true);
+        CHECK(got["data"]["entryCount"] == 1);
+        CHECK(got["data"]["entries"][0]["instance"] == 0x42);
+
+        auto dry = bus.execute("refs.set",
+                               json{{"sessionId", sid57},
+                                    {"resourceId", rrid},
+                                    {"entries",
+                                     json::array({{{"type", 0x00B2D882u},
+                                                   {"group", 1},
+                                                   {"instance", 99},
+                                                   {"aux", 7}}})},
+                                    {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"]["dryRun"] == true);
+        auto still = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(still["data"]["entries"][0]["instance"] == 0x42);
+
+        CHECK(bus.execute("refs.set",
+                          json{{"sessionId", sid57},
+                               {"resourceId", rrid},
+                               {"entries",
+                                json::array({{{"type", 0x00B2D882u},
+                                              {"group", 1},
+                                              {"instance", 99},
+                                              {"aux", 7}}})},
+                               {"indices", json::array({3})}})["ok"] == true);
+        auto after = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"]["entries"][0]["type"] == 0x00B2D882u);
+        CHECK(after["data"]["entries"][0]["instance"] == 99);
+        CHECK(after["data"]["entries"][0]["aux"] == 7);
+        CHECK(after["data"]["indices"][0] == 3);
+
+        CHECK(bus.execute("undo", json{{"sessionId", sid57}})["ok"] == true);
+        auto und = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(und["data"]["entries"][0]["instance"] == 0x42);
+
+        auto outb = bus.execute("resource.listRefs",
+                                json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(outb["ok"] == true);
+        CHECK(outb["data"]["kind"] == "REFS");
+        CHECK(outb["data"]["count"] == 1);
+        CHECK(outb["data"]["refs"][0]["instance"] == 0x42);
+    }
+
+
+
+    {
+        // #59 rcol.replaceChunk bus: synthetic two-chunk RCOL + backup + undo
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        std::vector<std::byte> c0{std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'},
+                                  std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+        std::vector<std::byte> c1{std::byte{'M'}, std::byte{'A'}, std::byte{'T'}, std::byte{'D'},
+                                  std::byte{9}};
+        std::vector<std::byte> body;
+        wu32(body, 3);
+        wu32(body, 1);
+        wu32(body, 0);
+        wu32(body, 0);
+        wu32(body, 2);
+        wu64(body, 1);
+        wu32(body, sxpe::resources::kModl);
+        wu32(body, 0);
+        wu64(body, 2);
+        wu32(body, sxpe::resources::kMatd);
+        wu32(body, 0);
+        const auto loc = body.size();
+        wu32(body, 0);
+        wu32(body, static_cast<std::uint32_t>(c0.size()));
+        wu32(body, 0);
+        wu32(body, static_cast<std::uint32_t>(c1.size()));
+        const auto p0 = static_cast<std::uint32_t>(body.size());
+        body.insert(body.end(), c0.begin(), c0.end());
+        const auto p1 = static_cast<std::uint32_t>(body.size());
+        body.insert(body.end(), c1.begin(), c1.end());
+        std::memcpy(body.data() + loc, &p0, 4);
+        std::memcpy(body.data() + loc + 8, &p1, 4);
+
+        auto created = bus.execute("package.new", json::object());
+        CHECK(created["ok"] == true);
+        const auto sid59 = created["data"]["sessionId"].get<std::string>();
+        auto rrid = json{{"type", sxpe::resources::kModl}, {"group", 0}, {"instance", 59}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid59},
+                               {"resourceId", rrid},
+                               {"payloadB64", b64(body)}})["ok"] == true);
+
+        auto sum = bus.execute("rcol.summary", json{{"sessionId", sid59}, {"resourceId", rrid}});
+        CHECK(sum["ok"] == true);
+        CHECK(sum["data"]["chunks"].size() == 2);
+        CHECK(sum["data"]["chunks"][1]["tag"] == "MATD");
+
+        std::vector<std::byte> neu{std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'},
+                                   std::byte{0xEE}};
+        const auto bak = std::filesystem::temp_directory_path() / "sxpe-rcol-chunk0.bak";
+        std::filesystem::remove(bak);
+        auto dry = bus.execute("rcol.replaceChunk",
+                               json{{"sessionId", sid59},
+                                    {"resourceId", rrid},
+                                    {"chunkIndex", 0},
+                                    {"payloadB64", b64(neu)},
+                                    {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"]["dryRun"] == true);
+        CHECK(dry["data"]["oldBytes"] == c0.size());
+        CHECK(dry["data"]["newBytes"] == neu.size());
+
+        auto rep = bus.execute("rcol.replaceChunk",
+                               json{{"sessionId", sid59},
+                                    {"resourceId", rrid},
+                                    {"chunkIndex", 0},
+                                    {"payloadB64", b64(neu)},
+                                    {"backupPath", bak.string()}});
+        CHECK(rep["ok"] == true);
+        CHECK(rep["data"]["backedUp"] == true);
+        CHECK(std::filesystem::exists(bak));
+        CHECK(std::filesystem::file_size(bak) == c0.size());
+
+        auto sum2 = bus.execute("rcol.summary", json{{"sessionId", sid59}, {"resourceId", rrid}});
+        CHECK(sum2["ok"] == true);
+        CHECK(sum2["data"]["chunks"][0]["size"] == neu.size());
+        CHECK(sum2["data"]["chunks"][1]["tag"] == "MATD");
+
+        CHECK(bus.execute("undo", json{{"sessionId", sid59}})["ok"] == true);
+        auto sum3 = bus.execute("rcol.summary", json{{"sessionId", sid59}, {"resourceId", rrid}});
+        CHECK(sum3["data"]["chunks"][0]["size"] == c0.size());
+        std::filesystem::remove(bak);
     }
 
     if (g_failed != 0) {

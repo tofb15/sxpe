@@ -28,7 +28,7 @@ These are the only types s3pe draws as pictures in Preview.
 
 | Tag | Types (hex) | Payload | Difficulty | Priority | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `_IMG` | `00B2D882`, `8FFB80F6` | DDS | S (done) | P0 | Decode DXT1/DXT5/24/32. No BC7 / DirectXTex. |
+| `_IMG` | `00B2D882`, `8FFB80F6` | DDS | S (done) | P0 | Decode DXT1/DXT3/DXT5 + A8R8G8B8/RGB mask variants; cubemap/volume refused. Matrix: [spec/dds.md](spec/dds.md). No BC7 / DirectXTex. |
 | `THUM` | `0580A2B4–B6`, `0589DC44–47`, `05B17698–9A`, `05B1B524–26`, `2653E3C8–CA`, `2D4284F0–F2`, `5DE9DBA0–A2`, **`626F60CC–CE` (CAS)** | PNG | S (done for listed IDs) | P0 | Catalog / CAS / fence thumbs. More IDs may appear; magic sniff covers unlisted PNGs. |
 | `SNAP` | `0580A2CD–CF`, `6B6D837D–7F` | PNG | S (done) | P0 | Sim / family snapshots. Neighbourhood SNAPs are game-picky on encode, not on preview. |
 | `ICON` | `2E75C764–767` | PNG | S (done) | P0 | Object icons. |
@@ -89,7 +89,7 @@ No pixels. A few decoded fields beat hex.
 | catalog (`CFEN` `CSTR` `CWAL` `CRAL` `CFIR` `CTPT` `CFND` `CWST` `CRST` `CRMT` `CWAT` `CCFP` `CPRX` `CTTL`) | see `types.hpp` | Same catalog common header as OBJD | M | P2 |
 | `TONE` | `0354796A` skin, `03555BA8` hair | Colour / related TGIs | M | P2 |
 | `CINF` `HINF` `OBCI` | colour info | RGB / labels | M | P2 |
-| `REFS` | `05ED1226` | Referenced TGI list | M | P2 |
+| `REFS` | `05ED1226` | Referenced TGI list (`refs.get`) | M | **done** |
 | `DETL` | `03D86EA4` | Lot/world summary | M | P2 |
 
 ---
@@ -100,9 +100,9 @@ Public RCOL chunk layout (MODL/MLOD/GEOM/MATD). s3pe does **not** 3D-preview the
 
 | Tag | Preview that is still useful | Difficulty | Priority |
 | --- | --- | --- | --- |
-| `GEOM` | Vertex/face counts via `rcol.summary` — **not** a 3D view | M (counts) / **L** (mesh GL) | **counts done**, P3 GL |
-| `MODL` `MLOD` | LOD/chunk counts via `rcol.summary` | M | **done** |
-| `MATD` | Shader name, texture TGI refs | M | P1 |
+| `GEOM` | Vertex/face counts via `rcol.summary` - **not** a 3D view | M (counts) / **L** (mesh GL) | **counts done**, P3 GL |
+| `MODL` `MLOD` | LOD/chunk counts + MATD texture refs via `rcol.summary`; chunk replace | M | **done** (#59) |
+| `MATD` | Shader name, texture TGI refs via `rcol.summary` | M | **done** (#59) |
 | `VBUF` `IBUF` `VRTF` `SKIN` | Buffer sizes / format | M | P2 |
 | `BONE` | Bone names / count (`00AE6C67` skcon) | M | P2 |
 | `VPXY` | Already listed; often a TGI list to MODL | S–M | P1 |
@@ -118,13 +118,13 @@ A real mesh preview (Qt + GL, skinning, materials) is a product of its own. Do n
 
 | Tag | Preview | Difficulty | Priority |
 | --- | --- | --- | --- |
-| `CLIP` | Duration, track names, hashed names (`clip.info`; no player) | M | **done** |
+| `CLIP` | Full `clip.info` + metadata editor (`clip.set`); exportAs helpers; no player | M | **done** (#61) |
 | `JAZZ` | State-machine / clip name list | M | P2 |
 | `TKMK` | Track-mask bit count | M | P2 |
 | `_AUD` | Fourcc / sample rate if we parse SNR; optional PCM play | M / L (playback) | P2 metadata, P3 play |
 | `VOCE` `MIXR` | Controller/mixer names | M | P2 |
 | `_VID` | VP6/AVI header; first-frame still would need a decoder | M header / **L** frames | P2 header, P3 video |
-| `ANIM` | `63A33EA7` animated texture — treat as image sequence later | L | P3 |
+| `ANIM` | `63A33EA7` animated texture - treat as image sequence later | L | P3 |
 
 s3pe does not play CLIP or audio in Preview.
 
@@ -149,36 +149,37 @@ That is how “preview for all types” is reachable without a decoder per fourc
 
 Do **not** start with 3D. Fill the Preview tab so a click always answers “what is this?”
 
-### Wave 1 — P0 (reuse codecs we have) — **done on the Preview tab**
+### Wave 1 - P0 (reuse codecs we have) - **done on the Preview tab**
 
 1. **Identity card** for every resource (TGI + tag + size + name).  
-2. **STBL** — first ~20 strings.  
-3. **NMAP** — first ~20 names.  
-4. **XML family** (`_XML`, `ITUN`) — pretty first ~4 KiB.  
-5. **S3SA** — `s3sa.info` card (PE / module hint). Wrap/import is **not** in Wave 1; see [spec/s3sa.md](spec/s3sa.md).  
+2. **STBL** - first ~20 strings.  
+3. **NMAP** - first ~20 names.  
+4. **XML family** (`_XML`, `ITUN`) - pretty first ~4 KiB.  
+5. **S3SA** - `s3sa.info` card (PE / module hint). Wrap/import is **not** in Wave 1; see [spec/s3sa.md](spec/s3sa.md).  
 6. Keep **PNG/DDS** as now; add **JPEG** magic (`IMAG` `2F7D0002`).
 
-### Wave 2 — P1 (modder daily drivers) — **done on the Preview tab** (issue #20)
+### Wave 2 - P1 (modder daily drivers) - **done on the Preview tab** (issue #20)
 
-7. Catalog **OBJD** header (name GUID, price, thumb IID) — `objd.get`.  
-8. **CASP** clothing type / flags — `casp.get` (best-effort public layout).  
-9. **OBJK** / **VPXY** — Preview surfaces `objk.get` / `vpxy.get` fields (not only Graph).  
-10. **CLIP** duration / tracks (no playback) — `clip.info`.  
-11. **MODL/MLOD/GEOM** counts only — `rcol.summary`.  
-12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`) — still open.  
-13. **S3SA codec** — already shipped earlier; see `spec/s3sa.md`.
+7. Catalog **OBJD** header (name GUID, price, thumb IID) - `objd.get`.  
+8. **CASP** clothing type / flags - `casp.get` (best-effort public layout).  
+9. **OBJK** / **VPXY** - Preview surfaces `objk.get` / `vpxy.get` fields (not only Graph).  
+10. **CLIP** duration / tracks (no playback) - `clip.info`.  
+11. **MODL/MLOD/GEOM** counts only - `rcol.summary`.  
+12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`) - still open.  
+13. **S3SA codec** - already shipped earlier; see `spec/s3sa.md`.
 
 Assumptions / honesty notes: [spec/preview-wave2.md](spec/preview-wave2.md).
 
-### Wave 3 — P2 / P3
+### Wave 3 - P2 / P3
 
-Audio metadata, VID header, full catalog family, then optional GL mesh / CLIP play / VP6 — only if Wave 1–2 stay solid.
+Audio metadata, VID header, full catalog family, then optional GL mesh / CLIP play / VP6 - only if Wave 1–2 stay solid.
 
 ---
 
 ## Out of scope for Preview
 
-- Executing S3SA (no `LoadLibrary`). Wrap/import lives in [spec/s3sa.md](spec/s3sa.md), not Preview.  
+- Executing S3SA (no `LoadLibrary`). Wrap/import lives in [spec/s3sa.md](spec/s3sa.md), not Preview.
+- Third-party GUI plugins / Handlers (permanently unsupported - see CONTRIBUTING / issue #60).  
 - Writing neighbourhood SNAPs (encode rules stay on File → Save).  
 - Pixel-perfect s3pe wrapper parity.  
 - Shipping EA packages as fixtures; use synthetic PNG/DDS/STBL/NMAP only.

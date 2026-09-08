@@ -19,7 +19,7 @@ Related: [hashing.md](hashing.md) (FNV-1 64, lowercase), [tags.md](../tags.md), 
 | GUI Editors → Export / Import / View S3SA | Same bus commands; View uses Settings `ext/s3sa` |
 | `s3sa.view` | Export PE (`path` and/or `viewer`; `keepTemp`). Never `LoadLibrary`. |
 | Preview tab | Version, zero-key, assembly size, MZ offset |
-| `resource.add` of a raw `.dll` as type `073FAA07` | **Wrong** — use `s3sa.importDll` |
+| `resource.add` of a raw `.dll` as type `073FAA07` | **Wrong** - use `s3sa.importDll` |
 
 `exportDll` works for **community** blobs (zero XOR table → plaintext PE after a 135-byte v1 prologue). It is not a decoder. Encrypted or v2 resources, or a PE with no `MZ` in the wrapped bytes, export garbage or the wrapper.
 
@@ -105,7 +105,7 @@ CLI `sxpe s3sa <verb>`; MCP `s3sa_<verb>`; same bus ids. Envelope unchanged. `--
 | id | readOnly | Status | Contract |
 | --- | --- | --- | --- |
 | `s3sa.info` | y | **extend** | Today: `size`, `peOffset?`, `moduleHint`. After codec: also `version`, `gameVersion` (string or absent), `checksumType`, `checksumZero` (bool), `blockCount`, `keyTableZero` (bool), `assemblyBytes` (decrypted length **before** padding), `peOffset` measured in **decrypted** bytes (0 for a well-formed PE). Keep `moduleHint` from NMAP. |
-| `s3sa.exportDll` | y | **fix** | Decrypt, trim padding after last non-zero? **No** — trim to PE size from the PE headers (or to `assemblyBytes` if we store unpadded length). Write that PE to `path`. Refuse if decrypt fails. `force` if the file exists. |
+| `s3sa.exportDll` | y | **fix** | Decrypt, trim padding after last non-zero? **No** - trim to PE size from the PE headers (or to `assemblyBytes` if we store unpadded length). Write that PE to `path`. Refuse if decrypt fails. `force` if the file exists. |
 | `s3sa.importDll` | n | **new** | Read a PE from `path` (`MZ` required). Wrap as community v1. **Replace** the selected S3SA if `resourceId` is set; **add** if omitted (TGI as above; optional `instance` / `group` overrides). Update NMAP name to the filename when the package has (or we create) an NMAP. `force` / `dryRun`. |
 | `s3sa.wrap` | y | **new** (optional alias) | Stateless: `{path}` → `{bytes}` or write-file; no session. Useful for tests. Prefer `importDll` for the GUI. |
 | `s3sa.view` | y | **new** | Export decrypted PE to `path` or a temp. Without `viewer`, pass `path` or `keepTemp:true` (GUI). Optional `viewer` `{path}` spawn; `keepTemp` (default true when viewer set). Returns `{path,bytes,spawned,keepTemp,loadLibrary:false,note}`. Never `LoadLibrary`. |
@@ -116,8 +116,8 @@ Undo: `importDll` is a normal `resource.replace` / `resource.add` mutation (stac
 
 ### GUI
 
-- Editors → **Export S3SA as DLL…** — keep; route through the decoder.
-- Editors → **Import DLL into S3SA…** — new; enabled on an S3SA row (replace) **and** with no row / via Resource → Import as type S3SA (add).
+- Editors → **Export S3SA as DLL…** - keep; route through the decoder.
+- Editors → **Import DLL into S3SA…** - new; enabled on an S3SA row (replace) **and** with no row / via Resource → Import as type S3SA (add).
 - Preview: show the extended `s3sa.info` card (version, zero-key, assembly size, `MZ` in decrypted bytes).
 
 Settings → External programs: optional **S3SA viewer** (`ext/s3sa`) path + args (generic `{path}` placeholder), same pattern as hex/text. **Not** bundled. Editors → **View S3SA…** = `s3sa.view` with `keepTemp:true` then spawn; best-effort delete temp when the process exits. CLI/MCP: pass explicit `path`, or `viewer` with `{path}` (temp + `keepTemp`).
@@ -130,7 +130,7 @@ After decrypt, a read-only walk of PE → CLI metadata is enough to answer “wi
 | --- | --- |
 | Assembly name / `ManifestModule` | Filename hint when NMAP is empty |
 | `mscorlib` AssemblyRef version | Must be **2.0.0.0** for the TS3 script host. 4.0.0.0 is the usual crash (`EXCEPTION_BREAKPOINT` in `TS3W`) |
-| Other AssemblyRef names | `SimIFace`, `ScriptCore`, `UI`, … — listing is enough; do not resolve |
+| Other AssemblyRef names | `SimIFace`, `ScriptCore`, `UI`, … - listing is enough; do not resolve |
 
 Implement with a small PE/CLI parser in `sxpe::resources`. Never map the PE as an executable, never `LoadLibrary`, never run static constructors.
 
@@ -166,16 +166,16 @@ Wrong XML type `0x4D584C5F` (fourcc mash of `_XML`) is not valid. Hash split int
 
 ## Implementation order
 
-1. **Codec + tests** — parse v1/v2; decrypt; wrap v1 zeros; round-trip synthetic PE. Replace `inspect_s3sa` `MZ` scan with “decrypt then `MZ` at 0.”
-2. **`s3sa.info` / `exportDll`** — decoder path; keep old JSON keys so GUI does not break.
+1. **Codec + tests** - parse v1/v2; decrypt; wrap v1 zeros; round-trip synthetic PE. Replace `inspect_s3sa` `MZ` scan with “decrypt then `MZ` at 0.”
+2. **`s3sa.info` / `exportDll`** - decoder path; keep old JSON keys so GUI does not break.
 3. **`s3sa.importDll`** + GUI Import + NMAP name.
 4. **PE/CLI refs** on `s3sa.info` (mscorlib version).
-5. External viewer (`s3sa.view` + Settings `ext/s3sa`) — **done**.
+5. External viewer (`s3sa.view` + Settings `ext/s3sa`) - **done**.
 6. Optional `package.makeScriptMod` (`_XML` door).
 
 ## Tests (synthetic only)
 
-`fixtures/synthetic/` — invented bytes, not game DLLs.
+`fixtures/synthetic/` - invented bytes, not game DLLs.
 
 - Tiny buffer starting `MZ` + padding; wrap → `version==1`, `blockCount` matches `ceil(n/512)`, decrypt equals input (trimmed to original length).
 - Zero-key v1 blob: `exportDll` equals the PE.

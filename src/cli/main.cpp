@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <csignal>
 #include <cctype>
 #include <iomanip>
 #include <iostream>
@@ -30,6 +32,14 @@ namespace {
 
 using nlohmann::json;
 using sxpe::commands::Bus;
+
+std::atomic<Bus*> g_bus_for_signal{nullptr};
+
+void on_sigint(int) {
+    if (auto* b = g_bus_for_signal.load(std::memory_order_relaxed)) {
+        b->request_cancel();
+    }
+}
 
 bool stdout_tty() {
 #ifdef _WIN32
@@ -88,6 +98,13 @@ json parse_rest(const std::vector<std::string>& extra, json args) {
             } else if (plain_int(v)) {
                 try {
                     args[key] = std::stoll(v);
+                } catch (...) {
+                    args[key] = v;
+                }
+            } else if (!v.empty() && (std::isdigit(static_cast<unsigned char>(v.front())) || v.front() == '-' || v.front() == '+') &&
+                       v.find('.') != std::string::npos && v.find('.') == v.rfind('.')) {
+                try {
+                    args[key] = std::stod(v);
                 } catch (...) {
                     args[key] = v;
                 }
@@ -175,7 +192,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "How it works:\n";
     std::cout << "  Commands are noun + verb (resource list, package info).\n";
     std::cout << "  --package PATH is one-shot: open, run, save if it writes, close.\n";
-    std::cout << "  Every result is JSON {ok, data|error}. --format text|table is a human view.\n";
+    std::cout << "  Every result is JSON {ok, data|error}. --format text|table is a human view.\n  --progress writes merge/import progress JSON lines to stderr (bus progress).\n  Ctrl+C / SIGINT cooperatively cancels an in-flight merge/import/scan and rolls back.\n";
     std::cout << "  --type/--group/--instance (hex 0x… ok) is an alternative to --id JSON.\n";
     std::cout << "  Destructive commands need --force; --dry-run reports without writing.\n\n";
     std::cout << "One-shot (no session):\n";
@@ -185,16 +202,18 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --id JSON          resourceId {type,group,instance,ordinal}\n";
     std::cout << "  --type --group --instance --ordinal\n";
     std::cout << "                     Alternative to --id (hex 0xAABB is ok); do not mix with --id\n";
-    std::cout << "  --name TEXT        NMAP display name (resource.rename / nmap.set)\n";
+    std::cout << "  --name TEXT        NMAP display name / CLIP exportAs name\n";
     std::cout << "  --text TEXT        hash.fnv / search.bytes / xml.set\n";
-    std::cout << "  --force --dry-run --writable --include-payload --limit N\n";
+    std::cout << "  --force --dry-run --writable --force-writable --include-payload --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
+    std::cout << "  sxpe app checkUpdate\n";
     std::cout << "  sxpe package info --package mod.package\n";
     std::cout << "  sxpe package diff --path-a stock.package --path-b override.package\n";
     std::cout << "  sxpe folder scan --path Mods --format text\n";
     std::cout << "  sxpe sims3pack list --path mod.sims3pack --format text\n";
     std::cout << "  sxpe sims3pack extract --path mod.sims3pack --out-dir /tmp/out --index 0 --force\n";
+    std::cout << "  sxpe sims3pack pack --source-dir /tmp/pkgs --path out.sims3pack --display-name MyMod --force\n";
     std::cout << "  sxpe resource find-refs --package mod.package --type 0x0333406C --group 0 --instance 0x1 --format text\n";
     std::cout << "  sxpe resource list --package mod.package --limit 20\n";
     std::cout << "  sxpe resource export --package mod.package --type 0x0333406C --group 0 "
@@ -209,6 +228,18 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe nmap replace --package mod.package --entries '[{\"instance\":1,\"name\":\"Door\"}]' --force\n";
     std::cout << "  sxpe xml get --package mod.package --type 0x0333406C --group 0 --instance 0x1\n";
     std::cout << "  sxpe xml set --package mod.package --type 0x0333406C --group 0 --instance 0x1 --text '<root/>' --force\n";
+    std::cout << "  sxpe objd get --package mod.package --type 0x319E4F1D --group 0 --instance 0x1\n";
+    std::cout << "  sxpe objd set --package mod.package --type 0x319E4F1D --group 0 --instance 0x1 --price 250 --force\n";
+    std::cout << "  sxpe casp get --package mod.package --type 0x034AEECB --group 0 --instance 0x1\n";
+    std::cout << "  sxpe casp set --package mod.package --type 0x034AEECB --group 0 --instance 0x1 --clothing-type 5 --force\n";
+    std::cout << "  sxpe refs get --package mod.package --type 0x05ED1226 --group 0 --instance 0x1\n";
+    std::cout << "  sxpe refs set --package mod.package --type 0x05ED1226 --group 0 --instance 0x1 --entries '[{\"type\":0x0333406C,\"group\":0,\"instance\":1,\"aux\":0}]' --force\n";
+    std::cout << "  sxpe resource list-refs --package mod.package --type 0x05ED1226 --group 0 --instance 0x1 --format text\n";
+
+    std::cout << "  sxpe clip info --package mod.package --type 0x6B20C4F3 --group 0 --instance 0x1\n";
+    std::cout << "  sxpe clip set --package mod.package --type 0x6B20C4F3 --group 0 --instance 0x1 --anim-name a_walk --force\n";
+    std::cout << "  sxpe clip export-as --package mod.package --type 0x6B20C4F3 --group 0 --instance 0x1 --name t_walk --force\n";
+    std::cout << "  sxpe clip export-as-batch --package mod.package --items '[{\"resourceId\":{\"type\":0x6B20C4F3,\"group\":0,\"instance\":1},\"name\":\"a_walk\"}]' --force\n";
     std::cout << "  sxpe package new --package new.package --force\n";
     std::cout << "  sxpe help resource\n";
     std::cout << "  sxpe resource rename --help\n\n";
@@ -456,13 +487,34 @@ void print_object_text(const json& data) {
         print_find_refs_text(data);
         return;
     }
+    if (data.contains("refs") && data.contains("kind") && data.contains("source") &&
+        data.contains("summary")) {
+        print_find_refs_text(data);  // summary[] already human lines
+        return;
+    }
     if (data.contains("duplicates") && data.contains("filesScanned") && data.contains("readOnly") &&
         data.value("readOnly", false)) {
         print_folder_scan_text(data);
         return;
     }
-    if (data.contains("archiveOffset") && data.contains("entryCount") && data.contains("readOnly") &&
-        data.value("readOnly", false)) {
+    if (data.contains("status") && data.contains("current") && data.contains("downloads") &&
+        data.contains("htmlUrl")) {
+        if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    std::cout << line.get<std::string>() << '\n';
+                }
+            }
+        } else {
+            std::cout << data.value("message", "") << '\n';
+            std::cout << "current: " << data.value("current", "") << '\n';
+            std::cout << "latest: " << data.value("tagName", data.value("latest", "")) << '\n';
+            std::cout << data.value("htmlUrl", "") << '\n';
+        }
+        return;
+    }
+    if (data.contains("archiveOffset") && data.contains("entryCount") &&
+        (data.value("readOnly", false) || data.value("authored", false))) {
         std::vector<std::string> lines;
         if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
             for (const auto& line : data["summary"]) {
@@ -589,15 +641,15 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" ||
+           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" || id == "objd.get" || id == "casp.get" || id == "refs.get" || id == "resource.listRefs" ||
            id == "sims3pack.list";
 }
 
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
-           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "package.diff" ||
-           id == "folder.scan" || id == "sims3pack.info" || id == "sims3pack.list" ||
-           id == "sims3pack.extract" || id == "help";
+           id == "hash.fnv" || id == "app.checkUpdate" || id == "s3sa.wrap" || id == "package.unmerge" ||
+           id == "package.diff" || id == "folder.scan" || id == "sims3pack.info" || id == "sims3pack.list" ||
+           id == "sims3pack.extract" || id == "sims3pack.pack" || id == "help";
 }
 
 json make_resource_id(const std::string& type_s, const std::string& group_s,
@@ -654,7 +706,9 @@ int main(int argc, char** argv) {
     bool dry = false;
     bool force = false;
     bool writable = false;
+    bool force_writable = false;
     bool include_payload = false;
+    bool want_progress = false;
     int limit = 0;
     app.add_option("--format", format, "json | jsonl | text | table");
     app.add_flag("--dry-run", dry);
@@ -666,14 +720,18 @@ int main(int argc, char** argv) {
     app.add_option("--id", id_json, "resourceId JSON {type,group,instance,ordinal}");
     app.add_option("--path", path, "File path (export dest, add/replace bytes, save-as dest)");
     app.add_option("--file", file, "Alias of --path for payload files");
-    app.add_option("--name", name, "NMAP display name or CLIP name");
+    app.add_option("--name", name, "NMAP display name / CLIP exportAs name");
     app.add_option("--text", text, "Text for hash.fnv / search.bytes");
     app.add_option("--type", type_s, "Resource type (decimal or 0x hex)");
     app.add_option("--group", group_s, "Resource group (decimal or 0x hex)");
     app.add_option("--instance", inst_s, "Resource instance (decimal or 0x hex)");
     app.add_option("--ordinal", ord_s, "Duplicate TGI ordinal (default 0)");
     app.add_flag("--writable", writable);
+    app.add_flag("--force-writable", force_writable,
+                 "Allow writable open above the large-package read-only threshold");
     app.add_flag("--include-payload", include_payload);
+    app.add_flag("--progress", want_progress,
+                 "Emit merge/import/scan progress JSON lines on stderr; SIGINT cancels");
     app.add_option("--limit", limit);
     std::string cursor;
     app.add_option("--cursor", cursor);
@@ -689,12 +747,27 @@ int main(int argc, char** argv) {
     }
 
     Bus bus;
+    g_bus_for_signal.store(&bus, std::memory_order_relaxed);
+    std::signal(SIGINT, on_sigint);
+    if (want_progress) {
+        bus.set_progress_handler([](const json& ev) {
+            std::cerr << ev.dump() << '\n';
+        });
+    }
     if (want_help || noun.empty() || noun == "help") {
         std::string filter;
         if (noun == "help") {
             filter = verb;
         } else if (want_help && !noun.empty()) {
-            filter = verb.empty() ? noun : noun + "." + verb;
+            if (verb.empty()) {
+                filter = noun;
+            } else {
+                auto v = camel(verb);
+                if (!v.empty()) {
+                    v[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(v[0])));
+                }
+                filter = noun + "." + v;
+            }
         }
         if (filter.find('.') != std::string::npos) {
             print_command_help(bus, filter);
@@ -728,6 +801,9 @@ int main(int argc, char** argv) {
     }
     if (writable) {
         args["writable"] = true;
+    }
+    if (force_writable) {
+        args["forceWritable"] = true;
     }
     if (include_payload) {
         args["includePayload"] = true;

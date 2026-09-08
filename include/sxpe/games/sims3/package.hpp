@@ -38,6 +38,8 @@ public:
 
     [[nodiscard]] const std::filesystem::path& path() const { return path_; }
     [[nodiscard]] bool writable() const { return writable_; }
+    /// True when the on-disk mapping holds an exclusive write lock (issue #68).
+    [[nodiscard]] bool holds_exclusive_lock() const { return map_.holds_exclusive_lock(); }
     [[nodiscard]] std::uint32_t count() const {
         return static_cast<std::uint32_t>(entries_.size());
     }

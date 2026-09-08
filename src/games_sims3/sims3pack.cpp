@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string_view>
+#include <unordered_set>
 
 namespace sxpe::games::sims3 {
 namespace {
@@ -206,6 +208,93 @@ bool sniff_dbpf(const std::filesystem::path& path, std::uint64_t abs_off, std::u
     char mag[4]{};
     in.read(mag, 4);
     return in.gcount() == 4 && mag[0] == 'D' && mag[1] == 'B' && mag[2] == 'P' && mag[3] == 'F';
+}
+
+std::string xml_escape(std::string_view in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (char c : in) {
+        switch (c) {
+            case '&':
+                out += "&amp;";
+                break;
+            case '<':
+                out += "&lt;";
+                break;
+            case '>':
+                out += "&gt;";
+                break;
+            case '"':
+                out += "&quot;";
+                break;
+            case '\'':
+                out += "&apos;";
+                break;
+            default:
+                out.push_back(c);
+                break;
+        }
+    }
+    return out;
+}
+
+void write_u32_le(std::ostream& out, std::uint32_t v) {
+    unsigned char b[4] = {static_cast<unsigned char>(v & 0xff),
+                          static_cast<unsigned char>((v >> 8) & 0xff),
+                          static_cast<unsigned char>((v >> 16) & 0xff),
+                          static_cast<unsigned char>((v >> 24) & 0xff)};
+    out.write(reinterpret_cast<const char*>(b), 4);
+}
+
+void write_u16_le(std::ostream& out, std::uint16_t v) {
+    unsigned char b[2] = {static_cast<unsigned char>(v & 0xff),
+                          static_cast<unsigned char>((v >> 8) & 0xff)};
+    out.write(reinterpret_cast<const char*>(b), 2);
+}
+
+std::string default_guid(std::uint32_t index) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "00000000-0000-4000-8000-%012x",
+                  static_cast<unsigned>(index + 1));
+    return buf;
+}
+
+std::string infer_content_type(std::string_view name) {
+    if (ends_with_ci(name, ".package")) {
+        return "package";
+    }
+    if (ends_with_ci(name, ".png")) {
+        return "png";
+    }
+    return {};
+}
+
+Result<std::string> read_file_bytes(const std::filesystem::path& path, std::uint64_t max_bytes) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec) || ec) {
+        return std::unexpected(err(ErrorCode::invalid_argument,
+                                   "pack source is not a regular file: " + path.string()));
+    }
+    const auto sz = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
+    if (ec) {
+        return std::unexpected(err(ErrorCode::io, "cannot stat pack source: " + ec.message()));
+    }
+    if (sz > max_bytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded,
+                                   "pack source exceeds per-entry cap: " + path.string()));
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::unexpected(err(ErrorCode::io, "cannot open pack source: " + path.string()));
+    }
+    std::string data(static_cast<std::size_t>(sz), '\0');
+    if (sz > 0) {
+        in.read(data.data(), static_cast<std::streamsize>(sz));
+        if (static_cast<std::uint64_t>(in.gcount()) != sz) {
+            return std::unexpected(err(ErrorCode::io, "short read on pack source: " + path.string()));
+        }
+    }
+    return data;
 }
 
 }  // namespace
@@ -467,6 +556,251 @@ Result<std::filesystem::path> extract_sims3pack_entry(const Sims3PackMeta& meta,
         left -= got;
     }
     return dest;
+}
+
+Result<std::vector<Sims3PackPackItem>> collect_sims3pack_packages(
+    const std::filesystem::path& source_dir) {
+    std::error_code ec;
+    if (!std::filesystem::exists(source_dir, ec) || ec) {
+        return std::unexpected(err(ErrorCode::not_found, "sourceDir does not exist"));
+    }
+    if (!std::filesystem::is_directory(source_dir, ec) || ec) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "sourceDir is not a directory"));
+    }
+    std::vector<std::filesystem::path> paths;
+    for (const auto& ent : std::filesystem::directory_iterator(source_dir, ec)) {
+        if (ec) {
+            return std::unexpected(err(ErrorCode::io, "cannot iterate sourceDir: " + ec.message()));
+        }
+        if (!ent.is_regular_file(ec) || ec) {
+            continue;
+        }
+        const auto name = ent.path().filename().string();
+        if (ends_with_ci(name, ".package")) {
+            paths.push_back(ent.path());
+        }
+    }
+    if (ec) {
+        return std::unexpected(err(ErrorCode::io, "cannot iterate sourceDir: " + ec.message()));
+    }
+    std::sort(paths.begin(), paths.end());
+    if (paths.size() > kMaxEntries) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "too many .package files in sourceDir"));
+    }
+    if (paths.empty()) {
+        return std::unexpected(err(ErrorCode::invalid_argument,
+                                   "sourceDir contains no .package files (non-recursive)"));
+    }
+    std::vector<Sims3PackPackItem> items;
+    items.reserve(paths.size());
+    for (const auto& p : paths) {
+        Sims3PackPackItem it;
+        it.source_path = p;
+        it.name = p.filename().string();
+        it.content_type = "package";
+        items.push_back(std::move(it));
+    }
+    return items;
+}
+
+Result<Sims3PackCreateOptions> load_sims3pack_meta_subset(const std::filesystem::path& xml_path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(xml_path, ec) || ec) {
+        return std::unexpected(err(ErrorCode::not_found, "metaXml path does not exist"));
+    }
+    if (!std::filesystem::is_regular_file(xml_path, ec) || ec) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "metaXml is not a file"));
+    }
+    const auto sz = static_cast<std::uint64_t>(std::filesystem::file_size(xml_path, ec));
+    if (ec) {
+        return std::unexpected(err(ErrorCode::io, "cannot stat metaXml: " + ec.message()));
+    }
+    if (sz > kMaxXmlBytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "metaXml exceeds 16 MiB cap"));
+    }
+    std::ifstream in(xml_path, std::ios::binary);
+    if (!in) {
+        return std::unexpected(err(ErrorCode::io, "cannot open metaXml"));
+    }
+    std::string xml(static_cast<std::size_t>(sz), '\0');
+    if (sz > 0) {
+        in.read(xml.data(), static_cast<std::streamsize>(sz));
+        if (static_cast<std::uint64_t>(in.gcount()) != sz) {
+            return std::unexpected(err(ErrorCode::io, "short read on metaXml"));
+        }
+    }
+    Sims3PackCreateOptions opts;
+    auto root = xml.find("<Sims3Package");
+    if (root != std::string::npos) {
+        auto gt = xml.find('>', root);
+        if (gt != std::string::npos) {
+            const auto tag = std::string_view(xml).substr(root, gt - root + 1);
+            if (auto t = attr_value(tag, "Type")) {
+                opts.package_type = *t;
+            }
+            if (auto t = attr_value(tag, "SubType")) {
+                opts.package_subtype = *t;
+            }
+        }
+    }
+    if (auto v = child_text(xml, "ArchiveVersion")) {
+        opts.archive_version = *v;
+    }
+    if (auto v = child_text(xml, "DisplayName")) {
+        opts.display_name = *v;
+    }
+    if (auto v = child_text(xml, "Description")) {
+        opts.description = *v;
+    }
+    if (auto v = child_text(xml, "PackageId")) {
+        opts.package_id = *v;
+    }
+    return opts;
+}
+
+Result<Sims3PackMeta> pack_sims3pack(const std::filesystem::path& out_path,
+                                     const std::vector<Sims3PackPackItem>& items,
+                                     const Sims3PackCreateOptions& opts,
+                                     bool force) {
+    if (items.empty()) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "no packaged files to pack"));
+    }
+    if (items.size() > kMaxEntries) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "too many packaged files"));
+    }
+    for (const auto& part : out_path.lexically_normal()) {
+        if (part == "..") {
+            return std::unexpected(err(ErrorCode::refused, "out path contains .."));
+        }
+    }
+    std::error_code ec;
+    if (std::filesystem::exists(out_path, ec) && !ec && !force) {
+        return std::unexpected(
+            err(ErrorCode::refused, "destination exists (pass force to overwrite)"));
+    }
+
+    struct Built {
+        std::string name;
+        std::string guid;
+        std::string content_type;
+        std::string crc;
+        std::string bytes;
+        std::uint64_t offset{0};
+    };
+    std::vector<Built> built;
+    built.reserve(items.size());
+    std::uint64_t archive_size = 0;
+    std::unordered_set<std::string> used_names;
+
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const auto& it = items[i];
+        auto name_r = safe_entry_name(it.name.empty() ? it.source_path.filename().string() : it.name,
+                                      static_cast<std::uint32_t>(i));
+        if (!name_r) {
+            return std::unexpected(name_r.error());
+        }
+        if (!used_names.insert(*name_r).second) {
+            return std::unexpected(err(ErrorCode::refused, "duplicate packaged file name: " + *name_r));
+        }
+        auto bytes = read_file_bytes(it.source_path, sxpe::core::caps::kMaxResourceBytes);
+        if (!bytes) {
+            return std::unexpected(bytes.error());
+        }
+        if (archive_size > kMaxFileBytes ||
+            static_cast<std::uint64_t>(bytes->size()) > kMaxFileBytes - archive_size) {
+            return std::unexpected(err(ErrorCode::cap_exceeded, "archive would exceed 4 GiB cap"));
+        }
+        Built b;
+        b.name = *name_r;
+        b.guid = it.guid.empty() ? default_guid(static_cast<std::uint32_t>(i)) : it.guid;
+        b.content_type =
+            it.content_type.empty() ? infer_content_type(b.name) : it.content_type;
+        b.crc = it.crc.empty() ? "00000000" : it.crc;
+        b.offset = archive_size;
+        b.bytes = std::move(*bytes);
+        archive_size += b.bytes.size();
+        built.push_back(std::move(b));
+    }
+
+    Sims3PackCreateOptions meta_opts = opts;
+    if (meta_opts.package_type.empty()) {
+        meta_opts.package_type = "Object";
+    }
+    if (meta_opts.package_subtype.empty()) {
+        meta_opts.package_subtype = "0x00000000";
+    }
+    if (meta_opts.archive_version.empty()) {
+        meta_opts.archive_version = "1.4";
+    }
+    if (meta_opts.display_name.empty()) {
+        meta_opts.display_name = built.front().name;
+    }
+    if (meta_opts.package_id.empty()) {
+        meta_opts.package_id = "sxpe-pack-" + default_guid(0);
+    }
+
+    std::ostringstream xml;
+    xml << "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+    xml << "<Sims3Package Type=\"" << xml_escape(meta_opts.package_type) << "\" SubType=\""
+        << xml_escape(meta_opts.package_subtype) << "\">";
+    xml << "<ArchiveVersion>" << xml_escape(meta_opts.archive_version) << "</ArchiveVersion>";
+    xml << "<DisplayName>" << xml_escape(meta_opts.display_name) << "</DisplayName>";
+    xml << "<Description>" << xml_escape(meta_opts.description) << "</Description>";
+    xml << "<PackageId>" << xml_escape(meta_opts.package_id) << "</PackageId>";
+    for (const auto& b : built) {
+        xml << "<PackagedFile>";
+        xml << "<Name>" << xml_escape(b.name) << "</Name>";
+        xml << "<Length>" << b.bytes.size() << "</Length>";
+        xml << "<Offset>" << b.offset << "</Offset>";
+        xml << "<Crc>" << xml_escape(b.crc) << "</Crc>";
+        xml << "<Guid>" << xml_escape(b.guid) << "</Guid>";
+        if (!b.content_type.empty()) {
+            xml << "<ContentType>" << xml_escape(b.content_type) << "</ContentType>";
+        }
+        xml << "</PackagedFile>";
+    }
+    xml << "</Sims3Package>";
+    const std::string xml_s = xml.str();
+    if (xml_s.size() > kMaxXmlBytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "generated Sims3Pack XML exceeds 16 MiB"));
+    }
+    const std::uint64_t header_size = 4ull + kSigLen + 2ull + 4ull;
+    const std::uint64_t total = header_size + xml_s.size() + archive_size;
+    if (total > kMaxFileBytes) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "sims3pack would exceed 4 GiB open cap"));
+    }
+
+    if (auto parent = out_path.parent_path(); !parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            return std::unexpected(err(ErrorCode::io, "cannot create out parent: " + ec.message()));
+        }
+    }
+
+    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return std::unexpected(err(ErrorCode::io, "cannot write sims3pack destination"));
+    }
+    write_u32_le(out, static_cast<std::uint32_t>(kSigLen));
+    out.write(kSig, static_cast<std::streamsize>(kSigLen));
+    write_u16_le(out, 0x0101);
+    write_u32_le(out, static_cast<std::uint32_t>(xml_s.size()));
+    out.write(xml_s.data(), static_cast<std::streamsize>(xml_s.size()));
+    for (const auto& b : built) {
+        if (!b.bytes.empty()) {
+            out.write(b.bytes.data(), static_cast<std::streamsize>(b.bytes.size()));
+        }
+        if (!out) {
+            return std::unexpected(err(ErrorCode::io, "write failed during sims3pack pack"));
+        }
+    }
+    out.close();
+    if (!out) {
+        return std::unexpected(err(ErrorCode::io, "failed to close sims3pack after pack"));
+    }
+
+    // Re-open for a consistent meta view (and to exercise the reader).
+    return open_sims3pack(out_path);
 }
 
 }  // namespace sxpe::games::sims3

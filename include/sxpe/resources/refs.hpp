@@ -4,6 +4,7 @@
 #include "sxpe/games/sims3/tgi.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -25,7 +26,20 @@ struct Refs {
     bool partial{false};
 };
 
+/// Optional overrides for `refs.set`. Omitted keys leave on-disk values unchanged.
+struct RefsPatch {
+    std::optional<std::vector<RefsEntry>> entries;
+    std::optional<std::vector<std::uint16_t>> indices;
+};
+
 /// REFS (0x05ED1226) best-effort: version, TGI list + aux, trailing WORD indices.
 Result<Refs> parse_refs(std::span<const std::byte> bytes);
+
+/// Serialize a fully-parsed REFS (not partial) to on-disk bytes.
+Result<std::vector<std::byte>> serialize_refs(const Refs& r);
+
+/// Replace entries and/or indices; preserves version / thingy / aux width.
+/// Refuses partial parses. See docs/spec/refs.md.
+Result<std::vector<std::byte>> apply_refs(std::span<const std::byte> bytes, const RefsPatch& patch);
 
 }  // namespace sxpe::resources

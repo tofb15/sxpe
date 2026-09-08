@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: SXPE docs
+    url: https://github.com/tofb15/sxpe/blob/dev/docs/README.md
+    about: User guide, workflows, building, and release notes.

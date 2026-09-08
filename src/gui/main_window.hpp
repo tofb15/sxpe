@@ -32,12 +32,15 @@ protected:
 private:
     PackageTab* current_tab() const;
     void add_tab(const QString& session_id, const QString& title);
-    void merge_dropped_packages(const QStringList& paths);
+    void merge_dropped_packages(const QStringList& paths, bool validate_after = false);
+    void open_merge_assistant();
+    void maybe_show_onboarding();
     void unmerge_package();
     void compare_packages();
     void find_refs();
     void scan_folder();
     void inspect_sims3pack();
+    void create_sims3pack();
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);
@@ -78,9 +81,14 @@ private:
     void open_stbl();
     void open_nmap();
     void open_xml();
+    void open_objd();
+    void open_casp();
+    void open_refs();
+    void open_rcol_replace();
     void export_s3sa();
     void import_s3sa();
     void view_s3sa();
+    void open_clip();
     void clip_export();
     void replace_dds();
     void replace_snap();

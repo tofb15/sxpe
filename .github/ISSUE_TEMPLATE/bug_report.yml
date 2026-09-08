@@ -1,0 +1,66 @@
+name: Bug report
+description: Something broke or surprised you in SXPE Beta.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying the **public Beta**. A short report is enough — keep packages/CC out of the ticket if you can.
+  - type: input
+    id: version
+    attributes:
+      label: SXPE version
+      description: Help → About, or the release zip name (e.g. 0.7.0).
+      placeholder: "0.7.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows 10/11
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where it happened
+      options:
+        - GUI
+        - CLI (`sxpe`)
+        - MCP (`sxpe_mcp`)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order.
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots (optional)
+      description: Paste CLI/MCP error text, or describe what the GUI showed. Do not attach copyrighted game packages.

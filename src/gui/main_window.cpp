@@ -5,9 +5,11 @@
 #include "palette.hpp"
 #include "resource_model.hpp"
 
+#include "sxpe/core/caps.hpp"
 #include "sxpe/resources/types.hpp"
 #include "sxpe/resources/xml.hpp"
 
+#include <algorithm>
 #include <vector>
 
 #include <QAction>
@@ -31,12 +33,14 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
 #include <QStyleHints>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace sxpe::gui {
@@ -170,14 +174,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     import_menu_ = res->addMenu(tr("&Import"));
     auto* imp = import_menu_;
     act(imp, tr("From &file…"), {}, [this] { import_files(); });
-    act(imp, tr("From &package(s)…"), {}, [this] {
+    act(imp, tr("From &package(s) into this package…"), {}, [this] {
         if (auto* t = current_tab()) {
             show_import_dialog(this, bus_, t->session_id(), false);
             t->reload();
         }
     });
     act(imp, tr("&Replace selected from package…"), {}, [this] { replace_from_package(); });
-    act(imp, tr("As &DBC…"), {}, [this] {
+    act(imp, tr("As &DBC into this package…"), {}, [this] {
         auto* t = current_tab();
         if (!t) {
             return;
@@ -200,9 +204,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("&String table…"), {}, [this] { open_stbl(); });
     nmap_editor_act_ = editors->addAction(tr("&Name map…"), this, [this] { open_nmap(); });
     act(editors, tr("&XML…"), {}, [this] { open_xml(); });
+    act(editors, tr("&Catalog object…"), {}, [this] { open_objd(); });
+    act(editors, tr("CAS &part…"), {}, [this] { open_casp(); });
+    act(editors, tr("&Reference table…"), {}, [this] { open_refs(); });
+    act(editors, tr("Replace RCOL &chunk…"), {}, [this] { open_rcol_replace(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&View S3SA…"), {}, [this] { view_s3sa(); });
+    act(editors, tr("C&LIP metadata…"), {}, [this] { open_clip(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
     act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
@@ -222,6 +231,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
     act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
     act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
+    act(tools, tr("Create Sims3&Pack…"), {}, [this] { create_sims3pack(); });
+    act(tools, tr("&Merge packages…"), {}, [this] { open_merge_assistant(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -281,7 +292,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* help = menuBar()->addMenu(tr("&Help"));
     act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
-    act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this); });
+    act(help, tr("Common &tasks…"), {}, [this] { show_common_tasks_dialog(this); });
+    act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this, bus_); });
     help->addSeparator();
     act(help, tr("&About SXPE"), {}, [this] {
         QMessageBox::about(
@@ -313,10 +325,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     rebuild_mru();
     rebuild_bookmarks();
 
-    auto* empty = new QLabel(tr("Open a package (Ctrl+O) or drop a .package file here."));
+    auto* empty = new QLabel(tr("Open a package (Ctrl+O), drop a .package file here, or try Tools → Merge packages… / Help → Common tasks."));
     empty->setAlignment(Qt::AlignCenter);
     empty->setObjectName("empty");
     tabs_->addTab(empty, tr("Start"));
+
+    QTimer::singleShot(0, this, [this] { maybe_show_onboarding(); });
 }
 
 void MainWindow::add_tab(const QString& session_id, const QString& title) {
@@ -395,6 +409,10 @@ void MainWindow::scan_folder() {
     });
 }
 
+void MainWindow::create_sims3pack() {
+    show_create_sims3pack_dialog(this, bus_);
+}
+
 void MainWindow::inspect_sims3pack() {
     show_sims3pack_dialog(this, bus_, [this](const QString& path) {
         if (!open_path(path, true)) {
@@ -422,7 +440,7 @@ void MainWindow::compare_packages() {
     });
 }
 
-void MainWindow::merge_dropped_packages(const QStringList& paths) {
+void MainWindow::merge_dropped_packages(const QStringList& paths, bool validate_after) {
     auto created = bus_.execute("package.new", nlohmann::json::object());
     if (!created.value("ok", false)) {
         warn_if_err(created);
@@ -433,15 +451,49 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     for (const auto& p : paths) {
         arr.push_back(p.toStdString());
     }
+    QProgressDialog progress(tr("Merging packages…"), tr("Cancel"), 0, paths.size(), this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    progress.setCancelButtonText(tr("Cancel"));
+    bus_.clear_cancel();
+    bus_.set_cancel_check([&] { return progress.wasCanceled(); });
+    bus_.set_progress_handler([&](const nlohmann::json& ev) {
+        const int done = ev.value("packagesDone", 0);
+        const int total = ev.value("packagesTotal", paths.size());
+        progress.setMaximum(std::max(1, total));
+        progress.setValue(std::min(done, progress.maximum()));
+        if (ev.contains("path") && ev["path"].is_string()) {
+            progress.setLabelText(
+                tr("Merging %1 (%2 / %3)")
+                    .arg(QString::fromStdString(ev["path"].get<std::string>()))
+                    .arg(done)
+                    .arg(total));
+        }
+        QApplication::processEvents();
+    });
     QApplication::setOverrideCursor(Qt::WaitCursor);
     auto env = bus_.execute("resource.importPackage",
                             {{"sessionId", sid.toStdString()},
                              {"paths", arr},
                              {"force", true},
-                             {"writeMergeManifest", true}});
+                             {"writeMergeManifest", true},
+                             {"leftoverManifestPolicy", "strip"},
+                             {"duplicateTgiPolicy", "force"},
+                             {"reportProgress", true}});
+    bus_.clear_progress_handler();
+    bus_.clear_cancel_check();
+    bus_.clear_cancel();
     QApplication::restoreOverrideCursor();
+    progress.setValue(progress.maximum());
     if (!env.value("ok", false) || env["data"].value("imported", 0) == 0) {
         bus_.execute("package.close", {{"sessionId", sid.toStdString()}});
+        const bool cancelled = env.contains("data") && env["data"].value("cancelled", false);
+        if (cancelled) {
+            QMessageBox::information(this, tr("SXPE"),
+                                     tr("Merge cancelled. No package was kept."));
+            return;
+        }
         warn_if_err(env.value("ok", false)
                         ? nlohmann::json{{"ok", false},
                                          {"error", {{"message", tr("Nothing was imported.").toStdString()}}}}
@@ -452,28 +504,61 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     const auto imported = env["data"].value("imported", 0);
     const auto pkgs = env["data"].value("packages", 0);
     const auto failed = env["data"].value("failed", 0);
+    const auto stripped = env["data"].contains("strippedLeftovers") &&
+                                  env["data"]["strippedLeftovers"].is_array()
+                              ? env["data"]["strippedLeftovers"].size()
+                              : 0;
+    const auto dups = env["data"].contains("duplicates") && env["data"]["duplicates"].is_array()
+                          ? env["data"]["duplicates"].size()
+                          : 0;
     QString msg = tr("Merged %1 resource(s) from %2 file(s) into a new untitled package. "
                      "Use File → Save As to write it. The original files were not changed.")
                       .arg(imported)
                       .arg(pkgs);
+    if (stripped > 0) {
+        msg += QLatin1Char('\n') +
+               tr("Stripped %1 leftover Sims3Pack manifest resource(s) (allowlist).").arg(stripped);
+    }
+    if (dups > 0) {
+        msg += QLatin1Char('\n') +
+               tr("%1 duplicate TGI(s) resolved with policy force (overwrite).").arg(dups);
+    }
     if (failed > 0) {
         msg += QLatin1Char('\n') + tr("%1 file(s) could not be imported.").arg(failed);
         QMessageBox::warning(this, tr("SXPE"), msg);
     } else {
         QMessageBox::information(this, tr("SXPE"), msg);
     }
+    if (validate_after) {
+        if (auto* t = current_tab()) {
+            auto ven = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
+            show_validate_dialog(this, ven);
+        }
+    }
+}
+
+void MainWindow::open_merge_assistant() {
+    show_merge_assistant_dialog(this, [this](const QStringList& paths, bool validate_after) {
+        merge_dropped_packages(paths, validate_after);
+    });
+}
+
+void MainWindow::maybe_show_onboarding() {
+    show_first_run_tip_if_needed(this, smoke_mode_, [this] { open_merge_assistant(); });
 }
 
 bool MainWindow::open_path(const QString& path, bool writable) {
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    // Bus demotes writable→RO above kOpenReadOnlyBytes unless forceWritable (not used here).
     auto env = bus_.execute("package.open", {{"path", path.toStdString()}, {"writable", writable}});
     if (!env.value("ok", false)) {
         QApplication::restoreOverrideCursor();
         warn_if_err(env);
         return false;
     }
-    const auto sid = QString::fromStdString(env["data"]["sessionId"].get<std::string>());
-    if (env["data"].value("alreadyOpen", false)) {
+    const auto& data = env["data"];
+    const auto sid = QString::fromStdString(data["sessionId"].get<std::string>());
+    if (data.value("alreadyOpen", false)) {
         QApplication::restoreOverrideCursor();
         const int i = tab_index_for_session(sid);
         if (i >= 0) {
@@ -481,9 +566,30 @@ bool MainWindow::open_path(const QString& path, bool writable) {
         }
         return true;
     }
-    add_tab(sid, QFileInfo(path).fileName() + (writable ? QString() : tr(" [read-only]")));
+    const bool rw = data.value("readWrite", writable);
+    add_tab(sid, QFileInfo(path).fileName() + (rw ? QString() : tr(" [read-only]")));
     remember_mru(path);
     QApplication::restoreOverrideCursor();
+    if (data.value("openedReadOnlyDueToSize", false)) {
+        const auto mb = data.value("fileBytes", 0ull) / (1024.0 * 1024.0);
+        QMessageBox::information(
+            this, tr("SXPE"),
+            tr("Opened read-only because the file is %1 MB (threshold %2 MB). "
+               "Huge packages stay index-mapped; use File → Open Read-Only intentionally, "
+               "or reopen with an explicit writable override from CLI (--writable with "
+               "forceWritable) if you must edit.")
+                .arg(mb, 0, 'f', 1)
+                .arg(sxpe::core::caps::kOpenReadOnlyBytes / (1024.0 * 1024.0), 0, 'f', 0));
+    }
+    if (data.contains("warnings") && data["warnings"].is_array()) {
+        for (const auto& w : data["warnings"]) {
+            if (!w.is_string()) {
+                continue;
+            }
+            QMessageBox::warning(this, tr("SXPE"),
+                                 QString::fromStdString(w.get<std::string>()));
+        }
+    }
     return true;
 }
 
@@ -570,7 +676,7 @@ bool MainWindow::close_tab(int index) {
     }
     tabs_->removeTab(index);
     if (tabs_->count() == 0) {
-        auto* empty = new QLabel(tr("Open a package (Ctrl+O) or drop a .package file here."));
+        auto* empty = new QLabel(tr("Open a package (Ctrl+O), drop a .package file here, or try Tools → Merge packages… / Help → Common tasks."));
         empty->setAlignment(Qt::AlignCenter);
         empty->setObjectName("empty");
         tabs_->addTab(empty, tr("Start"));
@@ -1265,6 +1371,51 @@ void MainWindow::open_xml() {
     }
 }
 
+void MainWindow::open_objd() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_objd_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
+void MainWindow::open_casp() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_casp_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
+void MainWindow::open_rcol_replace() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_rcol_replace_chunk_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance,
+                                      r->ordinal)) {
+        t->reload();
+    }
+}
+
+void MainWindow::open_refs() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_refs_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::import_s3sa() {
     auto* t = current_tab();
     if (!t) {
@@ -1350,6 +1501,17 @@ void MainWindow::view_s3sa() {
     }
 }
 
+void MainWindow::open_clip() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_clip_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::clip_export() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1368,10 +1530,27 @@ void MainWindow::replace_dds() {
     if (!t || !r) {
         return;
     }
-    if (show_add_resource_dialog(this, bus_, t->session_id(), true, r->type, r->group, r->instance,
-                                 r->ordinal, tr("DDS (*.dds);;All files (*.*)"))) {
-        t->reload();
+    const auto path = QFileDialog::getOpenFileName(this, tr("Replace DDS"), {},
+                                                   tr("DDS (*.dds);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
     }
+    nlohmann::json rid{{"type", r->type},
+                       {"group", r->group},
+                       {"instance", r->instance},
+                       {"ordinal", r->ordinal}};
+    auto env = bus_.execute("dds.replace", {{"sessionId", t->session_id().toStdString()},
+                                            {"resourceId", rid},
+                                            {"path", path.toStdString()}});
+    if (!env.value("ok", false)) {
+        QString msg = tr("Could not replace DDS.");
+        if (env.contains("error") && env["error"].contains("message")) {
+            msg = QString::fromStdString(env["error"]["message"].get<std::string>());
+        }
+        QMessageBox::warning(this, tr("SXPE"), msg);
+        return;
+    }
+    t->reload();
 }
 
 void MainWindow::replace_snap() {
@@ -1590,14 +1769,14 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* imp = m.addMenu(tr("&Import"));
     imp->setEnabled(!locked);
     imp->addAction(tr("From &file…"), this, [this] { import_files(); });
-    imp->addAction(tr("From &package(s)…"), this, [this] {
+    imp->addAction(tr("From &package(s) into this package…"), this, [this] {
         if (auto* tab = current_tab()) {
             show_import_dialog(this, bus_, tab->session_id(), false);
             tab->reload();
         }
     });
     imp->addAction(tr("&Replace selected from package…"), this, [this] { replace_from_package(); });
-    imp->addAction(tr("As &DBC…"), this, [this] {
+    imp->addAction(tr("As &DBC into this package…"), this, [this] {
         if (auto* tab = current_tab()) {
             show_import_dialog(this, bus_, tab->session_id(), true);
             tab->reload();
@@ -1611,9 +1790,17 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* stbl = editors->addAction(tr("&String table…"), this, [this] { open_stbl(); });
     auto* nmap = editors->addAction(tr("&Name map…"), this, [this] { open_nmap(); });
     auto* xml = editors->addAction(tr("&XML…"), this, [this] { open_xml(); });
+    auto* objd = editors->addAction(tr("&Catalog object…"), this, [this] { open_objd(); });
+    auto* casp = editors->addAction(tr("CAS &part…"), this, [this] { open_casp(); });
+    auto* refs = editors->addAction(tr("&Reference table…"), this, [this] { open_refs(); });
+    auto* rcol = editors->addAction(tr("Replace RCOL &chunk…"), this, [this] { open_rcol_replace(); });
+    objd->setEnabled(false);
+    casp->setEnabled(false);
+    refs->setEnabled(false);
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
     auto* s3sa_view = editors->addAction(tr("&View S3SA…"), this, [this] { view_s3sa(); });
+    auto* clip_meta = editors->addAction(tr("C&LIP metadata…"), this, [this] { open_clip(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
@@ -1631,6 +1818,11 @@ void MainWindow::show_resource_context(const QPoint& global) {
     nmap->setEnabled((r && r->type == sxpe::resources::kNmap) || has_nmap);
     if (r) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
+        objd->setEnabled(r->type == sxpe::resources::kObjd);
+        casp->setEnabled(r->type == sxpe::resources::kCasp);
+        refs->setEnabled(r->type == sxpe::resources::kRefs);
+        rcol->setEnabled(r->type == sxpe::resources::kModl || r->type == sxpe::resources::kMlod ||
+                         r->type == sxpe::resources::kGeom || r->type == sxpe::resources::kMatd);
         bool xml_ok = r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun;
         if (!xml_ok) {
             // Match bus xml.get: enable when a short peek looks like XML.
@@ -1661,6 +1853,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         s3sa_in->setEnabled(true);
         s3sa_view->setEnabled(r->type == sxpe::resources::kS3sa);
+        clip_meta->setEnabled(r->type == sxpe::resources::kClip);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));
@@ -1669,6 +1862,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         xml->setEnabled(false);
         s3sa->setEnabled(false);
         s3sa_view->setEnabled(false);
+        clip_meta->setEnabled(false);
         clip->setEnabled(false);
         dds->setEnabled(false);
         snap->setEnabled(false);
@@ -1786,8 +1980,10 @@ void MainWindow::dropEvent(QDropEvent* e) {
     box.setWindowTitle(tr("Drop %1 files").arg(files.size()));
     box.setText(tr("Open each file in its own tab, or merge every resource into a new untitled package?"));
     box.setInformativeText(
-        tr("A merge never writes the dropped files. If two packages share a resource key, "
-           "the later file wins. Save the result with File → Save As."));
+        tr("A merge never writes the dropped files. Duplicate resource keys: later file wins. "
+           "Known leftover Sims3Pack manifests (type 0x73E93EEB instance 0) are stripped. "
+           "Same as Tools → Merge packages… (Merge assistant). "
+           "Save the result with File → Save As."));
     auto* as_tabs = box.addButton(tr("Open as tabs"), QMessageBox::AcceptRole);
     auto* as_merge = box.addButton(tr("Merge into new package"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Cancel);

@@ -7,6 +7,9 @@
 #include "sxpe/core/sha256.hpp"
 
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
+#include "sxpe/core/update_check.hpp"
+#include "sxpe/version.hpp"
 #include "sxpe/games/sims3/fnv.hpp"
 #include "sxpe/games/sims3/package.hpp"
 #include "sxpe/games/sims3/sims3pack.hpp"
@@ -24,16 +27,19 @@
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/merge_hygiene.hpp"
 #include "sxpe/resources/vpxy.hpp"
 #include "sxpe/resources/refs.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -41,6 +47,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -382,13 +389,25 @@ struct Session {
     std::vector<UndoItem> undo;
     std::vector<UndoItem> redo;
     json clipboard = json::array();
+    /// Cached NMAP instance→name map for snappy resource.list / ui_index pagination.
+    std::unordered_map<std::uint64_t, std::string> names;
+    bool names_ready{false};
+    void invalidate_names() {
+        names_ready = false;
+        names.clear();
+    }
 };
 
 sxpe::resources::Nmap load_nmap(Package& pkg) {
     sxpe::resources::Nmap merged;
     merged.version = 1;
     for (std::uint32_t i = 0; i < pkg.count(); ++i) {
-        if (pkg.entry(i).tgi.type != kNmap) {
+        const auto& e = pkg.entry(i);
+        if (e.tgi.type != kNmap) {
+            continue;
+        }
+        // Never decode a huge NMAP just to label the grid — keeps list O(index).
+        if (e.mem_size > sxpe::core::caps::kMaxNmapIndexBytes) {
             continue;
         }
         auto body = pkg.uncompressed(i);
@@ -399,14 +418,14 @@ sxpe::resources::Nmap load_nmap(Package& pkg) {
         if (!n) {
             continue;
         }
-        for (auto& e : n->entries) {
-            merged.entries.push_back(std::move(e));
+        for (auto& ne : n->entries) {
+            merged.entries.push_back(std::move(ne));
         }
     }
     return merged;
 }
 
-std::unordered_map<std::uint64_t, std::string> name_index(Package& pkg) {
+std::unordered_map<std::uint64_t, std::string> build_name_index(Package& pkg) {
     auto names = load_nmap(pkg);
     std::unordered_map<std::uint64_t, std::string> m;
     m.reserve(names.entries.size() * 2 + 1);
@@ -414,6 +433,14 @@ std::unordered_map<std::uint64_t, std::string> name_index(Package& pkg) {
         m.insert_or_assign(e.instance, std::move(e.name));
     }
     return m;
+}
+
+const std::unordered_map<std::uint64_t, std::string>& name_index(Session& s) {
+    if (!s.names_ready) {
+        s.names = build_name_index(s.pkg);
+        s.names_ready = true;
+    }
+    return s.names;
 }
 
 json item_meta(Package& pkg, std::uint32_t i,
@@ -735,9 +762,15 @@ std::vector<Tool> make_catalog() {
          false});
     add({"package.open",
          "Open package",
-         "Open a DBPF file via mmap after sniffing Sims 3. Example: {\"path\":\"mod.package\"}. Do not use for Sims 4.",
+         "Open a DBPF file via mmap after sniffing Sims 3 (index-only; payloads stay lazy). "
+         "writable defaults false. If writable true and on-disk size >= kOpenReadOnlyBytes (256 MiB), "
+         "opens read-only unless forceWritable true (openedReadOnlyDueToSize). "
+         "Sharing violations / exclusive locks return a clear io error (close the game or copy the file first). "
+         "Paths under Documents/Electronic Arts/.../Mods may add warnings[] when exclusive lock is unavailable. "
+         "Example: {\"path\":\"mod.package\"}. Do not use for Sims 4.",
          obj_schema({{"path", {{"type", "string"}}},
                      {"writable", {{"type", "boolean"}, {"default", false}}},
+                     {"forceWritable", {{"type", "boolean"}, {"default", false}}},
                      {"game", {{"type", "string"}}}},
                     json::array({"path"})),
          env_out,
@@ -777,8 +810,9 @@ std::vector<Tool> make_catalog() {
          true, false});
     add({"package.validate", "Validate",
          "Sniff + DIR cross-checks on an open session. Returns ok, issues[], indexCount, dir{}, "
-         "layoutLocked, pathKind, and summary[] lines for CLI --format text / GUI "
-         "(summary names neighborhood / world layout lock when locked).",
+         "conflictHotspots[] (leftover Sims3Pack manifests / duplicate TGIs), layoutLocked, "
+         "pathKind, and summary[] lines for CLI --format text / GUI "
+         "(summary names neighborhood / world layout lock and conflict hotspots).",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
     add({"package.diff", "Compare packages",
@@ -827,6 +861,29 @@ std::vector<Tool> make_catalog() {
                     json::array({"path", "outDir", "index"})),
          env_out, true, false, false, true});
 
+    add({"sims3pack.pack", "Sims3Pack pack",
+         "Limited TS3Pack authoring: pack non-recursive *.package files from sourceDir into path "
+         "(.sims3pack). Optional metaXml subset and/or displayName/description/packageId/"
+         "packageType/packageSubType/archiveVersion. CRC left as zeros (unknown algorithm). "
+         "No Store upload / DRM / DBPP. Pass force to overwrite. openWorld write. "
+         "Example: {\"path\":\"out.sims3pack\",\"sourceDir\":\"/tmp/pkgs\",\"displayName\":\"My Mod\","
+         "\"force\":true}.",
+         obj_schema({{"path", {{"type", "string"}}},
+                     {"sourceDir", {{"type", "string"}}},
+                     {"metaXml", {{"type", "string"}}},
+                     {"displayName", {{"type", "string"}}},
+                     {"description", {{"type", "string"}}},
+                     {"packageId", {{"type", "string"}}},
+                     {"packageType", {{"type", "string"}}},
+                     {"packageSubType", {{"type", "string"}}},
+                     {"archiveVersion", {{"type", "string"}}},
+                     {"name", {{"type", "string"}}},
+                     {"force", force_prop()},
+                     {"dryRun", dry_prop()}},
+                    json::array({"path", "sourceDir"})),
+         env_out, false, false, false, true});
+
+
     add({"package.compact", "Compact", "Save dropping session-deleted resources.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
@@ -847,9 +904,9 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"resource.findRefs", "Find references",
-         "Scan REFS + OBJK/VPXY TGI lists for resources that point at a target TGI. "
+         "Scan REFS + OBJK/VPXY/CASP TGI lists for resources that point at a target TGI (inbound). "
          "Optional byteScan:true does a capped uncompressed payload scan (slow). "
-         "CLI: sxpe resource find-refs --package X --type --group --instance.",
+         "Outbound: resource.listRefs. CLI: sxpe resource find-refs / list-refs.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"limit", {{"type", "integer"}, {"default", 200}}},
@@ -931,7 +988,16 @@ std::vector<Tool> make_catalog() {
          "Duplicate NMAP TGIs concatenate name records and the name map is moved to index 0 "
          "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge. "
          "dirPolicy: strip (default with writeMergeManifest), copy-through, or rebuild (not yet; refused). "
-         "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages.",
+         "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages. "
+         "leftoverManifestPolicy: strip (default; auto-drop documented allowlist TGIs such as "
+         "Sims3Pack leftover 0x73E93EEB instance 0), keep, or warn (copy but list). "
+         "duplicateTgiPolicy: force | skip | fail (default force when --force, else fail). "
+         "Reports strippedLeftovers[] and duplicates[] warning lists. "
+         "Caps (defaults in core/caps): maxPackages, maxTotalBytes, maxResources — refuse with cap_exceeded "
+         "before OOM; split the job. reportProgress (default true) emits bus progress events and returns "
+         "progress[] in data. Optional checkpointPath + checkpointBetweenPackages saves after each source "
+         "(explicit; not autosave) and remaps so RAM stays bounded. Cooperative cancel via bus "
+         "request_cancel / cancel_check rolls the session package back to its pre-import state.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
@@ -939,6 +1005,23 @@ std::vector<Tool> make_catalog() {
                      {"dirPolicy",
                       {{"type", "string"},
                        {"description", "strip | copy-through | rebuild (rebuild refused for now)"}}},
+                     {"leftoverManifestPolicy",
+                      {{"type", "string"},
+                       {"description", "strip (default) | keep | warn — documented leftover allowlist"}}},
+                     {"duplicateTgiPolicy",
+                      {{"type", "string"},
+                       {"description", "force | skip | fail (default: force if force=true else fail)"}}},
+                     {"maxPackages", {{"type", "integer"}, {"default", 500}}},
+                     {"maxTotalBytes", {{"type", "integer"}, {"default", 2147483648}}},
+                     {"maxResources", {{"type", "integer"}, {"default", 200000}}},
+                     {"reportProgress", {{"type", "boolean"}, {"default", true}}},
+                     {"checkpointPath",
+                      {{"type", "string"},
+                       {"description", "Explicit save path when checkpointBetweenPackages is true"}}},
+                     {"checkpointBetweenPackages",
+                      {{"type", "boolean"},
+                       {"default", false},
+                       {"description", "Save to checkpointPath after each successful source package"}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId"})),
@@ -951,10 +1034,24 @@ std::vector<Tool> make_catalog() {
                     json::array({"path", "outDir"})),
          env_out, false, true, false, true});
     add({"resource.importDbc", "Import DBC",
-         "Treat .dbc/DBPF files as packages and copy resources. Pass path or paths[].",
+         "Treat .dbc/DBPF files as packages and copy resources (DBC-equivalent of importPackage). "
+         "Pass path or paths[]. Same leftoverManifestPolicy / duplicateTgiPolicy / caps / "
+         "reportProgress / checkpoint* as resource.importPackage.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                     {"leftoverManifestPolicy",
+                      {{"type", "string"},
+                       {"description", "strip (default) | keep | warn"}}},
+                     {"duplicateTgiPolicy",
+                      {{"type", "string"},
+                       {"description", "force | skip | fail"}}},
+                     {"maxPackages", {{"type", "integer"}}},
+                     {"maxTotalBytes", {{"type", "integer"}}},
+                     {"maxResources", {{"type", "integer"}}},
+                     {"reportProgress", {{"type", "boolean"}, {"default", true}}},
+                     {"checkpointPath", {{"type", "string"}}},
+                     {"checkpointBetweenPackages", {{"type", "boolean"}, {"default", false}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId"})),
@@ -1068,13 +1165,16 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "name"})),
          env_out, false, true, false, false});
-    add({"dds.info", "DDS info", "Width/height/format from a DDS resource.",
+    add({"dds.info", "DDS info",
+         "Width/height/format/cubemap/volume/decodeSupported from a DDS resource. "
+         "See docs/spec/dds.md for the format matrix.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"dds.decode", "DDS decode",
-         "Decode DXT1, DXT5, or 24/32-bit RGB(A) to RGBA byte count. Other DDS formats "
-         "return unsupported. Does not embed pixels in MCP (use dds.export for the file).",
+         "Decode DXT1/DXT3/DXT5 or 16/24/32-bit RGB(A) mask layouts to RGBA byte count. "
+         "Cubemaps, volumes, BC7/DX10, and other FourCCs return unsupported with a clear "
+         "message. Does not embed pixels in MCP (use dds.export for the file).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
@@ -1086,6 +1186,17 @@ std::vector<Tool> make_catalog() {
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
          env_out, true, false, true, true});
+    add({"dds.replace", "Replace DDS",
+         "Validate a filesystem DDS (2D, within kMaxDdsEdge, decode-supported formats only) "
+         "and replace the resource payload. Refuses cubemaps/volumes/BC7/DX10 with a clear "
+         "error. Pass path; optional compress/dryRun.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"path", {{"type", "string"}}},
+                     {"compress", {{"type", "boolean"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "path"})),
+         env_out, false, true, false, true});
     add({"objk.get", "OBJK get",
          "Parse OBJK version, component IDs, and data keys (wiki 0x02DC343F). Not a full object editor.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
@@ -1106,16 +1217,85 @@ std::vector<Tool> make_catalog() {
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
+    add({"objd.set", "OBJD set",
+         "Patch catalog Common fields (name/desc GUIDs, names, price, thumb IID, instanceName). "
+         "Preserves materials, unknown trailing bytes, and TGI off. dryRun + undo.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"nameGuid", {{"type", "integer"}}},
+                     {"descGuid", {{"type", "integer"}}},
+                     {"internalName", {{"type", "string"}}},
+                     {"internalDesc", {{"type", "string"}}},
+                     {"price", {{"type", "number"}}},
+                     {"thumbIid", {{"type", "integer"}}},
+                     {"instanceName", {{"type", "string"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, false, true, false, false});
+    add({"casp.set", "CASP set",
+         "Patch CAS part name, sortPriority, clothing type/flags, age/gender/species, category, "
+         "and optional tgis[] key table. Preserves presets + unknown mid bytes. dryRun + undo.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"name", {{"type", "string"}}},
+                     {"sortPriority", {{"type", "number"}}},
+                     {"clothingType", {{"type", "integer"}}},
+                     {"typeFlags", {{"type", "integer"}}},
+                     {"ageGender", {{"type", "integer"}}},
+                     {"ageFlags", {{"type", "integer"}}},
+                     {"species", {{"type", "integer"}}},
+                     {"genderFlags", {{"type", "integer"}}},
+                     {"handedness", {{"type", "integer"}}},
+                     {"clothingCategory", {{"type", "integer"}}},
+                     {"tgis", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, false, true, false, false});
+    add({"refs.get", "REFS get",
+         "Parse REFS (0x05ED1226) TGI+aux table and trailing WORD indices.",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"refs.set", "REFS set",
+         "Replace REFS entries[] and/or indices[]; preserves version/thingy/aux width. dryRun + undo.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"entries", {{"type", "array"}}},
+                     {"indices", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, false, true, false, false});
+    add({"resource.listRefs", "List outbound references",
+         "List TGIs this resource points at (REFS entries, OBJK/VPXY/CASP key tables). "
+         "Companion to resource.findRefs (inbound).",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"limit", {{"type", "integer"}, {"default", 500}}}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
     add({"clip.info", "CLIP info",
-         "CLIP duration and track/hash names (wiki 0x6B20C4F3). No playback.",
+         "CLIP duration, anim/source/actor names, track hashes (wiki 0x6B20C4F3). No playback.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"rcol.summary", "RCOL summary",
-         "MODL/MLOD/GEOM chunk tags and vertex/face/LOD counts (RCOL scan; no mesh view).",
+         "MODL/MLOD/GEOM/MATD chunk tags, mesh counts, MATD shader name + texture TGIs when "
+         "parseable (RCOL scan; no mesh view).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
+    add({"rcol.replaceChunk", "RCOL replace chunk",
+         "Replace one internal RCOL chunk payload by 0-based index. Preserves TGI tables. "
+         "Session undo; optional backupPath writes the previous chunk bytes. dryRun.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"chunkIndex", {{"type", "integer"}}},
+                     {"payloadB64", {{"type", "string"}}},
+                     {"path", {{"type", "string"}}},
+                     {"backupPath", {{"type", "string"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "chunkIndex"})),
+         env_out, false, true, false, true});
     add({"clip.exportAs", "CLIP export as new name",
          "Copy CLIP with instance = fnv64_clip (age-letter masks, SimsWiki 0x6B20C4F3).",
          obj_schema({{"sessionId", sess_prop()},
@@ -1123,6 +1303,25 @@ std::vector<Tool> make_catalog() {
                      {"name", {{"type", "string"}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "name"})),
+         env_out, false, true, false, false});
+    add({"clip.exportAsBatch", "CLIP batch exportAs",
+         "Export many CLIPs as new names in one call. items: [{resourceId,name},…]. Cap 256. dryRun.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"items", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "items"})),
+         env_out, false, true, false, false});
+    add({"clip.set", "CLIP set metadata",
+         "Patch safe CLIP fields: animName, sourceFile, actorName, trackHashes[{index,hash}]. "
+         "No frame data / playback. dryRun + undo. See docs/spec/clip.md.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"animName", {{"type", "string"}}},
+                     {"sourceFile", {{"type", "string"}}},
+                     {"actorName", {{"type", "string"}}},
+                     {"trackHashes", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
          env_out, false, true, false, false});
     add({"s3sa.info", "S3SA info",
          "Wrapper fields and decrypted PE offset. Never LoadLibrary.",
@@ -1216,6 +1415,19 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "nodeId"})),
          env_out, false, true, false, false});
+    add({"app.checkUpdate", "Check for update",
+         "Compare this build to GitHub Releases. Tries /releases/latest first; on 404 falls "
+         "back to listing recent releases and picks the newest non-draft (including "
+         "prereleases / Beta). Never downloads zip/tarball assets. Uses SXPE_GITHUB_TOKEN, "
+         "GITHUB_TOKEN, GH_TOKEN, or `gh auth token` for private repos. Example: {}. "
+         "Optional currentVersion / token / latestJson / latestJsonPath (tests; JSON object "
+         "or releases array).",
+         obj_schema({{"currentVersion", {{"type", "string"}}},
+                     {"token", {{"type", "string"}}},
+                     {"latestJson", {{"type", "string"}}},
+                     {"latestJsonPath", {{"type", "string"}}}},
+                    json::array()),
+         env_out, true, false, true, true});
     add({"hash.fnv", "FNV-1",
          "FNV-1 32/64 or CLIP (fnv64_clip age-letter masks). Example: {\"text\":\"a\",\"width\":32}.",
          obj_schema({{"text", {{"type", "string"}}},
@@ -1327,6 +1539,86 @@ struct Bus::Impl {
     std::vector<std::unique_ptr<Session>> sessions;
     std::uint32_t next_id{1};
     std::map<std::string, json> idem;
+    ProgressHandler progress;
+    CancelCheck cancel_check;
+    std::atomic<bool> cancel_flag{false};
+
+    void emit_progress(json ev) {
+        if (progress) {
+            progress(ev);
+        }
+    }
+
+    [[nodiscard]] bool cancelled() const {
+        if (cancel_flag.load(std::memory_order_relaxed)) {
+            return true;
+        }
+        return cancel_check && cancel_check();
+    }
+
+    void clear_cancel_state() {
+        cancel_flag.store(false, std::memory_order_relaxed);
+    }
+
+    /// Snapshot a pre-existing resource before in-place merge mutation (TGI+ordinal keyed).
+    struct MutSnap {
+        Tgi tgi{};
+        std::uint32_t ordinal{0};
+        std::uint16_t compressed{0};
+        bool deleted{false};
+        std::vector<std::byte> payload;
+    };
+
+    static VoidResult capture_mut(Session& s, std::uint32_t i, std::vector<MutSnap>& snaps,
+                                  std::unordered_set<std::uint64_t>& seen_keys) {
+        const auto& e = s.pkg.entry(i);
+        // Pack type|group|ordinal low bits + instance into a stable key for de-dupe.
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(e.tgi.type) << 32) ^
+            (static_cast<std::uint64_t>(e.tgi.group) << 16) ^ e.ordinal ^
+            (e.tgi.instance * 0x9e3779b97f4a7c15ull);
+        if (!seen_keys.insert(key).second) {
+            return ok();
+        }
+        auto body = s.pkg.uncompressed(i);
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        MutSnap snap;
+        snap.tgi = e.tgi;
+        snap.ordinal = e.ordinal;
+        snap.compressed = e.compressed;
+        snap.deleted = s.pkg.deleted(i);
+        snap.payload = std::move(*body);
+        snaps.push_back(std::move(snap));
+        return ok();
+    }
+
+    static VoidResult rollback_import(Session& s, std::uint32_t baseline_count, bool baseline_dirty,
+                                      std::vector<MutSnap>& snaps) {
+        while (s.pkg.count() > baseline_count) {
+            if (auto r = s.pkg.remove(s.pkg.count() - 1); !r) {
+                return r;
+            }
+        }
+        for (auto& snap : snaps) {
+            auto idx = s.pkg.find(snap.tgi, snap.ordinal);
+            if (!idx) {
+                return std::unexpected(err(ErrorCode::corrupt,
+                                           "cancel rollback: mutated resource missing"));
+            }
+            if (auto r = s.pkg.set_uncompressed(*idx, snap.payload, snap.compressed == 0xFFFF);
+                !r) {
+                return r;
+            }
+            if (auto r = s.pkg.set_deleted(*idx, snap.deleted); !r) {
+                return r;
+            }
+        }
+        s.pkg.set_dirty(baseline_dirty);
+        s.invalidate_names();
+        return ok();
+    }
 
     Session* find(const std::string& id) {
         for (auto& s : sessions) {
@@ -1487,6 +1779,7 @@ struct Bus::Impl {
                 {"mappedBytes", s.pkg.mapped_bytes()},
                 {"layoutLocked", locked},
                 {"pathKind", s.pkg.path_kind()},
+                {"holdsExclusiveLock", s.pkg.holds_exclusive_lock()},
                 {"game", "sims3"}};
     }
 
@@ -1497,6 +1790,39 @@ Bus::Bus() : impl_(std::make_unique<Impl>()) {}
 Bus::~Bus() = default;
 Bus::Bus(Bus&&) noexcept = default;
 Bus& Bus::operator=(Bus&&) noexcept = default;
+
+void Bus::set_progress_handler(ProgressHandler handler) {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->progress = std::move(handler);
+}
+
+void Bus::clear_progress_handler() {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->progress = nullptr;
+}
+
+void Bus::set_cancel_check(CancelCheck check) {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->cancel_check = std::move(check);
+}
+
+void Bus::clear_cancel_check() {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->cancel_check = nullptr;
+}
+
+void Bus::request_cancel() {
+    // Async-signal-safe: only touch the atomic.
+    impl_->cancel_flag.store(true, std::memory_order_relaxed);
+}
+
+void Bus::clear_cancel() {
+    impl_->clear_cancel_state();
+}
+
+bool Bus::cancel_requested() const {
+    return impl_->cancelled();
+}
 
 std::vector<Tool> Bus::tools() const { return impl_->catalog; }
 
@@ -1528,7 +1854,7 @@ Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
     if (!s) {
         return std::unexpected(err(ErrorCode::not_found, "session"));
     }
-    auto names = name_index(s->pkg);
+    const auto& names = name_index(*s);
     std::vector<UiRow> rows;
     rows.reserve(s->pkg.count());
     for (std::uint32_t i = 0; i < s->pkg.count(); ++i) {
@@ -1822,6 +2148,96 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok(std::move(data));
     }
 
+
+    if (cmd == "sims3pack.pack") {
+        auto out_path = check_path(args.at("path").get<std::string>());
+        if (!out_path) {
+            return envelope_err(out_path.error());
+        }
+        auto source_dir = check_path(args.at("sourceDir").get<std::string>());
+        if (!source_dir) {
+            return envelope_err(source_dir.error());
+        }
+        sxpe::games::sims3::Sims3PackCreateOptions opts;
+        if (args.contains("metaXml") && args["metaXml"].is_string() &&
+            !args["metaXml"].get<std::string>().empty()) {
+            auto meta_path = check_path(args["metaXml"].get<std::string>());
+            if (!meta_path) {
+                return envelope_err(meta_path.error());
+            }
+            auto loaded = sxpe::games::sims3::load_sims3pack_meta_subset(*meta_path);
+            if (!loaded) {
+                return envelope_err(loaded.error());
+            }
+            opts = *loaded;
+        }
+        auto override_str = [&](const char* key, std::string& dest) {
+            if (args.contains(key) && args[key].is_string()) {
+                auto s = args[key].get<std::string>();
+                if (!s.empty()) {
+                    dest = std::move(s);
+                }
+            }
+        };
+        override_str("displayName", opts.display_name);
+        override_str("description", opts.description);
+        override_str("packageId", opts.package_id);
+        override_str("packageType", opts.package_type);
+        override_str("packageSubType", opts.package_subtype);
+        override_str("archiveVersion", opts.archive_version);
+        // Convenience: CLI --name maps to top-level name
+        if (opts.display_name.empty() && args.contains("name") && args["name"].is_string()) {
+            opts.display_name = args["name"].get<std::string>();
+        }
+
+        auto items = sxpe::games::sims3::collect_sims3pack_packages(*source_dir);
+        if (!items) {
+            return envelope_err(items.error());
+        }
+        if (dry(args)) {
+            json data{{"path", out_path->string()},
+                      {"sourceDir", source_dir->string()},
+                      {"dryRun", true},
+                      {"authored", true},
+                      {"entryCount", static_cast<std::uint32_t>(items->size())},
+                      {"displayName", opts.display_name},
+                      {"description", opts.description},
+                      {"packageId", opts.package_id},
+                      {"packageType", opts.package_type},
+                      {"packageSubType", opts.package_subtype},
+                      {"archiveVersion", opts.archive_version},
+                      {"wouldWrite", out_path->string()},
+                      {"limitations",
+                       json::array({"Limited TS3Pack authoring only",
+                                    "Non-recursive *.package from sourceDir",
+                                    "CRC placeholder zeros (algorithm unknown)",
+                                    "No Store upload / DRM / DBPP"})}};
+            json names = json::array();
+            for (const auto& it : *items) {
+                names.push_back(it.name.empty() ? it.source_path.filename().string() : it.name);
+            }
+            data["packageNames"] = std::move(names);
+            data["summary"] = sims3pack_summary_json(data);
+            return envelope_ok(std::move(data));
+        }
+        auto packed =
+            sxpe::games::sims3::pack_sims3pack(*out_path, *items, opts, force(args));
+        if (!packed) {
+            return envelope_err(packed.error());
+        }
+        json data = sims3pack_meta_json(*packed, true);
+        data["authored"] = true;
+        data["readOnly"] = false;
+        data["sourceDir"] = source_dir->string();
+        data["writtenPath"] = out_path->string();
+        data["limitations"] = json::array(
+            {"Limited TS3Pack authoring only", "Non-recursive *.package from sourceDir",
+             "CRC placeholder zeros (algorithm unknown)", "No Store upload / DRM / DBPP",
+             "PackagedFile XML scrape on re-open is best-effort"});
+        data["summary"] = sims3pack_summary_json(data);
+        return envelope_ok(std::move(data));
+    }
+
     if (cmd == "folder.scan") {
         auto root = check_path(args.at("path").get<std::string>());
         if (!root) {
@@ -1922,6 +2338,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
         std::uint32_t ok_count = 0;
         bool capped = false;
         std::string cap_reason;
+        bool scan_cancelled = false;
+        const bool report_progress = args.value("reportProgress", true);
+        clear_cancel_state();
 
         const auto opts = std::filesystem::directory_options::skip_permission_denied;
         std::filesystem::recursive_directory_iterator it(*root, opts, ec);
@@ -1929,7 +2348,17 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (ec) {
             return envelope_err(err(ErrorCode::io, "cannot iterate directory: " + ec.message()), true);
         }
+        if (report_progress) {
+            emit_progress({{"command", cmd},
+                           {"phase", "start"},
+                           {"filesScanned", 0},
+                           {"path", root->string()}});
+        }
         for (; it != end; it.increment(ec)) {
+            if (cancelled()) {
+                scan_cancelled = true;
+                break;
+            }
             if (ec) {
                 ec.clear();
                 continue;
@@ -2080,6 +2509,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                   {"okCount", ok_count},
                   {"issueCount", issues_arr.size()},
                   {"capped", capped},
+                  {"cancelled", scan_cancelled},
                   {"files", files_arr},
                   {"issues", issues_arr},
                   {"duplicates", duplicates},
@@ -2094,7 +2524,19 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (capped) {
             data["capReason"] = cap_reason;
         }
+        if (report_progress) {
+            emit_progress({{"command", cmd},
+                           {"phase", scan_cancelled ? "cancelled" : "done"},
+                           {"filesScanned", files_scanned},
+                           {"cancelled", scan_cancelled}});
+        }
+        clear_cancel_state();
         data["summary"] = folder_scan_summary_json(data);
+        if (scan_cancelled) {
+            auto env = envelope_err(err(ErrorCode::refused, "cancelled"), false, "none");
+            env["data"] = std::move(data);
+            return env;
+        }
         return envelope_ok(std::move(data));
     }
     if (cmd == "package.unmerge") {
@@ -2294,6 +2736,179 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return envelope_ok({{"bytes", wrapped->size()}, {"payloadB64", b64_encode(*wrapped)}});
     }
+    if (cmd == "app.checkUpdate") {
+        std::string current = SXPE_VERSION;
+        if (args.contains("currentVersion")) {
+            if (args["currentVersion"].is_string()) {
+                current = args["currentVersion"].get<std::string>();
+            } else if (args["currentVersion"].is_number()) {
+                return envelope_err(err(ErrorCode::invalid_argument,
+                                        "currentVersion must be a string (e.g. \"0.7.0\")"));
+            }
+        }
+        auto to_json = [](sxpe::core::UpdateCheck r) {
+            json assets = json::array();
+            for (const auto& a : r.assets) {
+                assets.push_back(a);
+            }
+            json summary = json::array();
+            for (const auto& s : r.summary) {
+                summary.push_back(s);
+            }
+            return json{{"current", r.current},
+                        {"latest", r.latest},
+                        {"tagName", r.tag_name},
+                        {"htmlUrl", r.html_url},
+                        {"status", sxpe::core::update_status_id(r.status)},
+                        {"downloads", r.downloads},
+                        {"httpStatus", r.http_status},
+                        {"message", r.message},
+                        {"summary", summary},
+                        {"assets", assets}};
+        };
+        auto fill_assets = [](sxpe::core::UpdateCheck& r, const json& obj) {
+            if (!obj.contains("assets") || !obj["assets"].is_array()) {
+                return;
+            }
+            for (const auto& a : obj["assets"]) {
+                if (a.is_object() && a.contains("name") && a["name"].is_string()) {
+                    r.assets.push_back(a["name"].get<std::string>());
+                } else if (a.is_string()) {
+                    r.assets.push_back(a.get<std::string>());
+                }
+            }
+        };
+        auto release_from_object = [](const json& obj) -> sxpe::core::GithubReleaseInfo {
+            sxpe::core::GithubReleaseInfo info;
+            info.tag_name = obj.value("tag_name", std::string{});
+            info.html_url = obj.value("html_url", std::string{});
+            info.draft = obj.value("draft", false);
+            info.prerelease = obj.value("prerelease", false);
+            return info;
+        };
+        auto pick_release_object = [&](const json& doc) -> std::optional<json> {
+            if (doc.is_object()) {
+                return doc;
+            }
+            if (!doc.is_array()) {
+                return std::nullopt;
+            }
+            std::vector<sxpe::core::GithubReleaseInfo> list;
+            list.reserve(doc.size());
+            for (const auto& item : doc) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                list.push_back(release_from_object(item));
+            }
+            const auto picked = sxpe::core::pick_newest_published_release(list);
+            if (picked.tag_name.empty()) {
+                return std::nullopt;
+            }
+            for (const auto& item : doc) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                if (item.value("draft", false)) {
+                    continue;
+                }
+                if (item.value("tag_name", std::string{}) == picked.tag_name) {
+                    return item;
+                }
+            }
+            return std::nullopt;
+        };
+
+        std::string body;
+        int http_status = 0;
+        if (args.contains("latestJson") && args["latestJson"].is_string() &&
+            !args["latestJson"].get<std::string>().empty()) {
+            body = args["latestJson"].get<std::string>();
+            http_status = 200;
+        } else if (args.contains("latestJsonPath") && args["latestJsonPath"].is_string() &&
+                   !args["latestJsonPath"].get<std::string>().empty()) {
+            auto path = check_path(args["latestJsonPath"].get<std::string>());
+            if (!path) {
+                return envelope_err(path.error());
+            }
+            auto bytes = read_file(*path);
+            if (!bytes) {
+                return envelope_err(bytes.error(), bytes.error().code == ErrorCode::io, "none");
+            }
+            body.assign(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+            http_status = 200;
+        } else {
+            std::string token;
+            if (args.contains("token") && args["token"].is_string()) {
+                token = args["token"].get<std::string>();
+            }
+            if (token.empty()) {
+                token = sxpe::core::github_token();
+            }
+            const std::string ua = std::string("SXPE/") + current + " (check-for-update)";
+            auto http = sxpe::core::https_get(sxpe::core::kGithubLatestUrl, ua, token, 15000);
+            if (!http.error.empty() && http.status == 0) {
+                return envelope_err(err(ErrorCode::io, http.error), true, "none");
+            }
+            http_status = http.status;
+            body = std::move(http.body);
+            if (http_status == 404) {
+                // /releases/latest excludes prereleases; Beta-only tags 404 here.
+                auto listed = sxpe::core::https_get(sxpe::core::kGithubReleasesListUrl, ua, token,
+                                                    15000);
+                if (!listed.error.empty() && listed.status == 0) {
+                    return envelope_err(err(ErrorCode::io, listed.error), true, "none");
+                }
+                if (listed.status >= 200 && listed.status < 300) {
+                    http_status = listed.status;
+                    body = std::move(listed.body);
+                } else if (listed.status == 404) {
+                    auto r = sxpe::core::update_not_found(current, 404);
+                    return envelope_ok(to_json(std::move(r)));
+                } else {
+                    std::string msg = "GitHub Releases list failed (HTTP " +
+                                      std::to_string(listed.status) + ")";
+                    if (!listed.error.empty()) {
+                        msg += ": " + listed.error;
+                    }
+                    const bool retryable =
+                        listed.status == 0 || listed.status == 429 || listed.status >= 500;
+                    return envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none");
+                }
+            } else if (http_status < 200 || http_status >= 300) {
+                std::string msg = "GitHub Releases request failed (HTTP " +
+                                  std::to_string(http_status) + ")";
+                if (!http.error.empty()) {
+                    msg += ": " + http.error;
+                }
+                const bool retryable = http_status == 0 || http_status == 429 || http_status >= 500;
+                return envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none");
+            }
+        }
+
+        json doc;
+        try {
+            doc = json::parse(body);
+        } catch (const json::exception& e) {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    std::string("GitHub returned non-JSON: ") + e.what()));
+        }
+        auto release_obj = pick_release_object(doc);
+        if (!release_obj) {
+            if (doc.is_array()) {
+                auto r = sxpe::core::update_not_found(current, http_status ? http_status : 404);
+                return envelope_ok(to_json(std::move(r)));
+            }
+            return envelope_err(
+                err(ErrorCode::invalid_argument, "GitHub returned a non-object JSON body"));
+        }
+        const auto tag = release_obj->value("tag_name", std::string{});
+        const auto html = release_obj->value("html_url", std::string{});
+        auto r = sxpe::core::evaluate_update(current, tag, html);
+        r.http_status = http_status;
+        fill_assets(r, *release_obj);
+        return envelope_ok(to_json(std::move(r)));
+    }
     if (cmd == "hash.fnv") {
         const auto text = args.at("text").get<std::string>();
         const bool clip = args.value("clip", false);
@@ -2323,6 +2938,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                               {"directXTex", false},
                               {"ddsDecode", true},
                               {"ddsExport", true},
+                              {"ddsReplace", true},
                               {"mcpHttp", false}}},
                             {"mruMax", 12}});
     }
@@ -2338,22 +2954,52 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!path) {
             return envelope_err(path.error());
         }
-        const bool wr = args.value("writable", false);
+        bool wr = args.value("writable", false);
+        const bool force_wr = args.value("forceWritable", false);
+        std::error_code fec;
+        const auto file_bytes = std::filesystem::file_size(*path, fec);
+        bool demoted = false;
+        if (wr && !force_wr && !fec && file_bytes >= sxpe::core::caps::kOpenReadOnlyBytes) {
+            wr = false;
+            demoted = true;
+        }
         if (auto* existing = find_by_path(*path)) {
             auto out = info(*existing);
             out["alreadyOpen"] = true;
             return envelope_ok(out);
         }
+        const auto t0 = std::chrono::steady_clock::now();
         auto p = Package::open(*path, wr);
         if (!p) {
             return envelope_err(p.error(), p.error().code == ErrorCode::io, "none");
         }
+        const auto open_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count());
         auto idr = add_session(std::move(*p));
         if (!idr) {
             return envelope_err(idr.error());
         }
         auto* s = find(*idr);
         auto out = info(*s);
+        out["openMs"] = open_ms;
+        out["openedReadOnlyDueToSize"] = demoted;
+        out["readOnlyThresholdBytes"] = sxpe::core::caps::kOpenReadOnlyBytes;
+        out["holdsExclusiveLock"] = s->pkg.holds_exclusive_lock();
+        if (!fec) {
+            out["fileBytes"] = file_bytes;
+        }
+        json warnings = json::array();
+        // Optional #68: Mods tree + cannot take exclusive lock → actionable warning (still open).
+        if (sxpe::core::looks_like_ea_mods_path(*path) && !s->pkg.holds_exclusive_lock()) {
+            auto probe = sxpe::core::probe_exclusive_write(*path);
+            if (probe.status == sxpe::core::LockProbeStatus::locked ||
+                probe.status == sxpe::core::LockProbeStatus::access_denied) {
+                warnings.push_back(sxpe::core::mods_path_lock_warning());
+            }
+        }
+        out["warnings"] = warnings;
         out["suggestedCommands"] = json::array(
             {"resource.list --session " + *idr + " --limit 100"});
         return envelope_ok(out);
@@ -2386,6 +3032,14 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_err(sr.error());
     }
     Session& s = **sr;
+    for (const auto& t : catalog) {
+        if (t.id == cmd) {
+            if (!t.read_only) {
+                s.invalidate_names();
+            }
+            break;
+        }
+    }
 
     if (cmd == "package.info") {
         return envelope_ok(info(s));
@@ -2397,20 +3051,41 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json dir = json::object();
         dir["present"] = false;
+        json conflict_hotspots = json::array();
+        std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint64_t>, std::uint32_t> tgi_counts;
+        bool saw_leftover = false;
+        bool saw_dup = false;
         for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
-            if (s.pkg.entry(i).tgi.type != sxpe::resources::kDir) {
+            const auto& e = s.pkg.entry(i);
+            const auto key = std::make_tuple(e.tgi.type, e.tgi.group, e.tgi.instance);
+            ++tgi_counts[key];
+            if (sxpe::resources::is_leftover_manifest_tgi(e.tgi.type, e.tgi.group, e.tgi.instance)) {
+                saw_leftover = true;
+                conflict_hotspots.push_back(
+                    {{"kind", "leftover_manifest"},
+                     {"type", e.tgi.type},
+                     {"group", e.tgi.group},
+                     {"instance", e.tgi.instance},
+                     {"ordinal", e.ordinal},
+                     {"reason", std::string(sxpe::resources::leftover_manifest_reason(
+                                    e.tgi.type, e.tgi.instance))}});
+            }
+            if (e.tgi.type != sxpe::resources::kDir) {
+                continue;
+            }
+            if (dir.value("present", false)) {
                 continue;
             }
             dir["present"] = true;
             auto body = s.pkg.uncompressed(i);
             if (!body) {
                 issues.push_back("dir_unreadable");
-                break;
+                continue;
             }
             auto parsed = sxpe::resources::parse_dir(*body);
             if (!parsed) {
                 issues.push_back("dir_corrupt");
-                break;
+                continue;
             }
             dir["records"] = parsed->size();
             dir["recordBytes"] = body->size() % 20 == 0 ? 20 : 16;
@@ -2418,9 +3093,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
             for (const auto& d : *parsed) {
                 bool found = false;
                 for (std::uint32_t j = 0; j < s.pkg.count(); ++j) {
-                    const auto& e = s.pkg.entry(j);
-                    if (e.tgi.type == d.tgi.type && e.tgi.group == d.tgi.group &&
-                        e.tgi.instance == d.tgi.instance && e.mem_size == d.mem_size) {
+                    const auto& ee = s.pkg.entry(j);
+                    if (ee.tgi.type == d.tgi.type && ee.tgi.group == d.tgi.group &&
+                        ee.tgi.instance == d.tgi.instance && ee.mem_size == d.mem_size) {
                         found = true;
                         break;
                     }
@@ -2433,7 +3108,29 @@ json Bus::Impl::exec(std::string_view id, json args) {
             if (missing) {
                 issues.push_back("dir_unmatched");
             }
-            break;
+        }
+        for (const auto& [key, cnt] : tgi_counts) {
+            if (cnt < 2) {
+                continue;
+            }
+            // NMAP concat can leave a single TGI; multi-ordinal elsewhere is a hotspot.
+            const auto [t, g, inst] = key;
+            if (t == kNmap) {
+                continue;
+            }
+            saw_dup = true;
+            conflict_hotspots.push_back({{"kind", "duplicate_tgi"},
+                                         {"type", t},
+                                         {"group", g},
+                                         {"instance", inst},
+                                         {"count", cnt},
+                                         {"reason", "same TGI appears with multiple ordinals"}});
+        }
+        if (saw_leftover) {
+            issues.push_back("leftover_manifest");
+        }
+        if (saw_dup) {
+            issues.push_back("duplicate_tgi");
         }
         const bool valid = issues.empty();
         const bool locked = s.pkg.layout_locked();
@@ -2442,10 +3139,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"issues", issues},
                             {"indexCount", s.pkg.count()},
                             {"dir", dir},
+                            {"conflictHotspots", conflict_hotspots},
                             {"layoutLocked", locked},
                             {"pathKind", kind},
                             {"summary", validate_summary_json(valid, s.pkg.count(), dir, issues,
-                                                              locked, kind)}});
+                                                              locked, kind, conflict_hotspots)}});
     }
     if (cmd == "package.save" || cmd == "package.compact") {
         if (cmd == "package.compact" && neighborhood_file(s.pkg.path())) {
@@ -2479,7 +3177,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok({{"path", path->string()}});
     }
     if (cmd == "resource.list") {
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         json filter = args.value("filter", json::object());
         std::uint32_t limit = args.value("limit", kListDefault);
         if (limit == 0 || limit > kListMax) {
@@ -2559,24 +3257,28 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!i) {
             return envelope_err(i.error());
         }
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         json data = item_meta(s.pkg, *i, names);
         if (args.value("includePayload", false)) {
-            auto body = s.pkg.uncompressed(*i);
-            if (!body) {
-                return envelope_err(body.error());
+            const auto& e = s.pkg.entry(*i);
+            if (e.mem_size > sxpe::core::caps::kMaxResourceBytes) {
+                return envelope_err(
+                    err(ErrorCode::cap_exceeded,
+                        "resource exceeds decode cap (" + std::to_string(e.mem_size) +
+                            " bytes); refuse includePayload — metadata only"));
             }
             std::uint32_t maxb = args.value("maxBytes", 0);
             if (maxb == 0 || maxb > kPayloadCap) {
                 maxb = kPayloadCap;
             }
-            if (body->size() > maxb) {
-                data["payloadB64"] = b64_encode(std::span<const std::byte>(body->data(), maxb));
-                data["truncated"] = true;
-            } else {
-                data["payloadB64"] = b64_encode(*body);
-                data["truncated"] = false;
+            // peek: uncompressed resources are mmap-sliced; compressed refuse above live preview.
+            auto body = s.pkg.peek(*i, maxb);
+            if (!body) {
+                return envelope_err(body.error());
             }
+            data["payloadB64"] = b64_encode(*body);
+            data["truncated"] = e.mem_size > maxb || body->size() >= maxb;
+            data["bytes"] = body->size();
         }
         return envelope_ok(data);
     }
@@ -2888,9 +3590,78 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (paths.empty()) {
             return envelope_err(err(ErrorCode::invalid_argument, "need path or paths"));
         }
+        auto merge_u32 = [&](const char* key, std::uint32_t def) -> std::uint32_t {
+            if (!args.contains(key)) {
+                return def;
+            }
+            const auto v = as_u64(args.at(key));
+            if (v > 0xFFFFFFFFull) {
+                return def;
+            }
+            return static_cast<std::uint32_t>(v);
+        };
+        auto merge_u64 = [&](const char* key, std::uint64_t def) -> std::uint64_t {
+            if (!args.contains(key)) {
+                return def;
+            }
+            return as_u64(args.at(key));
+        };
+        const auto max_packages =
+            merge_u32("maxPackages", sxpe::core::caps::kMergeMaxPackages);
+        const auto max_total_bytes =
+            merge_u64("maxTotalBytes", sxpe::core::caps::kMergeMaxTotalBytes);
+        const auto max_resources =
+            merge_u32("maxResources", sxpe::core::caps::kMergeMaxResources);
+        const bool report_progress = args.value("reportProgress", true);
+        const bool checkpoint_between = args.value("checkpointBetweenPackages", false);
+        std::optional<std::filesystem::path> checkpoint_path;
+        if (args.contains("checkpointPath") && args["checkpointPath"].is_string()) {
+            auto cp = check_path(args["checkpointPath"].get<std::string>());
+            if (!cp) {
+                return envelope_err(cp.error());
+            }
+            checkpoint_path = *cp;
+        }
+        if (checkpoint_between && !checkpoint_path) {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "checkpointBetweenPackages requires checkpointPath "
+                                    "(explicit save; SXPE never autosaves mid-merge)"));
+        }
+        if (paths.size() > max_packages) {
+            return envelope_err(
+                err(ErrorCode::cap_exceeded,
+                    "too many packages (" + std::to_string(paths.size()) + " > maxPackages " +
+                        std::to_string(max_packages) + "); split the job"));
+        }
+        // Preflight on-disk sizes so we refuse before copying into RAM.
+        std::uint64_t total_bytes = 0;
+        for (const auto& rawp : paths) {
+            auto path = check_path(rawp);
+            if (!path) {
+                continue;
+            }
+            std::error_code ec;
+            const auto sz = std::filesystem::file_size(*path, ec);
+            if (!ec) {
+                total_bytes += sz;
+            }
+        }
+        if (total_bytes > max_total_bytes) {
+            return envelope_err(
+                err(ErrorCode::cap_exceeded,
+                    "total input bytes (" + std::to_string(total_bytes) +
+                        ") exceed maxTotalBytes (" + std::to_string(max_total_bytes) +
+                        "); split the job"));
+        }
         json packages = json::array();
         json errors = json::array();
         json sources = json::array();
+        json progress_log = json::array();
+        const auto baseline_count = s.pkg.count();
+        const bool baseline_dirty = s.pkg.dirty();
+        std::vector<MutSnap> mut_snaps;
+        std::unordered_set<std::uint64_t> mut_seen;
+        clear_cancel_state();
         const bool write_man = args.value("writeMergeManifest", false);
         std::string dir_policy;
         if (args.contains("dirPolicy") && args["dirPolicy"].is_string()) {
@@ -2907,24 +3678,134 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     "dirPolicy 'rebuild' is not yet implemented; use 'strip' or "
                                     "'copy-through'"));
         }
+        std::string leftover_policy;
+        if (args.contains("leftoverManifestPolicy") && args["leftoverManifestPolicy"].is_string()) {
+            leftover_policy = args["leftoverManifestPolicy"].get<std::string>();
+        } else {
+            leftover_policy = "strip";  // auto-strip documented allowlist (issue #64)
+        }
+        if (leftover_policy != "strip" && leftover_policy != "keep" && leftover_policy != "warn") {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "leftoverManifestPolicy must be strip, keep, or warn"));
+        }
+        std::string dup_policy;
+        if (args.contains("duplicateTgiPolicy") && args["duplicateTgiPolicy"].is_string()) {
+            dup_policy = args["duplicateTgiPolicy"].get<std::string>();
+        } else {
+            dup_policy = force(args) ? "force" : "fail";
+        }
+        if (dup_policy != "force" && dup_policy != "skip" && dup_policy != "fail") {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "duplicateTgiPolicy must be force, skip, or fail"));
+        }
+        json stripped_leftovers = json::array();
+        json duplicate_warnings = json::array();
+        json hygiene_warnings = json::array();
+        auto push_progress = [&](json ev) {
+            if (!report_progress) {
+                return;
+            }
+            progress_log.push_back(ev);
+            emit_progress(ev);
+        };
+        const auto packages_total = static_cast<std::uint32_t>(paths.size());
         std::uint32_t imported = 0;
         std::uint32_t would = 0;
         int src_n = 0;
+        std::uint32_t packages_done = 0;
+        auto abort_cancelled = [&](const char* where) -> json {
+            push_progress({{"command", cmd},
+                           {"phase", "cancelled"},
+                           {"where", where},
+                           {"packagesDone", packages_done},
+                           {"packagesTotal", packages_total},
+                           {"imported", imported}});
+            auto rb = rollback_import(s, baseline_count, baseline_dirty, mut_snaps);
+            clear_cancel_state();
+            if (!rb) {
+                return envelope_err(
+                    err(ErrorCode::corrupt,
+                        std::string("cancelled but rollback failed: ") + rb.error().message),
+                    false, "unknown");
+            }
+            auto env = envelope_err(err(ErrorCode::refused, "cancelled"), false, "none");
+            env["data"] = {{"cancelled", true},
+                           {"rolledBack", true},
+                           {"packagesDone", packages_done},
+                           {"packagesTotal", packages_total},
+                           {"baselineCount", baseline_count},
+                           {"indexCount", s.pkg.count()}};
+            if (report_progress) {
+                env["data"]["progress"] = std::move(progress_log);
+            }
+            return env;
+        };
+        push_progress({{"command", cmd},
+                       {"phase", "start"},
+                       {"packagesDone", 0},
+                       {"packagesTotal", packages_total},
+                       {"imported", 0},
+                       {"totalInputBytes", total_bytes}});
         for (const auto& rawp : paths) {
+            if (cancelled()) {
+                return abort_cancelled("before_package");
+            }
             auto path = check_path(rawp);
             if (!path) {
                 errors.push_back({{"path", rawp}, {"message", path.error().message}});
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", rawp},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported},
+                               {"message", path.error().message}});
                 continue;
             }
             auto src = Package::open(*path, false);
             if (!src) {
                 errors.push_back({{"path", path->string()}, {"message", src.error().message}});
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported},
+                               {"message", src.error().message}});
                 continue;
             }
             would += src->count();
             if (dry(args)) {
                 packages.push_back({{"path", path->string()}, {"count", src->count()}});
+                ++packages_done;
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", true},
+                               {"dryRun", true},
+                               {"count", src->count()},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported}});
                 continue;
+            }
+            if (imported + src->count() > max_resources) {
+                errors.push_back(
+                    {{"path", path->string()},
+                     {"message",
+                      "resource count would exceed maxResources (" +
+                          std::to_string(max_resources) + "); split the job"}});
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported},
+                               {"message", "maxResources"}});
+                break;
             }
             std::uint32_t n = 0;
             bool file_ok = true;
@@ -2938,8 +3819,36 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 if (t.type == sxpe::resources::kDir && dir_policy == "strip") {
                     continue;
                 }
+                if (sxpe::resources::is_leftover_manifest_tgi(t.type, t.group, t.instance)) {
+                    json hit{{"path", path->string()},
+                             {"type", t.type},
+                             {"group", t.group},
+                             {"instance", t.instance},
+                             {"reason", std::string(sxpe::resources::leftover_manifest_reason(
+                                            t.type, t.instance))}};
+                    if (leftover_policy == "strip") {
+                        hit["action"] = "strip";
+                        stripped_leftovers.push_back(hit);
+                        continue;
+                    }
+                    if (leftover_policy == "warn") {
+                        hit["action"] = "warn";
+                        hygiene_warnings.push_back(hit);
+                        // fall through and copy
+                    }
+                    // keep: copy silently
+                }
+                if (cancelled()) {
+                    return abort_cancelled("mid_package");
+                }
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
                 if (ex && t.type == kNmap) {
+                    if (auto cap = capture_mut(s, *ex, mut_snaps, mut_seen); !cap) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", cap.error().message}});
+                        file_ok = false;
+                        break;
+                    }
                     auto wr = merge_nmap_from(s.pkg, *ex, *src, i);
                     if (!wr) {
                         errors.push_back(
@@ -2951,13 +3860,35 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     ++n;
                     continue;
                 }
-                if (ex && !force(args)) {
-                    errors.push_back({{"path", path->string()},
-                                      {"message", "duplicate TGI; pass force"}});
-                    file_ok = false;
-                    break;
-                }
                 if (ex) {
+                    json dup{{"path", path->string()},
+                             {"type", t.type},
+                             {"group", t.group},
+                             {"instance", t.instance},
+                             {"ordinal", src->entry(i).ordinal}};
+                    if (dup_policy == "fail") {
+                        dup["action"] = "fail";
+                        duplicate_warnings.push_back(dup);
+                        errors.push_back({{"path", path->string()},
+                                          {"message",
+                                           "duplicate TGI; pass force or duplicateTgiPolicy=force|skip"}});
+                        file_ok = false;
+                        break;
+                    }
+                    if (dup_policy == "skip") {
+                        dup["action"] = "skip";
+                        duplicate_warnings.push_back(dup);
+                        continue;
+                    }
+                    // force
+                    dup["action"] = "force";
+                    duplicate_warnings.push_back(dup);
+                    if (auto cap = capture_mut(s, *ex, mut_snaps, mut_seen); !cap) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", cap.error().message}});
+                        file_ok = false;
+                        break;
+                    }
                     auto wr = replace_resource_through(s.pkg, *ex, *src, i);
                     if (!wr) {
                         errors.push_back(
@@ -2989,17 +3920,74 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     src_ent["nameMap"] = std::move(snap);
                 }
                 sources.push_back(std::move(src_ent));
+                ++packages_done;
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", true},
+                               {"importedThisPackage", n},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported}});
+                // Explicit checkpoint: flush to disk and remap so overrides do not pile up.
+                if (checkpoint_between && checkpoint_path) {
+                    // SXMM is written once at end; mid-merge checkpoints are raw content only.
+                    if (auto pin = pin_nmap_front(s.pkg); !pin) {
+                        return envelope_err(pin.error());
+                    }
+                    if (auto sv = s.pkg.save_as(*checkpoint_path); !sv) {
+                        errors.push_back({{"path", checkpoint_path->string()},
+                                          {"message", "checkpoint failed: " + sv.error().message}});
+                        push_progress({{"command", cmd},
+                                       {"phase", "checkpoint"},
+                                       {"path", checkpoint_path->string()},
+                                       {"ok", false},
+                                       {"packagesDone", packages_done},
+                                       {"packagesTotal", packages_total},
+                                       {"imported", imported},
+                                       {"message", sv.error().message}});
+                        break;
+                    }
+                    push_progress({{"command", cmd},
+                                   {"phase", "checkpoint"},
+                                   {"path", checkpoint_path->string()},
+                                   {"ok", true},
+                                   {"packagesDone", packages_done},
+                                   {"packagesTotal", packages_total},
+                                   {"imported", imported}});
+                }
+            } else {
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported}});
             }
         }
         if (dry(args)) {
-            return envelope_ok({{"dryRun", true}, {"packages", packages.size()}, {"count", would}});
+            clear_cancel_state();
+            json out{{"dryRun", true},
+                     {"packages", packages.size()},
+                     {"count", would},
+                     {"totalInputBytes", total_bytes},
+                     {"maxPackages", max_packages},
+                     {"maxTotalBytes", max_total_bytes},
+                     {"maxResources", max_resources}};
+            if (report_progress) {
+                out["progress"] = std::move(progress_log);
+            }
+            return envelope_ok(std::move(out));
         }
         if (write_man && imported > 0) {
             json man{{"format", "sxpe.mergeManifest"},
                      {"version", 1},
                      {"sources", sources},
                      {"notes",
-                      {{"forceOverwriteOnDuplicateTgi", force(args)},
+                      {{"forceOverwriteOnDuplicateTgi", force(args) || dup_policy == "force"},
+                       {"duplicateTgiPolicy", dup_policy},
+                       {"leftoverManifestPolicy", leftover_policy},
                        {"dirPolicy", dir_policy},
                        {"nmapPolicy", "concat"}}}};
             const auto dumped = man.dump();
@@ -3032,12 +4020,38 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 return envelope_err(pin.error());
             }
         }
+        if (cancelled()) {
+            return abort_cancelled("before_finalize");
+        }
+        push_progress({{"command", cmd},
+                       {"phase", "done"},
+                       {"packagesDone", packages_done},
+                       {"packagesTotal", packages_total},
+                       {"imported", imported},
+                       {"failed", errors.size()}});
+        clear_cancel_state();
         json out{{"imported", imported},
                  {"packages", packages.size()},
                  {"failed", errors.size()},
                  {"errors", errors},
                  {"mergeManifest", write_man},
-                 {"dirPolicy", dir_policy}};
+                 {"dirPolicy", dir_policy},
+                 {"leftoverManifestPolicy", leftover_policy},
+                 {"duplicateTgiPolicy", dup_policy},
+                 {"strippedLeftovers", stripped_leftovers},
+                 {"duplicates", duplicate_warnings},
+                 {"warnings", hygiene_warnings},
+                 {"totalInputBytes", total_bytes},
+                 {"maxPackages", max_packages},
+                 {"maxTotalBytes", max_total_bytes},
+                 {"maxResources", max_resources},
+                 {"checkpointBetweenPackages", checkpoint_between}};
+        if (checkpoint_path) {
+            out["checkpointPath"] = checkpoint_path->string();
+        }
+        if (report_progress) {
+            out["progress"] = std::move(progress_log);
+        }
         if (imported == 0 && !errors.empty()) {
             return envelope_err(err(ErrorCode::refused, errors[0].value("message", "import failed")),
                                 false);
@@ -3405,7 +4419,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json data{{"width", inf->width},
                   {"height", inf->height},
                   {"format", inf->format},
-                  {"compressed", inf->compressed}};
+                  {"compressed", inf->compressed},
+                  {"cubemap", inf->cubemap},
+                  {"volume", inf->volume},
+                  {"mipmapCount", inf->mipmap_count},
+                  {"decodeSupported", inf->decode_supported}};
         if (cmd == "dds.decode") {
             auto pix = sxpe::resources::decode_dds_rgba(*body);
             if (!pix) {
@@ -3415,8 +4433,348 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         return envelope_ok(data);
     }
+    if (cmd == "dds.replace") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        auto path = check_path(args.at("path").get<std::string>());
+        if (!path) {
+            return envelope_err(path.error());
+        }
+        auto bytes = read_file(*path);
+        if (!bytes) {
+            return envelope_err(bytes.error());
+        }
+        auto inf = sxpe::resources::validate_dds_replace(*bytes);
+        if (!inf) {
+            return envelope_err(inf.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"bytes", bytes->size()},
+                                {"width", inf->width},
+                                {"height", inf->height},
+                                {"format", inf->format}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        bool compress = args.value("compress", s.pkg.entry(*i).compressed == 0xFFFF);
+        auto r = s.pkg.set_uncompressed(*i, *bytes, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"bytes", bytes->size()},
+                            {"width", inf->width},
+                            {"height", inf->height},
+                            {"format", inf->format}});
+    }
+    if (cmd == "objd.set" || cmd == "casp.set") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (cmd == "objd.set" && type != sxpe::resources::kObjd) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not an OBJD"));
+        }
+        if (cmd == "casp.set" && type != sxpe::resources::kCasp) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not a CASP"));
+        }
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        if (cmd == "objd.set") {
+            sxpe::resources::ObjdPatch patch;
+            if (args.contains("nameGuid")) {
+                patch.name_guid = as_u64(args.at("nameGuid"));
+            }
+            if (args.contains("descGuid")) {
+                patch.desc_guid = as_u64(args.at("descGuid"));
+            }
+            if (args.contains("internalName") && args["internalName"].is_string()) {
+                patch.internal_name = args["internalName"].get<std::string>();
+            }
+            if (args.contains("internalDesc") && args["internalDesc"].is_string()) {
+                patch.internal_desc = args["internalDesc"].get<std::string>();
+            }
+            if (args.contains("price")) {
+                const auto& pj = args.at("price");
+                if (pj.is_number()) {
+                    patch.price = pj.get<float>();
+                } else if (pj.is_string()) {
+                    patch.price = std::stof(pj.get<std::string>());
+                }
+            }
+            if (args.contains("thumbIid")) {
+                patch.thumb_iid = as_u64(args.at("thumbIid"));
+            }
+            if (args.contains("instanceName") && args["instanceName"].is_string()) {
+                patch.instance_name = args["instanceName"].get<std::string>();
+            }
+            auto out = sxpe::resources::apply_objd(*body, patch);
+            if (!out) {
+                return envelope_err(out.error());
+            }
+            if (dry(args)) {
+                return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+            }
+            if (auto u = snapshot(s, *i); !u) {
+                return envelope_err(u.error());
+            }
+            auto r = s.pkg.set_uncompressed(*i, *out, compress);
+            if (!r) {
+                return envelope_err(r.error());
+            }
+            auto parsed = sxpe::resources::parse_objd(*out);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            return envelope_ok({{"bytes", out->size()},
+                                {"nameGuid", parsed->name_guid},
+                                {"descGuid", parsed->desc_guid},
+                                {"internalName", parsed->internal_name},
+                                {"internalDesc", parsed->internal_desc},
+                                {"price", parsed->price},
+                                {"thumbIid", parsed->thumb_iid},
+                                {"instanceName", parsed->instance_name}});
+        }
+        // casp.set
+        sxpe::resources::CaspPatch patch;
+        if (args.contains("name") && args["name"].is_string()) {
+            patch.name = args["name"].get<std::string>();
+        }
+        if (args.contains("sortPriority")) {
+            const auto& sj = args.at("sortPriority");
+            if (sj.is_number()) {
+                patch.sort_priority = sj.get<float>();
+            } else if (sj.is_string()) {
+                patch.sort_priority = std::stof(sj.get<std::string>());
+            }
+        }
+        if (args.contains("clothingType")) {
+            patch.clothing_type = static_cast<std::uint32_t>(as_u64(args.at("clothingType")));
+        }
+        if (args.contains("typeFlags")) {
+            patch.type_flags = static_cast<std::uint32_t>(as_u64(args.at("typeFlags")));
+        }
+        if (args.contains("ageGender")) {
+            patch.age_gender = static_cast<std::uint32_t>(as_u64(args.at("ageGender")));
+        }
+        if (args.contains("ageFlags")) {
+            patch.age_flags = static_cast<std::uint8_t>(as_u64(args.at("ageFlags")));
+        }
+        if (args.contains("species")) {
+            patch.species = static_cast<std::uint8_t>(as_u64(args.at("species")));
+        }
+        if (args.contains("genderFlags")) {
+            patch.gender_flags = static_cast<std::uint8_t>(as_u64(args.at("genderFlags")));
+        }
+        if (args.contains("handedness")) {
+            patch.handedness = static_cast<std::uint16_t>(as_u64(args.at("handedness")));
+        }
+        if (args.contains("clothingCategory")) {
+            patch.clothing_category = static_cast<std::uint32_t>(as_u64(args.at("clothingCategory")));
+        }
+        if (args.contains("tgis")) {
+            if (!args["tgis"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "tgis must be an array"));
+            }
+            if (args["tgis"].size() > 255) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "casp tgi count"));
+            }
+            std::vector<sxpe::games::sims3::Tgi> rows;
+            rows.reserve(args["tgis"].size());
+            for (const auto& row : args["tgis"]) {
+                rows.push_back(tgi_from(row));
+            }
+            patch.tgis = std::move(rows);
+        }
+        auto out = sxpe::resources::apply_casp(*body, patch);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        auto parsed = sxpe::resources::parse_casp(*out);
+        if (!parsed) {
+            return envelope_err(parsed.error());
+        }
+        json tgi_rows = json::array();
+        for (const auto& t : parsed->tgis) {
+            tgi_rows.push_back(tgi_json(t));
+        }
+        return envelope_ok({{"bytes", out->size()},
+                            {"name", parsed->name},
+                            {"sortPriority", parsed->sort_priority},
+                            {"clothingType", parsed->clothing_type},
+                            {"typeFlags", parsed->type_flags},
+                            {"ageGender", parsed->age_gender},
+                            {"ageFlags", parsed->age_flags},
+                            {"species", parsed->species},
+                            {"genderFlags", parsed->gender_flags},
+                            {"clothingCategory", parsed->clothing_category},
+                            {"tgis", tgi_rows}});
+    }
+    if (cmd == "refs.set") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (type != sxpe::resources::kRefs) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not a REFS"));
+        }
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        if (!args.contains("entries") && !args.contains("indices")) {
+            return envelope_err(err(ErrorCode::invalid_argument, "entries or indices required"));
+        }
+        sxpe::resources::RefsPatch patch;
+        if (args.contains("entries")) {
+            if (!args["entries"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "entries must be an array"));
+            }
+            if (args["entries"].size() > sxpe::core::caps::kMaxTableEntries) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "refs entry count"));
+            }
+            std::vector<sxpe::resources::RefsEntry> rows;
+            rows.reserve(args["entries"].size());
+            for (const auto& row : args["entries"]) {
+                sxpe::resources::RefsEntry e;
+                e.tgi = tgi_from(row);
+                if (row.contains("aux")) {
+                    e.aux = static_cast<std::uint32_t>(as_u64(row.at("aux")));
+                }
+                rows.push_back(e);
+            }
+            patch.entries = std::move(rows);
+        }
+        if (args.contains("indices")) {
+            if (!args["indices"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "indices must be an array"));
+            }
+            if (args["indices"].size() > sxpe::core::caps::kMaxTableEntries) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "refs index count"));
+            }
+            std::vector<std::uint16_t> idxs;
+            idxs.reserve(args["indices"].size());
+            for (const auto& v : args["indices"]) {
+                idxs.push_back(static_cast<std::uint16_t>(as_u64(v)));
+            }
+            patch.indices = std::move(idxs);
+        }
+        auto out = sxpe::resources::apply_refs(*body, patch);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        auto parsed = sxpe::resources::parse_refs(*out);
+        if (!parsed) {
+            return envelope_err(parsed.error());
+        }
+        json entries = json::array();
+        for (const auto& e : parsed->entries) {
+            auto row = tgi_json(e.tgi);
+            row["aux"] = e.aux;
+            entries.push_back(std::move(row));
+        }
+        json indices = json::array();
+        for (auto ix : parsed->indices) {
+            indices.push_back(ix);
+        }
+        return envelope_ok({{"bytes", out->size()},
+                            {"version", parsed->version},
+                            {"entryCount", parsed->entries.size()},
+                            {"entries", entries},
+                            {"indices", indices},
+                            {"auxIsDword", parsed->aux_is_dword},
+                            {"hasThingy", parsed->has_thingy},
+                            {"thingy", parsed->thingy}});
+    }
+    if (cmd == "rcol.replaceChunk") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        if (!args.contains("chunkIndex")) {
+            return envelope_err(err(ErrorCode::invalid_argument, "chunkIndex required"));
+        }
+        const auto chunk_index = static_cast<std::uint32_t>(as_u64(args.at("chunkIndex")));
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        auto raw = payload_from_args(args);
+        if (!raw) {
+            return envelope_err(raw.error());
+        }
+        auto oldb = sxpe::resources::extract_rcol_chunk(*body, chunk_index);
+        if (!oldb) {
+            return envelope_err(oldb.error());
+        }
+        auto out = sxpe::resources::replace_rcol_chunk(*body, chunk_index, *raw);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"chunkIndex", chunk_index},
+                                {"oldBytes", oldb->size()},
+                                {"newBytes", raw->size()},
+                                {"resourceBytes", out->size()}});
+        }
+        bool backed_up = false;
+        if (args.contains("backupPath") && args["backupPath"].is_string() &&
+            !args["backupPath"].get<std::string>().empty()) {
+            auto bp = check_path(args["backupPath"].get<std::string>());
+            if (!bp) {
+                return envelope_err(bp.error());
+            }
+            if (auto w = write_file(*bp, *oldb); !w) {
+                return envelope_err(w.error());
+            }
+            backed_up = true;
+        }
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"chunkIndex", chunk_index},
+                            {"oldBytes", oldb->size()},
+                            {"newBytes", raw->size()},
+                            {"bytes", out->size()},
+                            {"backedUp", backed_up}});
+    }
     if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "objd.get" || cmd == "casp.get" ||
-        cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {
+        cmd == "refs.get" || cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
@@ -3606,6 +4964,48 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"nodes", nodes}});
             }
         }
+                if (cmd == "refs.get" || (cmd == "graph.get" && type == sxpe::resources::kRefs)) {
+            auto rr = sxpe::resources::parse_refs(*body);
+            if (!rr) {
+                if (cmd == "refs.get") {
+                    return envelope_err(rr.error());
+                }
+            } else {
+                json entries = json::array();
+                json nodes = json::array();
+                nodes.push_back({{"id", "version"},
+                                 {"label", "version"},
+                                 {"valueKind", "u16"},
+                                 {"value", rr->version},
+                                 {"children", json::array()}});
+                for (std::size_t ei = 0; ei < rr->entries.size(); ++ei) {
+                    const auto& e = rr->entries[ei];
+                    auto row = tgi_json(e.tgi);
+                    row["aux"] = e.aux;
+                    entries.push_back(row);
+                    nodes.push_back({{"id", "entry/" + std::to_string(ei)},
+                                     {"label", "entry"},
+                                     {"valueKind", "tgi"},
+                                     {"value", row},
+                                     {"children", json::array()}});
+                }
+                json indices = json::array();
+                for (auto ix : rr->indices) {
+                    indices.push_back(ix);
+                }
+                return envelope_ok({{"type", "REFS"},
+                                    {"version", rr->version},
+                                    {"hasThingy", rr->has_thingy},
+                                    {"thingy", rr->thingy},
+                                    {"auxIsDword", rr->aux_is_dword},
+                                    {"entryCount", rr->entries.size()},
+                                    {"entries", entries},
+                                    {"indices", indices},
+                                    {"partial", rr->partial},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
         if (cmd == "clip.info" || (cmd == "graph.get" && type == sxpe::resources::kClip)) {
             auto c = sxpe::resources::parse_clip(*body);
             if (!c) {
@@ -3623,13 +5023,34 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                  {"valueKind", "f32"},
                                  {"value", c->duration_seconds},
                                  {"children", json::array()}});
-                if (!c->anim_name.empty()) {
-                    nodes.push_back({{"id", "animName"},
-                                     {"label", "animName"},
-                                     {"valueKind", "string"},
-                                     {"value", c->anim_name},
-                                     {"children", json::array()}});
+                nodes.push_back({{"id", "animName"},
+                                 {"label", "animName"},
+                                 {"valueKind", "string"},
+                                 {"value", c->anim_name},
+                                 {"children", json::array()}});
+                nodes.push_back({{"id", "sourceFile"},
+                                 {"label", "sourceFile"},
+                                 {"valueKind", "string"},
+                                 {"value", c->source_file},
+                                 {"children", json::array()}});
+                nodes.push_back({{"id", "actorName"},
+                                 {"label", "actorName"},
+                                 {"valueKind", "string"},
+                                 {"value", c->actor_name},
+                                 {"children", json::array()}});
+                json track_children = json::array();
+                for (std::size_t ti = 0; ti < hashes.size(); ++ti) {
+                    track_children.push_back({{"id", "track/" + std::to_string(ti)},
+                                              {"label", "hash"},
+                                              {"valueKind", "u32"},
+                                              {"value", hashes[ti]},
+                                              {"children", json::array()}});
                 }
+                nodes.push_back({{"id", "tracks"},
+                                 {"label", "trackHashes"},
+                                 {"valueKind", "array"},
+                                 {"value", c->track_count},
+                                 {"children", track_children}});
                 return envelope_ok({{"type", "CLIP"},
                                     {"version", c->version},
                                     {"frameDuration", c->frame_duration},
@@ -3640,6 +5061,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"actorName", c->actor_name},
                                     {"trackCount", c->track_count},
                                     {"trackHashes", hashes},
+                                    {"safeFields",
+                                     json::array({"animName", "sourceFile", "actorName", "trackHashes"})},
                                     {"partial", c->partial},
                                     {"rawSize", body->size()},
                                     {"nodes", nodes}});
@@ -3647,34 +5070,73 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         if (cmd == "rcol.summary" ||
             (cmd == "graph.get" && (type == sxpe::resources::kModl || type == sxpe::resources::kMlod ||
-                                    type == sxpe::resources::kGeom))) {
+                                    type == sxpe::resources::kGeom || type == sxpe::resources::kMatd))) {
             auto r = sxpe::resources::parse_rcol_summary(*body);
             if (!r) {
                 if (cmd == "rcol.summary") {
                     return envelope_err(r.error());
                 }
             } else {
+                auto tgi_row = [](const sxpe::games::sims3::Tgi& t) {
+                    return json{{"type", t.type}, {"group", t.group}, {"instance", t.instance}};
+                };
+                auto tex_row = [&](const sxpe::resources::RcolTextureRef& tex) {
+                    json row{{"paramHash", tex.param_hash},
+                             {"paramName", tex.param_name},
+                             {"resolved", tex.resolved},
+                             {"rcolRef", tex.rcol_ref}};
+                    if (tex.resolved) {
+                        row["type"] = tex.tgi.type;
+                        row["group"] = tex.tgi.group;
+                        row["instance"] = tex.tgi.instance;
+                    }
+                    return row;
+                };
                 json chunks = json::array();
                 json nodes = json::array();
-                for (const auto& ch : r->chunks) {
-                    json row{{"type", ch.type},
+                for (std::size_t ci = 0; ci < r->chunks.size(); ++ci) {
+                    const auto& ch = r->chunks[ci];
+                    json row{{"index", ci},
+                             {"type", ch.type},
                              {"tag", ch.tag},
                              {"size", ch.size},
                              {"vertexCount", ch.vertex_count},
                              {"faceCount", ch.face_count},
                              {"groupCount", ch.group_count}};
+                    if (ch.has_matd) {
+                        row["shaderHash"] = ch.shader_hash;
+                        row["shaderName"] = ch.shader_name;
+                        row["materialNameHash"] = ch.material_name_hash;
+                        row["matdVersion"] = ch.matd_version;
+                        json mats = json::array();
+                        for (const auto& tex : ch.textures) {
+                            mats.push_back(tex_row(tex));
+                        }
+                        row["textures"] = mats;
+                    }
                     chunks.push_back(row);
-                    nodes.push_back({{"id", "chunk/" + (ch.tag.empty() ? std::to_string(ch.type) : ch.tag)},
+                    nodes.push_back({{"id", "chunk/" + std::to_string(ci) + "/" +
+                                             (ch.tag.empty() ? std::to_string(ch.type) : ch.tag)},
                                      {"label", ch.tag.empty() ? "chunk" : ch.tag},
                                      {"valueKind", "u32"},
                                      {"value", ch.size},
                                      {"children", json::array()}});
+                }
+                json externals = json::array();
+                for (const auto& t : r->external_tgis) {
+                    externals.push_back(tgi_row(t));
+                }
+                json textures = json::array();
+                for (const auto& tex : r->textures) {
+                    textures.push_back(tex_row(tex));
                 }
                 return envelope_ok({{"type", "RCOL"},
                                     {"version", r->version},
                                     {"internalCount", r->internal_count},
                                     {"externalCount", r->external_count},
                                     {"chunks", chunks},
+                                    {"externalTgis", externals},
+                                    {"textures", textures},
                                     {"totalVertices", r->total_vertices},
                                     {"totalFaces", r->total_faces},
                                     {"lodGroups", r->lod_groups},
@@ -3714,32 +5176,181 @@ json Bus::Impl::exec(std::string_view id, json args) {
         args["text"] = args.at("value").get<std::string>();
         return exec("stbl.set", args);
     }
-    if (cmd == "clip.exportAs") {
+    if (cmd == "clip.exportAs" || cmd == "clip.exportAsBatch") {
+        auto export_one = [&](std::uint32_t idx, const std::string& name,
+                              bool dry_run) -> json {
+            auto body = s.pkg.uncompressed(idx);
+            if (!body) {
+                return envelope_err(body.error());
+            }
+            Tgi t = s.pkg.entry(idx).tgi;
+            t.type = sxpe::resources::kClip;
+            t.instance = sxpe::games::sims3::fnv64_clip(name);
+            const auto filename =
+                sxpe::games::sims3::community_filename(t, name, "CLIP.animation");
+            if (dry_run) {
+                return envelope_ok({{"dryRun", true},
+                                    {"resourceId", tgi_json(t)},
+                                    {"filename", filename},
+                                    {"name", name}});
+            }
+            auto r = s.pkg.add(t, *body, s.pkg.entry(idx).compressed == 0xFFFF);
+            if (!r) {
+                return envelope_err(r.error());
+            }
+            return envelope_ok(
+                {{"resourceId", rid_json(s.pkg.entry(*r).tgi, s.pkg.entry(*r).ordinal)},
+                 {"filename", filename},
+                 {"name", name}});
+        };
+        if (cmd == "clip.exportAs") {
+            auto i = need_idx();
+            if (!i) {
+                return envelope_err(i.error());
+            }
+            const auto name = args.at("name").get<std::string>();
+            if (name.empty()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "name is required"));
+            }
+            return export_one(*i, name, dry(args));
+        }
+        if (!args.contains("items") || !args["items"].is_array()) {
+            return envelope_err(err(ErrorCode::invalid_argument, "items must be an array"));
+        }
+        const auto& items = args["items"];
+        constexpr std::size_t kMaxBatch = 256;
+        if (items.size() > kMaxBatch) {
+            return envelope_err(err(ErrorCode::cap_exceeded, "clip.exportAsBatch cap 256 items"));
+        }
+        const bool dry_run = dry(args);
+        json results = json::array();
+        std::size_t ok_n = 0;
+        std::size_t fail_n = 0;
+        for (const auto& it : items) {
+            if (!it.is_object() || !it.contains("name") || !it["name"].is_string()) {
+                results.push_back({{"ok", false},
+                                   {"error",
+                                    {{"code", "invalid_argument"},
+                                     {"message", "item needs name string"}}}});
+                ++fail_n;
+                continue;
+            }
+            const auto name = it["name"].get<std::string>();
+            if (name.empty()) {
+                results.push_back({{"ok", false},
+                                   {"error",
+                                    {{"code", "invalid_argument"},
+                                     {"message", "name is required"}}}});
+                ++fail_n;
+                continue;
+            }
+            json item_args = args;
+            if (it.contains("resourceId")) {
+                item_args["resourceId"] = it["resourceId"];
+            } else if (it.contains("type") || it.contains("group") || it.contains("instance")) {
+                item_args["resourceId"] = {{"type", it.value("type", 0)},
+                                           {"group", it.value("group", 0)},
+                                           {"instance", it.value("instance", 0)}};
+                if (it.contains("ordinal")) {
+                    item_args["resourceId"]["ordinal"] = it["ordinal"];
+                }
+            }
+            auto item_i = this->idx(s, item_args);
+            if (!item_i) {
+                results.push_back(envelope_err(item_i.error()));
+                ++fail_n;
+                continue;
+            }
+            if (s.pkg.entry(*item_i).tgi.type != sxpe::resources::kClip) {
+                results.push_back(envelope_err(
+                    err(ErrorCode::invalid_argument, "resourceId is not a CLIP")));
+                ++fail_n;
+                continue;
+            }
+            auto one = export_one(*item_i, name, dry_run);
+            if (one.value("ok", false)) {
+                ++ok_n;
+            } else {
+                ++fail_n;
+            }
+            results.push_back(std::move(one));
+        }
+        return envelope_ok({{"dryRun", dry_run},
+                            {"count", items.size()},
+                            {"succeeded", ok_n},
+                            {"failed", fail_n},
+                            {"results", results}});
+    }
+    if (cmd == "clip.set") {
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
+        }
+        if (s.pkg.entry(*i).tgi.type != sxpe::resources::kClip) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not a CLIP"));
         }
         auto body = s.pkg.uncompressed(*i);
         if (!body) {
             return envelope_err(body.error());
         }
-        const auto name = args.at("name").get<std::string>();
-        Tgi t = s.pkg.entry(*i).tgi;
-        t.type = sxpe::resources::kClip;
-        t.instance = sxpe::games::sims3::fnv64_clip(name);
-        if (dry(args)) {
-            return envelope_ok({{"dryRun", true},
-                                {"resourceId", tgi_json(t)},
-                                {"filename", sxpe::games::sims3::community_filename(
-                                                 t, name, "CLIP.animation")}});
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        sxpe::resources::ClipPatch patch;
+        if (args.contains("animName") && args["animName"].is_string()) {
+            patch.anim_name = args["animName"].get<std::string>();
         }
-        auto r = s.pkg.add(t, *body, s.pkg.entry(*i).compressed == 0xFFFF);
+        if (args.contains("sourceFile") && args["sourceFile"].is_string()) {
+            patch.source_file = args["sourceFile"].get<std::string>();
+        }
+        if (args.contains("actorName") && args["actorName"].is_string()) {
+            patch.actor_name = args["actorName"].get<std::string>();
+        }
+        if (args.contains("trackHashes")) {
+            if (!args["trackHashes"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "trackHashes must be an array"));
+            }
+            for (const auto& row : args["trackHashes"]) {
+                if (!row.is_object() || !row.contains("index") || !row.contains("hash")) {
+                    return envelope_err(
+                        err(ErrorCode::invalid_argument, "trackHashes entries need index+hash"));
+                }
+                const auto idx = static_cast<std::uint32_t>(as_u64(row.at("index")));
+                const auto hash = static_cast<std::uint32_t>(as_u64(row.at("hash")));
+                patch.track_hashes.emplace_back(idx, hash);
+            }
+        }
+        auto out = sxpe::resources::apply_clip(*body, patch);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
         if (!r) {
             return envelope_err(r.error());
         }
-        return envelope_ok({{"resourceId", rid_json(s.pkg.entry(*r).tgi, s.pkg.entry(*r).ordinal)},
-                            {"filename", sxpe::games::sims3::community_filename(
-                                             t, name, "CLIP.animation")}});
+        auto parsed = sxpe::resources::parse_clip(*out);
+        if (!parsed) {
+            return envelope_err(parsed.error());
+        }
+        json hashes = json::array();
+        for (auto h : parsed->track_hashes) {
+            hashes.push_back(h);
+        }
+        return envelope_ok({{"bytes", out->size()},
+                            {"version", parsed->version},
+                            {"frameDuration", parsed->frame_duration},
+                            {"frameCount", parsed->frame_count},
+                            {"durationSeconds", parsed->duration_seconds},
+                            {"animName", parsed->anim_name},
+                            {"sourceFile", parsed->source_file},
+                            {"actorName", parsed->actor_name},
+                            {"trackCount", parsed->track_count},
+                            {"trackHashes", hashes},
+                            {"partial", parsed->partial}});
     }
     if (cmd == "s3sa.info" || cmd == "s3sa.exportDll" || cmd == "s3sa.view" ||
         cmd == "s3sa.importDll") {
@@ -4093,6 +5704,105 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok({{"text", t}, {"bytes", body->size()}});
     }
 
+    if (cmd == "resource.listRefs") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto limit = static_cast<std::size_t>(args.value("limit", 500));
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const auto& names = name_index(s);
+        json refs = json::array();
+        std::string kind;
+        auto push_tgi = [&](const Tgi& t, const char* reason, std::int64_t index,
+                            std::optional<std::uint32_t> aux = std::nullopt) {
+            if (refs.size() >= limit) {
+                return;
+            }
+            json h = tgi_json(t);
+            h["reason"] = reason;
+            if (index >= 0) {
+                h["index"] = index;
+            }
+            if (aux) {
+                h["aux"] = *aux;
+            }
+            refs.push_back(std::move(h));
+        };
+        if (type == sxpe::resources::kRefs) {
+            kind = "REFS";
+            auto parsed = sxpe::resources::parse_refs(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->entries.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->entries[ei].tgi, "refs.entry", static_cast<std::int64_t>(ei),
+                         parsed->entries[ei].aux);
+            }
+        } else if (type == sxpe::resources::kObjk) {
+            kind = "OBJK";
+            auto parsed = sxpe::resources::parse_objk(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->tgis.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->tgis[ei], "objk.tgi", static_cast<std::int64_t>(ei));
+            }
+        } else if (type == sxpe::resources::kVpxy) {
+            kind = "VPXY";
+            auto parsed = sxpe::resources::parse_vpxy(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->tgis.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->tgis[ei], "vpxy.tgi", static_cast<std::int64_t>(ei));
+            }
+        } else if (type == sxpe::resources::kCasp) {
+            kind = "CASP";
+            auto parsed = sxpe::resources::parse_casp(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->tgis.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->tgis[ei], "casp.tgi", static_cast<std::int64_t>(ei));
+            }
+        } else {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "resourceId type has no known outbound TGI table "
+                                    "(supported: REFS, OBJK, VPXY, CASP)"));
+        }
+        const bool truncated = refs.size() >= limit;
+        json data{{"source", item_meta(s.pkg, *i, names)},
+                  {"kind", kind},
+                  {"refs", refs},
+                  {"count", refs.size()},
+                  {"truncated", truncated}};
+        json summary = json::array();
+        summary.push_back("Outbound from " + kind + ": " + std::to_string(refs.size()) +
+                          (truncated ? " (truncated)" : ""));
+        if (refs.empty()) {
+            summary.push_back("No outbound TGI entries.");
+        } else {
+            for (const auto& h : refs) {
+                std::string line = "  ";
+                if (h.contains("typeHex")) {
+                    line += h.value("typeHex", "") + " " + h.value("groupHex", "") + " " +
+                            h.value("instanceHex", "");
+                }
+                if (h.contains("reason")) {
+                    line += "  (" + h.value("reason", std::string{}) + ")";
+                }
+                summary.push_back(std::move(line));
+            }
+        }
+        data["summary"] = std::move(summary);
+        return envelope_ok(std::move(data));
+    }
+
     if (cmd == "resource.findRefs") {
         if (!args.contains("resourceId")) {
             return envelope_err(err(ErrorCode::invalid_argument, "resourceId required"));
@@ -4104,7 +5814,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
             static_cast<std::uint32_t>(args.value("byteScanMaxBytes", 1u << 20));
         const auto bs_max_res =
             static_cast<std::uint32_t>(args.value("byteScanMaxResources", 500));
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         json hits = json::array();
         std::uint32_t scanned_refs = 0;
         std::uint32_t scanned_objk = 0;
@@ -4294,7 +6004,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json hits = json::array();
         const auto limit = args.value("limit", 100);
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         for (std::uint32_t i = 0; i < s.pkg.count() && hits.size() < limit; ++i) {
             if (s.pkg.entry(i).mem_size > 16u << 20) {
                 continue;

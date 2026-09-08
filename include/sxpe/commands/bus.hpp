@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,6 +57,21 @@ public:
     nlohmann::json execute(std::string_view id, const nlohmann::json& args);
     /// Full metadata snapshot for the GUI grid (no payloads, not an MCP tool).
     Result<std::vector<UiRow>> ui_index(std::string_view session_id);
+
+    /// Optional sink for long-running command progress (merge/import/scan). Thread: caller of execute.
+    using ProgressHandler = std::function<void(const nlohmann::json& event)>;
+    void set_progress_handler(ProgressHandler handler);
+    void clear_progress_handler();
+
+    /// Cooperative cancel for the in-flight execute (merge/import/scan).
+    /// request_cancel is async-signal-safe (atomic flag only) — safe from SIGINT.
+    /// set_cancel_check is polled at package/resource boundaries (GUI wasCanceled).
+    using CancelCheck = std::function<bool()>;
+    void set_cancel_check(CancelCheck check);
+    void clear_cancel_check();
+    void request_cancel();
+    void clear_cancel();
+    [[nodiscard]] bool cancel_requested() const;
 
 private:
     struct Impl;

@@ -38,7 +38,7 @@ These payloads are pictures. Preview can show them when the blob is PNG or DDS.
 
 | Tag | Type ids | What the bytes are |
 | --- | --- | --- |
-| **_IMG** | `00B2D882`, `8FFB80F6` | **DDS texture.** Diffuse/specular/normal maps for objects, sims, terrain. DXT1/DXT5 or uncompressed RGB(A). Not a compositor (see TXTC). |
+| **_IMG** | `00B2D882`, `8FFB80F6` | **DDS texture.** Diffuse/specular/normal maps for objects, sims, terrain. DXT1/DXT3/DXT5 or uncompressed RGB(A) mask variants (see [spec/dds.md](spec/dds.md)). Not a compositor (see TXTC). |
 | **THUM** | `0580A2B4–B6` (object catalog small/med/large), `0589DC44–47` (stairs), `05B17698–9A`, `05B1B524–26`, `2653E3C8–CA` (fence), `2D4284F0–F2`, `5DE9DBA0–A2`, **`626F60CC–CE` (CAS small/med/large)** | **PNG thumbnail** for Build/Buy or CAS. Same instance as the catalog/CASP item; group often selects a colour preset (`…01`, `…02`, …). Size is implied by which type id in the triple. |
 | **ICON** | `2E75C764–767` | **PNG icon** for an object (small → very large). Same role as THUM, different type family. |
 | **IMAG** | `2F7D0004` (PNG), `2F7D0002` (JPEG) | **Standalone image** (UI or compositor input), PNG or JPEG. |
@@ -152,6 +152,7 @@ These are **buy-mode definitions**: name/description GUIDs (into STBL), price, f
 | --- | --- | --- |
 | **DIR** | `E86B1EEF` | **Compression directory.** Optional list of TGI + uncompressed size. EA TS3 packages omit it (MemSize is already in the index). 20-byte records. |
 | **SXMM** | `53584D4D` | **SXPE merge manifest.** JSON listing which resources came from which source package. Required for un-merge. |
+| **S3MF** | `73E93EEB` | **Sims3Pack leftover manifest XML** (instance 0). Launcher leftover; strip on merge (`leftoverManifestPolicy`). Not gameplay `_XML`. |
 | **S3SA** | `073FAA07` | **Script assembly.** .NET DLL (PE) wrapped for the game. `s3sa.importDll` / `exportDll` / `s3sa.view` wrap, decrypt, and open via an external viewer. Never load it with `LoadLibrary`. |
 | **_XML** | `0333406C` | **XML resource.** Tuning, instantiator doors (`kInstantiator`), snippets. UTF-8 or UTF-16, often with a BOM. Edit via `xml.get`/`xml.set` / Editors → XML…. |
 | **ITUN** | `03B33DDF` | **Interaction tuning.** XML for autonomy, ads, pie-menu (TTAB-like). Same editor as `_XML`. |
@@ -181,6 +182,6 @@ If Tag is blank, SXPE does not have a four-char name for that type id. The resou
 
 ## See also
 
-- [preview.md](preview.md) — what is worth showing in the inspector, by difficulty
-- [nmap.md](spec/nmap.md), [stbl.md](spec/stbl.md) — on-disk layouts we implement
-- `include/sxpe/resources/types.hpp` — machine-readable tag table
+- [preview.md](preview.md) - what is worth showing in the inspector, by difficulty
+- [nmap.md](spec/nmap.md), [stbl.md](spec/stbl.md) - on-disk layouts we implement
+- `include/sxpe/resources/types.hpp` - machine-readable tag table

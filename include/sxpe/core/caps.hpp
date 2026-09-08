@@ -16,6 +16,16 @@ inline constexpr std::uint32_t kMaxLivePreviewBytes = 8u << 20;
 /// Max uncompressed `_XML`/`ITUN` body for xml.get / xml.set (plain-text editor).
 inline constexpr std::uint32_t kMaxXmlEditorBytes = 4u << 20;
 
+/// package.open demotes writable→read-only above this on-disk size unless forceWritable.
+/// FullBuild0 is ~1 GiB; 256 MiB keeps everyday CC writable while huge EA packages stay safe.
+inline constexpr std::uint64_t kOpenReadOnlyBytes = 256ull << 20;
+/// Skip NMAP bodies larger than this when building the name index for list/UI (index stays O(index)).
+inline constexpr std::uint32_t kMaxNmapIndexBytes = 16u << 20;
+/// CI-class budget for opening a synthetic large-index package (see docs/testing.md).
+inline constexpr std::uint32_t kLargeIndexOpenBudgetMs = 2000;
+/// Synthetic benchmark index size (not FullBuild; FullBuild expectations are documented separately).
+inline constexpr std::uint32_t kLargeIndexBenchmarkEntries = 25'000;
+
 /// folder.scan defaults (read-only Downloads/Mods hygiene).
 inline constexpr std::uint32_t kFolderScanMaxFiles = 5000;
 inline constexpr std::uint64_t kFolderScanMaxTotalBytes = 8ull << 30;
@@ -23,5 +33,12 @@ inline constexpr std::uint64_t kFolderScanMaxTotalBytes = 8ull << 30;
 inline constexpr std::uint32_t kFolderScanMaxDuplicateSamples = 100;
 /// Max file paths listed per duplicate TGI sample.
 inline constexpr std::uint32_t kFolderScanMaxPathsPerDuplicate = 8;
+
+/// Large-merge defaults (resource.importPackage / importDbc). Refuse before OOM.
+inline constexpr std::uint32_t kMergeMaxPackages = 500;
+/// Aggregate on-disk size of input packages (not dest). ~2 GiB keeps peak RAM sane.
+inline constexpr std::uint64_t kMergeMaxTotalBytes = 2ull << 30;
+/// Soft cap on resources copied in one merge command.
+inline constexpr std::uint32_t kMergeMaxResources = 200'000;
 
 }  // namespace sxpe::core::caps

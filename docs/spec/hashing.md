@@ -62,7 +62,7 @@ Community filename:
 
 `S3_{type}_{group}_{instance}_{name}%%+CLIP.animation`
 
-(hex type/group/instance, no `0x` **TBC** community convention — match existing CC files).
+(hex type/group/instance, no `0x` **TBC** community convention - match existing CC files).
 
 ## Synthetic vectors (FNV-1, lowercase ASCII `"a"`)
 
@@ -75,6 +75,6 @@ Payload equality for `package.diff` uses **SHA-256 of the uncompressed resource 
 not compared, so recompression alone does not count as a difference. Keys are
 `type` + `group` + `instance` + `ordinal`.
 
-Alternative considered: size + compressed flag only — rejected because identical sizes can
+Alternative considered: size + compressed flag only - rejected because identical sizes can
 hide content changes. Documented choice: SHA-256 uncompressed.
 

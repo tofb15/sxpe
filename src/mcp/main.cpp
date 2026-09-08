@@ -120,7 +120,29 @@ json tools_list(Bus& bus, const json& params) {
 json call_tool(Bus& bus, const json& params) {
     const auto name = params.at("name").get<std::string>();
     json args = params.value("arguments", json::object());
+    json progress_token;
+    if (params.contains("_meta") && params["_meta"].is_object() &&
+        params["_meta"].contains("progressToken")) {
+        progress_token = params["_meta"]["progressToken"];
+    }
+    if (!progress_token.is_null()) {
+        bus.set_progress_handler([progress_token](const json& ev) {
+            const double done = static_cast<double>(ev.value("packagesDone", 0));
+            const double total =
+                std::max(1.0, static_cast<double>(ev.value("packagesTotal", 1)));
+            write_message({{"jsonrpc", "2.0"},
+                           {"method", "notifications/progress"},
+                           {"params",
+                            {{"progressToken", progress_token},
+                             {"progress", done},
+                             {"total", total},
+                             {"message", ev.dump()}}}});
+        });
+    }
     auto env = bus.execute(dotted(name), args);
+    if (!progress_token.is_null()) {
+        bus.clear_progress_handler();
+    }
     const bool ok = env.value("ok", false);
     json result;
     result["content"] = json::array({json{{"type", "text"}, {"text", env.dump()}}});

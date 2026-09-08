@@ -137,6 +137,126 @@ int main() {
     }
 
     {
+        // OBJD apply: change price + internal name length; preserve trailing marker bytes
+        std::vector<std::byte> body;
+        wu32(body, 0);  // materials
+        w7str(body, "Inst");
+        wu32(body, 0x0C);
+        wu64(body, 0x1111ull);
+        wu64(body, 0x2222ull);
+        w7str(body, "A");
+        w7str(body, "B");
+        wf32(body, 10.0f);
+        wf32(body, 1.0f);
+        wf32(body, 0.0f);
+        wu8(body, 1);
+        wu64(body, 0x3333ull);
+        // unknown mid
+        wu32(body, 0xDEADBEEFu);
+        const auto tgi_off = static_cast<std::uint32_t>(body.size());
+        wu8(body, 0xAB);  // tgi stub
+        wu8(body, 0xCD);  // trailing after tgi
+
+        std::vector<std::byte> bytes;
+        wu32(bytes, 0x16);
+        wu32(bytes, tgi_off);
+        wu32(bytes, 1);
+        bytes.insert(bytes.end(), body.begin(), body.end());
+
+        sxpe::resources::ObjdPatch patch;
+        patch.price = 99.5f;
+        patch.internal_name = std::string("ChairX");
+        patch.name_guid = 0xAAAAull;
+        auto out = sxpe::resources::apply_objd(bytes, patch);
+        CHECK(out.has_value());
+        auto p2 = sxpe::resources::parse_objd(*out);
+        CHECK(p2.has_value());
+        CHECK(p2->price == 99.5f);
+        CHECK(p2->internal_name == "ChairX");
+        CHECK(p2->name_guid == 0xAAAAull);
+        CHECK(p2->desc_guid == 0x2222ull);
+        CHECK(p2->instance_name == "Inst");
+        // trailing marker after tgi stub still present
+        CHECK(out->size() >= 2);
+        CHECK(static_cast<unsigned>(*out->rbegin()) == 0xCD);
+        CHECK(static_cast<unsigned>(*(out->rbegin() + 1)) == 0xAB);
+        // DEADBEEF mid preserved: search for it
+        bool found = false;
+        for (std::size_t i = 0; i + 4 <= out->size(); ++i) {
+            std::uint32_t v = 0;
+            std::memcpy(&v, out->data() + i, 4);
+            if (v == 0xDEADBEEFu) {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found);
+    }
+
+    {
+        // CASP apply: rename + clothing + TGI replace; preserve mid padding
+        std::vector<std::byte> bytes;
+        wu32(bytes, 0x12);
+        const auto ref_at = bytes.size();
+        wu32(bytes, 0);
+        wu32(bytes, 0);
+        w7utf16be(bytes, "Top_Shirt");
+        wf32(bytes, 10.0f);
+        wu8(bytes, 0x7E);  // unused
+        wu32(bytes, 5);
+        wu32(bytes, 0);
+        const std::uint32_t age_gender = 0x30u | (0x31u << 8);
+        wu32(bytes, age_gender);
+        wu32(bytes, 0x2);
+        for (int i = 0; i < 8; ++i) {
+            wu8(bytes, static_cast<std::uint8_t>(0xA0 + i));
+        }
+        const auto tgi_at = bytes.size();
+        const auto ref_off = static_cast<std::uint32_t>(tgi_at - 8);
+        std::memcpy(bytes.data() + ref_at, &ref_off, 4);
+        wu8(bytes, 1);
+        wu64(bytes, 0xABCDull);
+        wu32(bytes, 0x11);
+        wu32(bytes, 0x0333406Cu);
+        wu8(bytes, 0xEE);  // trailing
+
+        sxpe::resources::CaspPatch patch;
+        patch.name = std::string("Top_New");
+        patch.clothing_type = 6u;
+        patch.age_flags = 0x20;
+        patch.species = 1;
+        patch.gender_flags = 2;
+        std::vector<sxpe::games::sims3::Tgi> rows;
+        sxpe::games::sims3::Tgi t{};
+        t.type = 0x00B2D882u;
+        t.group = 0x22;
+        t.instance = 0x1234ull;
+        rows.push_back(t);
+        patch.tgis = rows;
+        auto out = sxpe::resources::apply_casp(bytes, patch);
+        CHECK(out.has_value());
+        auto p2 = sxpe::resources::parse_casp(*out);
+        CHECK(p2.has_value());
+        CHECK(p2->name == "Top_New");
+        CHECK(p2->clothing_type == 6);
+        CHECK(p2->age_flags == 0x20);
+        CHECK(p2->species == 1);
+        CHECK(p2->gender_flags == 2);
+        CHECK(p2->tgis.size() == 1);
+        CHECK(p2->tgis[0].type == 0x00B2D882u);
+        CHECK(static_cast<unsigned>(out->back()) == 0xEE);
+        // unused byte preserved
+        bool unused_ok = false;
+        for (std::size_t i = 0; i < out->size(); ++i) {
+            if (static_cast<unsigned>((*out)[i]) == 0x7E) {
+                unused_ok = true;
+                break;
+            }
+        }
+        CHECK(unused_ok);
+    }
+
+    {
         // CLIP synthetic
         std::vector<std::byte> s3;
         // magic _S3Clip_
@@ -226,6 +346,23 @@ int main() {
         CHECK(p->source_file == "walk.mb");
         CHECK(p->track_hashes.size() == 2);
         CHECK(p->duration_seconds > 1.9f && p->duration_seconds < 2.1f);
+
+        sxpe::resources::ClipPatch patch;
+        patch.anim_name = "t_walk_long_name";
+        patch.source_file = "new_src.mb";
+        patch.actor_name = "x";
+        patch.track_hashes.push_back({0, 0xDEADBEEFu});
+        auto edited = sxpe::resources::apply_clip(bytes, patch);
+        CHECK(edited.has_value());
+        auto p2 = sxpe::resources::parse_clip(*edited);
+        CHECK(p2.has_value());
+        CHECK(p2->anim_name == "t_walk_long_name");
+        CHECK(p2->source_file == "new_src.mb");
+        CHECK(p2->actor_name == "x");
+        CHECK(p2->track_hashes.size() >= 1);
+        CHECK(p2->track_hashes[0] == 0xDEADBEEFu);
+        CHECK(p2->track_hashes[1] == 0x11110001u);
+        CHECK(p2->frame_count == 60);
     }
 
     {
@@ -294,6 +431,133 @@ int main() {
         CHECK(p->internal_count == 1);
         CHECK(p->chunks.size() == 1);
         CHECK(p->chunks[0].tag == "MLOD");
+    }
+
+
+    {
+        // Synthetic RCOL: external _IMG + MATD chunk with DiffuseMap -> delayed external ref
+        std::vector<std::byte> matd;
+        matd.insert(matd.end(), {std::byte{'M'}, std::byte{'A'}, std::byte{'T'}, std::byte{'D'}});
+        wu32(matd, 0x103);
+        wu32(matd, 0);
+        wu32(matd, 0xB9105A6Du);  // Phong
+        wu32(matd, 0);
+        wu32(matd, 0);
+        wu32(matd, 0);
+        const auto mtnf_at = matd.size();
+        matd.insert(matd.end(), {std::byte{'M'}, std::byte{'T'}, std::byte{'N'}, std::byte{'F'}});
+        wu32(matd, 0);
+        wu32(matd, 4);
+        wu32(matd, 1);
+        wu32(matd, 0x6CC0FD85u);  // DiffuseMap
+        wu32(matd, 4);
+        wu32(matd, 4);
+        wu32(matd, 32);
+        while (matd.size() < mtnf_at + 32) {
+            wu8(matd, 0);
+        }
+        CHECK(matd.size() == mtnf_at + 32);
+        wu32(matd, 0x30000001u);
+        wu32(matd, 0);
+        wu32(matd, 0);
+        wu32(matd, 0);
+
+        std::vector<std::byte> chunk_a;
+        chunk_a.insert(chunk_a.end(), {std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'}});
+        for (int i = 0; i < 12; ++i) {
+            wu8(chunk_a, static_cast<std::uint8_t>(0xA0 + i));
+        }
+
+        std::vector<std::byte> bytes;
+        wu32(bytes, 3);
+        wu32(bytes, 1);
+        wu32(bytes, 0);
+        wu32(bytes, 1);
+        wu32(bytes, 2);
+        wu64(bytes, 0x1111ull);
+        wu32(bytes, sxpe::resources::kModl);
+        wu32(bytes, 0);
+        wu64(bytes, 0x2222ull);
+        wu32(bytes, sxpe::resources::kMatd);
+        wu32(bytes, 0);
+        wu64(bytes, 0xABCDEF0123456789ull);
+        wu32(bytes, sxpe::resources::kImg);
+        wu32(bytes, 0x12);
+        const auto loc_at = bytes.size();
+        wu32(bytes, 0);
+        wu32(bytes, static_cast<std::uint32_t>(chunk_a.size()));
+        wu32(bytes, 0);
+        wu32(bytes, static_cast<std::uint32_t>(matd.size()));
+        const auto pos0 = static_cast<std::uint32_t>(bytes.size());
+        bytes.insert(bytes.end(), chunk_a.begin(), chunk_a.end());
+        const auto pos1 = static_cast<std::uint32_t>(bytes.size());
+        bytes.insert(bytes.end(), matd.begin(), matd.end());
+        std::memcpy(bytes.data() + loc_at, &pos0, 4);
+        std::memcpy(bytes.data() + loc_at + 8, &pos1, 4);
+
+        auto p = sxpe::resources::parse_rcol_summary(bytes);
+        CHECK(p.has_value());
+        CHECK(p->internal_count == 2);
+        CHECK(p->external_count == 1);
+        CHECK(p->external_tgis.size() == 1);
+        CHECK(p->external_tgis[0].type == sxpe::resources::kImg);
+        CHECK(p->external_tgis[0].instance == 0xABCDEF0123456789ull);
+        CHECK(p->chunks.size() == 2);
+        CHECK(p->chunks[0].tag == "MODL");
+        CHECK(p->chunks[1].tag == "MATD");
+        CHECK(p->chunks[1].has_matd);
+        CHECK(p->chunks[1].shader_hash == 0xB9105A6Du);
+        CHECK(p->chunks[1].shader_name == "Phong");
+        CHECK(p->chunks[1].textures.size() == 1);
+        CHECK(p->chunks[1].textures[0].param_name == "DiffuseMap");
+        CHECK(p->chunks[1].textures[0].resolved);
+        CHECK(p->chunks[1].textures[0].tgi.type == sxpe::resources::kImg);
+        CHECK(p->chunks[1].textures[0].tgi.instance == 0xABCDEF0123456789ull);
+        CHECK(p->textures.size() == 1);
+
+        std::vector<std::byte> neu;
+        neu.insert(neu.end(), {std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'}});
+        wu32(neu, 0xDEADBEEFu);
+        auto replaced = sxpe::resources::replace_rcol_chunk(bytes, 0, neu);
+        CHECK(replaced.has_value());
+        auto p2 = sxpe::resources::parse_rcol_summary(*replaced);
+        CHECK(p2.has_value());
+        CHECK(p2->chunks.size() == 2);
+        CHECK(p2->chunks[0].size == neu.size());
+        CHECK(p2->chunks[1].tag == "MATD");
+        CHECK(p2->chunks[1].shader_name == "Phong");
+        CHECK(p2->textures.size() == 1);
+        CHECK(p2->textures[0].resolved);
+
+        auto extracted = sxpe::resources::extract_rcol_chunk(*replaced, 0);
+        CHECK(extracted.has_value());
+        CHECK(extracted->size() == neu.size());
+        CHECK(std::memcmp(extracted->data(), neu.data(), neu.size()) == 0);
+
+        auto old0 = sxpe::resources::extract_rcol_chunk(bytes, 0);
+        CHECK(old0.has_value());
+        auto back = sxpe::resources::replace_rcol_chunk(*replaced, 0, *old0);
+        CHECK(back.has_value());
+        auto p3 = sxpe::resources::parse_rcol_summary(*back);
+        CHECK(p3.has_value());
+        CHECK(p3->chunks[0].size == chunk_a.size());
+        CHECK(p3->textures[0].tgi.instance == 0xABCDEF0123456789ull);
+
+        auto bad = sxpe::resources::replace_rcol_chunk(bytes, 9, neu);
+        CHECK(!bad.has_value());
+    }
+
+    {
+        std::vector<std::byte> g;
+        g.insert(g.end(), {std::byte{'G'}, std::byte{'E'}, std::byte{'O'}, std::byte{'M'}});
+        wu32(g, 1);
+        std::vector<std::byte> neu{std::byte{'G'}, std::byte{'E'}, std::byte{'O'}, std::byte{'M'},
+                                   std::byte{0x11}};
+        auto out = sxpe::resources::replace_rcol_chunk(g, 0, neu);
+        CHECK(out.has_value());
+        CHECK(out->size() == 5);
+        auto bad = sxpe::resources::replace_rcol_chunk(g, 1, neu);
+        CHECK(!bad.has_value());
     }
 
     if (g_failed != 0) {

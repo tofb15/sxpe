@@ -1,134 +1,104 @@
 # Building SXPE
 
-Requires CMake 3.28+, a C++23 compiler, and (for the GUI) Qt 6.5+ Widgets.
+Download a [Release](https://github.com/tofb15/sxpe/releases) if you only want to run SXPE. This page is **compile, package, and CI**.
 
-## CLI / MCP (no Qt)
+Prerequisites: **CMake 3.28+**, a **C++23** compiler. GUI also needs **Qt 6.5+ Widgets**. Without Qt, CLI (`sxpe`) and MCP (`sxpe_mcp`) still build.
 
-```text
-cmake --preset default
-cmake --build --preset default
-ctest --preset default
-```
+Windows and Linux both support GUI + CLI + MCP. Menus match; packaging helpers and a few lock/path details differ.
 
-## GUI (`sxpe_gui`)
+## The three CMake steps
 
-CMake enables `sxpe_gui` when `find_package(Qt6 Widgets)` succeeds. Without Qt, CLI and MCP still build.
+These are **sequential**, not three spellings of the same command:
 
-### Windows
+| Step | Command | When |
+| --- | --- | --- |
+| 1. Configure | `cmake --preset default` | Once per clone, and after `CMakeLists.txt` or toolchain changes. Writes `build/`. |
+| 2. Build | `cmake --build --preset default` | Every time you want new binaries. |
+| 3. Test | `ctest --preset default --output-on-failure` | Optional. You can run the binaries after step 2 without testing. |
 
-Use Visual Studio 2022/2026 (MSVC) or the repo helpers:
+The `default` preset is **Ninja** + **RelWithDebInfo** (`CMakePresets.json`). You need `ninja` and a compiler on `PATH`.
+
+## Windows (MSVC)
+
+Use **Visual Studio 2022 or 2026** with C++ tools. Do **not** start with the three lines above unless you already have a Developer Command Prompt (so `cl.exe` and Ninja are on `PATH`).
 
 ```text
 build.bat
 ```
 
-If Qt lives next to the repo as `../qt/6.8.2/msvc2022_64`, CMake picks it up. Otherwise set `CMAKE_PREFIX_PATH` to your Qt kit. Portable packaging stays Windows-only (`package.bat` / `scripts/package.ps1`); that path is unchanged by the Linux GUI port.
+That is `scripts/build.ps1`: vswhere → `vcvars64` → configure → build → `ctest`. If Qt lives at `../qt/6.8.2/msvc2022_64` next to the repo, CMake picks it up; otherwise set `CMAKE_PREFIX_PATH` to your kit.
 
-### Linux (Ubuntu 24.04 / Debian)
-
-Install a Qt 6.5+ Widgets kit, then configure as usual. Options:
-
-1. **Official Qt** (matches CI): install Qt 6.8.x desktop `gcc_64` and point CMake at it:
-
-   ```text
-   export CMAKE_PREFIX_PATH=/path/to/Qt/6.8.2/gcc_64
-   cmake --preset default
-   cmake --build --preset default
-   ctest --preset default --output-on-failure
-   ```
-
-2. **Distro packages** (when they are ≥ 6.5): e.g. `qt6-base-dev`, `qt6-base-dev-tools`, and a C++ toolchain. Ubuntu 24.04’s archive Qt can be older than 6.5; use official Qt or a newer distro if `find_package` skips the GUI.
-
-`gui_smoke` runs `sxpe_gui --smoke fixtures/synthetic/single-blob.bin` with `QT_QPA_PLATFORM=offscreen` (opens the synthetic package and lists/filters resources). No display server required.
-
-### Wayland / X11 caveats
-
-- **Headless / CI:** prefer `QT_QPA_PLATFORM=offscreen` (what `gui_smoke` sets). This does not need X11 or Wayland.
-- **Interactive desktop:** Qt usually picks Wayland or X11 from the session. If the window fails to show, input is broken, or decorations look wrong under Wayland, force X11/XCB:
-
-  ```text
-  QT_QPA_PLATFORM=xcb ./build/sxpe_gui path/to/file.package
-  ```
-
-- **Xvfb fallback** (rare; only if offscreen plugins are missing):
-
-  ```text
-  xvfb-run -a ./build/sxpe_gui --smoke fixtures/synthetic/single-blob.bin
-  ```
-
-- Plugin search: official kits use `<prefix>/plugins`; Debian/Ubuntu multiarch often uses `<libdir>/qt6/plugins`. CMake’s `gui_smoke` sets `QT_PLUGIN_PATH` when either layout is present.
-
-## CI
-
-`.github/workflows/ci.yml` already runs **Linux CLI/MCP** (no Qt) and **Windows GUI smoke**.
-
-### Linux GUI smoke job (recommended)
-
-Add this job next to `linux-cli` / `windows-gui` when the pushing token has the GitHub `workflow` scope (OAuth apps without that scope cannot update `.github/workflows/*`):
-
-```yaml
-  linux-gui:
-    name: Linux GUI smoke
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: jurplel/install-qt-action@v4.3.1
-        with:
-          version: "6.8.2"
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          cache: true
-          archives: qtbase
-          install-deps: true
-
-      - name: Install ninja and CMake 3.28
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build g++ wget
-          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.sh
-          sudo sh cmake-3.28.6-linux-x86_64.sh --skip-license --prefix=/usr/local
-          cmake --version
-          g++ --version
-
-      - name: Configure
-        run: cmake --preset default
-
-      - name: Build
-        run: cmake --build --preset default --parallel
-
-      - name: Test
-        run: ctest --preset default --output-on-failure
-```
-
-### Proven in this environment (manual)
-
-On a Linux host with Qt 6.8 Widgets (distro `qt6-base-dev` or official `gcc_64`), CMake 3.28+, Ninja, and g++:
-
-```text
-cmake --preset default
-cmake --build --preset default --parallel
-ctest --preset default --output-on-failure
-# gui_smoke uses QT_QPA_PLATFORM=offscreen; opens fixtures/synthetic/single-blob.bin and lists resources
-QT_QPA_PLATFORM=offscreen ./build/sxpe_gui --smoke fixtures/synthetic/single-blob.bin
-```
-
-All of the above were run successfully while implementing #31 (26/26 ctest, including `gui_smoke`).
-
-## Releases / packaging
-
-Windows portable zip (GUI + CLI + MCP, Qt plugins, MSVC runtime):
+Portable zip (GUI + CLI + MCP, Qt plugins, MSVC CRT):
 
 ```text
 package.bat
 ```
 
-Same as `scripts/package.ps1`. Output: `dist/sxpe/` and `dist/sxpe-<version>-windows-x64.zip`. Use `-SkipBuild` to package the current `build/` tree. The zip includes `SXPE.bat`, `sxpe-cli.bat`, and `sxpe-mcp.bat`.
+Same as `scripts/package.ps1`. Output: `dist/sxpe/` and `dist/sxpe-<version>-windows-x64.zip` (`SXPE.bat`, `sxpe-cli.bat`, `sxpe-mcp.bat`). `-SkipBuild` packages the current `build/` tree (including VS `RelWithDebInfo` / `Release` output dirs).
 
-### GitHub Actions release workflow
+CLI-only zip (no Qt / no `sxpe_gui`):
 
-Preferred path: `.github/workflows/release.yml` (runs on `v*` tags, builds the portable zip via `package.ps1`).
+```text
+powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -NoGui
+```
 
-If the pushing token lacks the GitHub `workflow` scope, OAuth cannot update files under `.github/workflows/`. In that case a paste-ready copy lives at [`docs/ci/release.yml`](ci/release.yml) — add it in the GitHub UI or with a token that has `workflow` scope. Tagging and attaching the zip asset is a separate coordinator step after merge.
+Alias: `-CliOnly`. Output: `dist/sxpe-<version>-windows-x64-cli.zip` (`sxpe-cli.bat`, `sxpe-mcp.bat`, MSVC CRT when available).
 
+## Linux (Ubuntu 24.04 / Debian)
+
+Install a C++ toolchain, Ninja, CMake 3.28+, then the three steps above.
+
+GUI: Qt 6.5+ Widgets.
+
+1. **Official Qt** (matches CI): desktop `gcc_64`, then `export CMAKE_PREFIX_PATH=/path/to/Qt/6.8.2/gcc_64` and configure/build/test.
+2. **Distro packages** (when they are ≥ 6.5): `qt6-base-dev`, `qt6-base-dev-tools`. Ubuntu 24.04’s archive Qt can be older than 6.5; `find_package` then skips the GUI.
+
+`gui_smoke` (`ctest`) runs `sxpe_gui --smoke fixtures/synthetic/single-blob.bin` with `QT_QPA_PLATFORM=offscreen`. No display server required.
+
+### Wayland / X11
+
+- Headless / CI: `QT_QPA_PLATFORM=offscreen`.
+- If the interactive window fails under Wayland: `QT_QPA_PLATFORM=xcb ./build/sxpe_gui path/to/file.package`
+- Rare fallback: `xvfb-run -a ./build/sxpe_gui --smoke fixtures/synthetic/single-blob.bin`
+- Plugin search: official kits `<prefix>/plugins`; Debian multiarch often `<libdir>/qt6/plugins`. `gui_smoke` sets `QT_PLUGIN_PATH` when either exists.
+
+## Linux tarball
+
+```text
+./scripts/package-linux.sh              # build unless --skip-build; stage dist/sxpe/
+./scripts/package-linux.sh --skip-build
+./scripts/package-linux.sh --no-gui     # CLI+MCP only
+```
+
+| Output | When |
+| --- | --- |
+| `dist/sxpe-<ver>-linux-x64-cli.tar.gz` | CLI + MCP (`--no-gui` or no `sxpe_gui`) |
+| `dist/sxpe-<ver>-linux-x64.tar.gz` | CLI + MCP + `sxpe_gui` when that binary was built |
+
+The GUI tarball **does not vendor Qt**. Launchers: `sxpe-cli.sh`, `sxpe-mcp.sh`, and `SXPE.sh` when GUI is included. Smoke: `./scripts/test-package-linux.sh` (skips if `build/sxpe` is missing).
+
+Not AppImage/Flatpak.
+
+## CI
+
+Live `.github/workflows/ci.yml`:
+
+| Job | What |
+| --- | --- |
+| `linux-cli` | Linux CLI/MCP (no Qt) on every push/PR |
+| `windows-gui` | Windows GUI + `gui_smoke` on every push/PR |
+
+**Linux GUI CI is not in `ci.yml` yet.** Paste-ready job: [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) (canonical YAML - do not copy it into this page). Promoting it needs a GitHub token with **`workflow` scope**; OAuth apps without that scope cannot push `.github/workflows/*`.
+
+Tag `v*` runs [`.github/workflows/release.yml`](../.github/workflows/release.yml). The four-artifact matrix (Windows GUI zip, Windows CLI zip, Linux CLI tarball, Linux GUI tarball — Qt not vendored; plus `workflow_dispatch`) lives in [`docs/ci/release.yml`](ci/release.yml) until a `workflow`-scoped push or UI paste updates the live file. See [`docs/ci/README.md`](ci/README.md).
+
+## Releases
+
+Version source: `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). Notes live under [`docs/releases/`](releases/TEMPLATE.md). Published assets: [GitHub Releases](https://github.com/tofb15/sxpe/releases).
+
+| Platform | Local packaging | Artifact |
+| --- | --- | --- |
+| Windows GUI | `package.bat` / `scripts/package.ps1` | `sxpe-<ver>-windows-x64.zip` |
+| Windows CLI | `scripts/package.ps1 -NoGui` | `sxpe-<ver>-windows-x64-cli.zip` |
+| Linux CLI | `scripts/package-linux.sh --no-gui` | `sxpe-<ver>-linux-x64-cli.tar.gz` |
+| Linux GUI | `scripts/package-linux.sh` (Qt present; **not** vendored) | `sxpe-<ver>-linux-x64.tar.gz` |

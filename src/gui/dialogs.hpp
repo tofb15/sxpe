@@ -3,6 +3,7 @@
 #include "sxpe/commands/bus.hpp"
 #include <QDialog>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 #include <functional>
@@ -34,16 +35,43 @@ bool show_nmap_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
 bool show_xml_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                      std::uint32_t ordinal);
+bool show_objd_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal);
+bool show_casp_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal);
+bool show_refs_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal);
+bool show_rcol_replace_chunk_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                                    std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                                    std::uint32_t ordinal);
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal);
+bool show_clip_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal);
 bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                               std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                               std::uint32_t ordinal, std::uint32_t max_bytes);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
 void show_contents_dialog(QWidget* parent);
-/// Query GitHub Releases API; never downloads. Graceful offline / no-release.
-void show_check_for_update_dialog(QWidget* parent);
+/// Help → Common tasks: plain-language recipes + link to docs/workflows.md.
+void show_common_tasks_dialog(QWidget* parent);
+/// Tools → Merge packages…: folder/files → preview count/size → merge (bus) → optional validate.
+/// Calls on_merge(paths, validate_after) when the user confirms; does not run the bus itself.
+void show_merge_assistant_dialog(
+    QWidget* parent,
+    const std::function<void(const QStringList& paths, bool validate_after)>& on_merge);
+/// One-shot first-run tip (skip when smoke_mode). Sets onboarding/seenFirstRunTip.
+void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
+                                  const std::function<void()>& open_merge_assistant = {});
+/// Query GitHub Releases via `app.checkUpdate`; never downloads. Graceful offline / 404.
+void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus);
+/// Headless `--check-update` (prints JSON envelope, no window). Returns 0 if ok.
+int run_check_update_headless(const QString& latest_json_path = {});
 void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
 /// Compare two packages via package.diff. open_hit opens a path and selects a resource.
 void show_package_diff_dialog(
@@ -64,5 +92,7 @@ void show_folder_scan_dialog(
 void show_sims3pack_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,
     const std::function<void(const QString& path)>& open_package);
+/// Limited Sims3Pack authoring (sims3pack.pack) from a folder of .package files.
+void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus);
 
 }  // namespace sxpe::gui

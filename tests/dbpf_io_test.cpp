@@ -1,5 +1,6 @@
 #include "check.hpp"
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 #include "sxpe/games/sims3/package.hpp"
 #include "sxpe/resources/png.hpp"
 
@@ -10,6 +11,20 @@
 #include <span>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -116,6 +131,7 @@ int main() {
     CHECK(!missing_pkg);
     if (!missing_pkg) {
         CHECK(missing_pkg.error().message.find("in use") == std::string::npos);
+        CHECK(missing_pkg.error().message.find("locked") == std::string::npos);
         CHECK(missing_pkg.error().message.find("not found") != std::string::npos);
     }
 
@@ -338,6 +354,127 @@ int main() {
         }
         auto plain = c2->uncompressed(0);
         CHECK(plain.has_value() && as_text(*plain) == "compress me please!!");
+    }
+
+
+
+    // Issue #68: file lock detection — actionable messages; simulate lock without EA files.
+    {
+        using sxpe::core::file_locked_message;
+        using sxpe::core::looks_like_ea_mods_path;
+        using sxpe::core::mods_path_lock_warning;
+        CHECK(file_locked_message().find("close the game or copy the file first") != std::string::npos);
+        CHECK(mods_path_lock_warning().find("Mods") != std::string::npos);
+        CHECK(looks_like_ea_mods_path(
+            tmp / "Documents" / "Electronic Arts" / "The Sims 3" / "Mods" / "Packages" / "a.package"));
+        CHECK(looks_like_ea_mods_path(
+            std::filesystem::path("C:/Users/x/Documents/Electronic Arts/The Sims 3/Mods/x.package")));
+        CHECK(!looks_like_ea_mods_path(tmp / "other" / "Mods" / "a.package"));
+        CHECK(!looks_like_ea_mods_path(tmp / "Electronic Arts" / "The Sims 3" / "Saves" / "a.package"));
+
+        auto empty_bytes = fake_header(0);
+        auto lock_target = tmp / "lock-target.bin";
+        write_bytes(lock_target, empty_bytes);
+
+#ifdef _WIN32
+        HANDLE holder = CreateFileW(lock_target.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(holder != INVALID_HANDLE_VALUE);
+        if (holder != INVALID_HANDLE_VALUE) {
+            auto blocked = Package::open(lock_target, true);
+            CHECK(!blocked);
+            if (!blocked) {
+                CHECK(blocked.error().code == ErrorCode::io);
+                CHECK(blocked.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+            // Read-only share may still fail when holder uses share-mode 0.
+            auto ro = Package::open(lock_target, false);
+            CHECK(!ro);
+            if (!ro) {
+                CHECK(ro.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+            CloseHandle(holder);
+        }
+#else
+        const int holder = ::open(lock_target.c_str(), O_RDWR);
+        CHECK(holder >= 0);
+        if (holder >= 0) {
+            CHECK(flock(holder, LOCK_EX | LOCK_NB) == 0);
+            auto blocked = Package::open(lock_target, true);
+            CHECK(!blocked);
+            if (!blocked) {
+                CHECK(blocked.error().code == ErrorCode::io);
+                CHECK(blocked.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+            // Read-only open does not take flock — still allowed.
+            auto ro = Package::open(lock_target, false);
+            CHECK(ro.has_value());
+            if (ro) {
+                CHECK(!ro->holds_exclusive_lock());
+            }
+            flock(holder, LOCK_UN);
+            ::close(holder);
+        }
+        // After unlock, writable open should succeed and hold exclusive.
+        auto wr = Package::open(lock_target, true);
+        CHECK(wr.has_value());
+        if (wr) {
+            CHECK(wr->holds_exclusive_lock());
+            // Second writable open while first holds flock must fail clearly.
+            auto second = Package::open(lock_target, true);
+            CHECK(!second);
+            if (!second) {
+                CHECK(second.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+        }
+#endif
+    }
+
+    // Issue #65: open stays O(index) even when a row claims huge mem_size.
+    {
+        auto oversized = tmp / "oversize-mem.bin";
+        const std::uint32_t huge_mem = sxpe::core::caps::kMaxResourceBytes + 64;
+        std::vector<std::byte> file(96 + 4 + 32, std::byte{0});
+        file[0] = std::byte{'D'};
+        file[1] = std::byte{'B'};
+        file[2] = std::byte{'P'};
+        file[3] = std::byte{'F'};
+        auto poke = [](std::vector<std::byte>& o, std::size_t off, std::uint32_t v) {
+            std::memcpy(o.data() + off, &v, 4);
+        };
+        poke(file, 4, 2);
+        poke(file, 0x24, 1);
+        poke(file, 0x2C, 36);
+        poke(file, 0x3C, 3);
+        poke(file, 0x40, 96);
+        poke(file, 96, 0);
+        poke(file, 100, 7);
+        poke(file, 104, 0);
+        poke(file, 108, 0);
+        poke(file, 112, 1);
+        poke(file, 116, 96);
+        poke(file, 120, 0x80000000u);
+        poke(file, 124, huge_mem);
+        poke(file, 128, 0);
+        write_bytes(oversized, file);
+        auto pkg = Package::open(oversized, false);
+        CHECK(pkg.has_value());
+        if (pkg) {
+            CHECK(pkg->count() == 1);
+            CHECK(pkg->entry(0).mem_size == huge_mem);
+            auto u = pkg->uncompressed(0);
+            CHECK(!u);
+            if (!u) {
+                CHECK(u.error().code == ErrorCode::cap_exceeded);
+            }
+            auto peek = pkg->peek(0, 16);
+            // Uncompressed flag 0 + empty disk → empty peek OK (no full decode).
+            CHECK(peek.has_value());
+        }
     }
 
     if (g_failed != 0) {

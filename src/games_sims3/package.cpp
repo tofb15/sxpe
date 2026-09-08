@@ -1,12 +1,16 @@
 #include "sxpe/games/sims3/package.hpp"
 
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 #include "sxpe/games/sims3/refpack.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <bit>
 #include <cctype>
+#include <cerrno>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -20,6 +24,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 namespace sxpe::games::sims3 {
@@ -87,7 +94,7 @@ VoidResult apply_disk_writes(const std::filesystem::path& path, const std::vecto
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-        return std::unexpected(err(ErrorCode::io, core::MappedFile::open_error_message(true)));
+        return std::unexpected(err(ErrorCode::io, core::map_open_failure_message(true)));
     }
     for (const auto& w : ws) {
         if (w.data.empty()) {
@@ -110,9 +117,15 @@ VoidResult apply_disk_writes(const std::filesystem::path& path, const std::vecto
     CloseHandle(h);
     return ok();
 #else
+    // Prefer open(2) so errno maps to actionable lock / permission messages (#68).
+    const int fd = ::open(path.c_str(), O_RDWR);
+    if (fd < 0) {
+        return std::unexpected(err(ErrorCode::io, core::map_open_failure_message(true)));
+    }
+    ::close(fd);
     std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
     if (!f) {
-        return std::unexpected(err(ErrorCode::io, "reopen for write failed"));
+        return std::unexpected(err(ErrorCode::io, core::map_open_failure_message(true)));
     }
     for (const auto& w : ws) {
         if (w.data.empty()) {
@@ -138,26 +151,71 @@ VoidResult replace_file(const std::filesystem::path& dest, const std::filesystem
                           nullptr, nullptr)) {
             if (!MoveFileExW(tmp.c_str(), dest.c_str(),
                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-                return std::unexpected(err(ErrorCode::io, "ReplaceFile/MoveFile failed"));
+                return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
             }
         }
         return ok();
     }
     if (!MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_WRITE_THROUGH)) {
-        return std::unexpected(err(ErrorCode::io, "MoveFile failed"));
+        return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
     }
     return ok();
 #else
+    // If another process holds an exclusive flock, refuse with a clear message before rename.
+    if (std::filesystem::exists(dest)) {
+        auto probe = core::probe_exclusive_write(dest);
+        if (probe.status == core::LockProbeStatus::locked ||
+            probe.status == core::LockProbeStatus::access_denied) {
+            return std::unexpected(err(ErrorCode::io, probe.message));
+        }
+    }
     std::error_code ec;
     if (std::filesystem::exists(dest)) {
         std::filesystem::rename(dest, dest.native() + ".bak", ec);
+        if (ec) {
+            if (ec.category() == std::system_category()) {
+                errno = ec.value();
+                return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
+            }
+            return std::unexpected(err(ErrorCode::io, ec.message()));
+        }
     }
     std::filesystem::rename(tmp, dest, ec);
     if (ec) {
+        if (ec.category() == std::system_category()) {
+            errno = ec.value();
+            return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
+        }
         return std::unexpected(err(ErrorCode::io, ec.message()));
     }
     return ok();
 #endif
+}
+
+
+struct TempFileGuard {
+    std::filesystem::path path;
+    bool keep{false};
+    ~TempFileGuard() {
+        if (keep || path.empty()) {
+            return;
+        }
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
+
+std::filesystem::path unique_save_tmp(const std::filesystem::path& dest) {
+    const auto stamp =
+        std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#ifdef _WIN32
+    const auto pid = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const auto pid = static_cast<unsigned long>(::getpid());
+#endif
+    auto name = dest.filename().string() + ".sxpe-tmp-" + std::to_string(pid) + "-" +
+                std::to_string(stamp);
+    return dest.parent_path().empty() ? std::filesystem::path(name) : dest.parent_path() / name;
 }
 
 }  // namespace
@@ -278,9 +336,8 @@ VoidResult Package::parse_mapped() {
         e.compressed = static_cast<std::uint16_t>(f[7] & 0xFFFFu);
         e.unknown2 = static_cast<std::uint16_t>(f[7] >> 16);
         e.ordinal = 0;
-        if (e.mem_size > kMaxResourceBytes || e.file_size > kMaxResourceBytes) {
-            return std::unexpected(err(ErrorCode::cap_exceeded, "resource size cap"));
-        }
+        // Do not refuse the whole package when one resource exceeds kMaxResourceBytes —
+        // open/list stay O(index). Full decode / preview refuse later with clear caps.
         if (static_cast<std::uint64_t>(e.chunk_offset) + e.file_size > map_.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "payload out of range"));
         }
@@ -288,7 +345,10 @@ VoidResult Package::parse_mapped() {
         entries_.push_back(e);
     }
     original_count_ = static_cast<std::uint32_t>(entries_.size());
-    compute_payload_capacities();
+    // Hole capacities only needed for writable in-place edits; skip the O(n log n) sort on RO.
+    if (writable_) {
+        compute_payload_capacities();
+    }
     recompute_ordinals();
     overrides_.assign(entries_.size(), std::nullopt);
     deleted_.assign(entries_.size(), 0);
@@ -365,7 +425,11 @@ Result<std::vector<std::byte>> Package::peek(std::uint32_t i, std::uint32_t max_
         return std::vector<std::byte>(s->begin(), s->begin() + static_cast<std::ptrdiff_t>(n));
     }
     if (e.mem_size > sxpe::core::caps::kMaxLivePreviewBytes) {
-        return std::unexpected(err(ErrorCode::cap_exceeded, "preview cap"));
+        return std::unexpected(
+            err(ErrorCode::cap_exceeded,
+                "preview cap: compressed resource is " + std::to_string(e.mem_size) +
+                    " bytes uncompressed; live preview/decode skipped above " +
+                    std::to_string(sxpe::core::caps::kMaxLivePreviewBytes) + " bytes"));
     }
     auto u = uncompressed(i);
     if (!u) {
@@ -378,11 +442,27 @@ Result<std::vector<std::byte>> Package::peek(std::uint32_t i, std::uint32_t max_
 }
 
 Result<std::vector<std::byte>> Package::uncompressed(std::uint32_t i) const {
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    const auto& e = entries_[i];
+    if (e.mem_size > kMaxResourceBytes) {
+        return std::unexpected(
+            err(ErrorCode::cap_exceeded,
+                "resource exceeds decode cap (" + std::to_string(e.mem_size) +
+                    " > " + std::to_string(kMaxResourceBytes) +
+                    " bytes); refuse full decode — use raw export in chunks or a hex peek"));
+    }
+    if (e.compressed == 0 && e.file_size > kMaxResourceBytes) {
+        return std::unexpected(
+            err(ErrorCode::cap_exceeded,
+                "resource exceeds decode cap (" + std::to_string(e.file_size) +
+                    " > " + std::to_string(kMaxResourceBytes) + " bytes)"));
+    }
     auto disk = payload_on_disk(i);
     if (!disk) {
         return std::unexpected(disk.error());
     }
-    const auto& e = entries_[i];
     if (e.compressed == 0) {
         return *disk;
     }
@@ -634,16 +714,20 @@ Result<std::uint32_t> Package::add_raw(Tgi tgi, std::span<const std::byte> disk,
 
 VoidResult Package::write_file(const std::filesystem::path& dest) const {
     // Keep package-index order. Do not sort by TGI, offset, or name.
-    std::vector<std::byte> payloads;
+    // Stream payloads to disk (no full-package RAM buffer) so large merges stay bounded.
     std::vector<IndexEntry> out_e;
+    std::vector<std::uint32_t> keep;
+    std::uint64_t payload_bytes = 0;
     std::uint32_t off = kHeaderSize;
+    out_e.reserve(entries_.size());
+    keep.reserve(entries_.size());
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
         // TS3 DBPF 2.0 has no on-disk deleted bit (no trash index; CompressedFlags
         // is 0 or 0xFFFF; group high byte is EP/product flags). Save omits the row.
         if (deleted(i)) {
             continue;
         }
-        auto disk = payload_on_disk(i);
+        auto disk = raw(i);
         if (!disk) {
             return std::unexpected(disk.error());
         }
@@ -653,9 +737,10 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
         auto e = entries_[i];
         e.chunk_offset = off;
         e.file_size = static_cast<std::uint32_t>(disk->size());
-        payloads.insert(payloads.end(), disk->begin(), disk->end());
+        payload_bytes += e.file_size;
         off += e.file_size;
         out_e.push_back(e);
+        keep.push_back(i);
     }
     std::vector<std::byte> index;
     wr_u32(index, 0);  // indexType = 0
@@ -675,16 +760,25 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
     wr_u32_at(hdr, 0x24, static_cast<std::uint32_t>(out_e.size()));
     wr_u32_at(hdr, 0x2C, static_cast<std::uint32_t>(index.size()));
     wr_u32_at(hdr, 0x3C, 3);
-    wr_u32_at(hdr, 0x40, kHeaderSize + static_cast<std::uint32_t>(payloads.size()));
+    wr_u32_at(hdr, 0x40, kHeaderSize + static_cast<std::uint32_t>(payload_bytes));
 
     std::ofstream f(dest, std::ios::binary | std::ios::trunc);
     if (!f) {
         return std::unexpected(err(ErrorCode::io, "open tmp"));
     }
     f.write(reinterpret_cast<const char*>(hdr.data()), static_cast<std::streamsize>(hdr.size()));
-    if (!payloads.empty()) {
-        f.write(reinterpret_cast<const char*>(payloads.data()),
-                static_cast<std::streamsize>(payloads.size()));
+    for (std::uint32_t i : keep) {
+        auto disk = raw(i);
+        if (!disk) {
+            return std::unexpected(disk.error());
+        }
+        if (!disk->empty()) {
+            f.write(reinterpret_cast<const char*>(disk->data()),
+                    static_cast<std::streamsize>(disk->size()));
+        }
+        if (!f) {
+            return std::unexpected(err(ErrorCode::io, "write tmp"));
+        }
     }
     f.write(reinterpret_cast<const char*>(index.data()), static_cast<std::streamsize>(index.size()));
     f.flush();
@@ -812,17 +906,15 @@ VoidResult Package::save_as(const std::filesystem::path& dest) {
         map_ = std::move(*m);
         return parse_mapped();
     }
-    auto tmp = dest;
-    tmp += ".tmp";
-    if (auto r = write_file(tmp); !r) {
-        std::filesystem::remove(tmp);
+    TempFileGuard guard{unique_save_tmp(dest)};
+    if (auto r = write_file(guard.path); !r) {
         return r;
     }
     map_.close();
-    if (auto r = replace_file(dest, tmp); !r) {
-        std::filesystem::remove(tmp);
+    if (auto r = replace_file(dest, guard.path); !r) {
         return r;
     }
+    guard.keep = true;  // renamed into dest
     path_ = dest;
     writable_ = true;
     auto m = core::MappedFile::open(dest, map_writable(dest, true));
@@ -1003,16 +1095,14 @@ VoidResult Package::save_copy_as(const std::filesystem::path& dest) {
         }
         return ok();
     }
-    auto tmp = dest;
-    tmp += ".tmp";
-    if (auto r = write_file(tmp); !r) {
-        std::filesystem::remove(tmp);
+    TempFileGuard guard{unique_save_tmp(dest)};
+    if (auto r = write_file(guard.path); !r) {
         return r;
     }
-    if (auto r = replace_file(dest, tmp); !r) {
-        std::filesystem::remove(tmp);
+    if (auto r = replace_file(dest, guard.path); !r) {
         return r;
     }
+    guard.keep = true;
     return ok();
 }
 

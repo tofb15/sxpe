@@ -368,8 +368,9 @@ void Inspector::load_visible() {
         return;
     }
     if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
-        const auto msg = tr("Resource is %1 MB — live preview skipped.")
-                             .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1);
+        const auto msg = tr("Resource is %1 MB — live preview refused (hard cap %2 MB).")
+                             .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1)
+                             .arg(sxpe::core::caps::kMaxLivePreviewBytes / (1024.0 * 1024.0), 0, 'f', 0);
         if (pane == 0) {
             load_preview(rid);
             return;
@@ -445,8 +446,9 @@ void Inspector::load_preview(const nlohmann::json& rid) {
     preview_card_->setText(identity_card());
 
     if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
-        show_preview_body(tr("Resource is %1 MB — live preview skipped.")
-                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1));
+        show_preview_body(tr("Resource is %1 MB — live preview refused (hard cap %2 MB).")
+                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1)
+                              .arg(sxpe::core::caps::kMaxLivePreviewBytes / (1024.0 * 1024.0), 0, 'f', 0));
         return;
     }
 
@@ -632,37 +634,35 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         }
     }
 
-    if (pending_type_ == sxpe::resources::kClip) {
-        auto info = bus_.execute("clip.info", {{"sessionId", sid}, {"resourceId", rid}});
+    if (pending_type_ == sxpe::resources::kRefs) {
+        auto info = bus_.execute("refs.get", {{"sessionId", sid}, {"resourceId", rid}});
         if (info.value("ok", false)) {
             const auto& d = info["data"];
             QStringList lines;
-            lines << tr("CLIP version %1").arg(d.value("version", 0));
-            lines << tr("Duration %1 s (%2 frames × %3)")
-                         .arg(d.value("durationSeconds", 0.0), 0, 'f', 3)
-                         .arg(d.value("frameCount", 0))
-                         .arg(d.value("frameDuration", 0.0), 0, 'f', 6);
-            const auto anim = QString::fromStdString(d.value("animName", std::string()));
-            if (!anim.isEmpty()) {
-                lines << tr("Anim: %1").arg(anim);
+            lines << tr("REFS version %1").arg(d.value("version", 0));
+            lines << tr("Entries %1 · indices %2")
+                         .arg(d.value("entryCount", 0))
+                         .arg(d.contains("indices") && d["indices"].is_array()
+                                  ? static_cast<int>(d["indices"].size())
+                                  : 0);
+            lines << tr("Aux width: %1")
+                         .arg(d.value("auxIsDword", false) ? tr("DWORD") : tr("WORD"));
+            if (d.value("hasThingy", false)) {
+                lines << tr("Thingy %1").arg(d.value("thingy", 0));
             }
-            const auto src = QString::fromStdString(d.value("sourceFile", std::string()));
-            if (!src.isEmpty()) {
-                lines << tr("Source: %1").arg(src);
-            }
-            const auto actor = QString::fromStdString(d.value("actorName", std::string()));
-            if (!actor.isEmpty()) {
-                lines << tr("Actor: %1").arg(actor);
-            }
-            lines << tr("%1 tracks").arg(d.value("trackCount", 0));
-            if (d.contains("trackHashes")) {
-                int n = 0;
-                for (const auto& h : d["trackHashes"]) {
-                    if (n++ >= 12) {
-                        lines << QChar(0x2026);
-                        break;
-                    }
-                    lines << QStringLiteral("  hash %1").arg(hex32(h.get<std::uint32_t>()));
+            if (d.contains("entries") && d["entries"].is_array()) {
+                const int show = std::min<int>(8, static_cast<int>(d["entries"].size()));
+                for (int i = 0; i < show; ++i) {
+                    const auto& row = d["entries"][i];
+                    lines << tr("  [%1] %2 %3 %4 aux=%5")
+                                 .arg(i)
+                                 .arg(QString::fromStdString(row.value("typeHex", "")))
+                                 .arg(QString::fromStdString(row.value("groupHex", "")))
+                                 .arg(QString::fromStdString(row.value("instanceHex", "")))
+                                 .arg(row.value("aux", 0u));
+                }
+                if (static_cast<int>(d["entries"].size()) > show) {
+                    lines << tr("  …");
                 }
             }
             if (d.value("partial", false)) {
@@ -673,8 +673,45 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         }
     }
 
+    if (pending_type_ == sxpe::resources::kClip) {
+        auto info = bus_.execute("clip.info", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("CLIP version %1").arg(d.value("version", 0));
+            lines << tr("Duration %1 s (%2 frames × %3)")
+                         .arg(d.value("durationSeconds", 0.0), 0, 'f', 3)
+                         .arg(d.value("frameCount", 0))
+                         .arg(d.value("frameDuration", 0.0), 0, 'f', 6);
+            lines << tr("Anim: %1").arg(
+                QString::fromStdString(d.value("animName", std::string())));
+            lines << tr("Source: %1").arg(
+                QString::fromStdString(d.value("sourceFile", std::string())));
+            lines << tr("Actor: %1").arg(
+                QString::fromStdString(d.value("actorName", std::string())));
+            lines << tr("%1 tracks (hashes shown up to 64)").arg(d.value("trackCount", 0));
+            if (d.contains("trackHashes")) {
+                int n = 0;
+                for (const auto& h : d["trackHashes"]) {
+                    lines << QStringLiteral("  [%1] %2")
+                                 .arg(n)
+                                 .arg(hex32(h.get<std::uint32_t>()));
+                    ++n;
+                }
+            }
+            lines << tr("Raw size %1").arg(d.value("rawSize", 0));
+            lines << tr("Safe edit: animName, sourceFile, actorName, trackHashes "
+                        "(Editors → CLIP metadata…)");
+            if (d.value("partial", false)) {
+                lines << tr("(partial parse)");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
     if (pending_type_ == sxpe::resources::kModl || pending_type_ == sxpe::resources::kMlod ||
-        pending_type_ == sxpe::resources::kGeom) {
+        pending_type_ == sxpe::resources::kGeom || pending_type_ == sxpe::resources::kMatd) {
         auto info = bus_.execute("rcol.summary", {{"sessionId", sid}, {"resourceId", rid}});
         if (info.value("ok", false)) {
             const auto& d = info["data"];
@@ -691,11 +728,52 @@ void Inspector::load_preview(const nlohmann::json& rid) {
                              .arg(d.value("totalVertices", 0))
                              .arg(d.value("totalFaces", 0));
             }
+            if (d.contains("textures") && d["textures"].is_array() && !d["textures"].empty()) {
+                lines << tr("Textures (MATD):");
+                int n = 0;
+                for (const auto& tex : d["textures"]) {
+                    if (n++ >= 24) {
+                        lines << QChar(0x2026);
+                        break;
+                    }
+                    const auto pname = QString::fromStdString(tex.value("paramName", std::string()));
+                    QString row = pname.isEmpty() ? hex32(tex.value("paramHash", 0u)) : pname;
+                    if (tex.value("resolved", false)) {
+                        row += QStringLiteral("  %1:%2:%3")
+                                   .arg(hex32(tex.value("type", 0u)))
+                                   .arg(hex32(tex.value("group", 0u)))
+                                   .arg(hex64(tex.value("instance", 0ull)));
+                    } else {
+                        row += tr("  (unresolved)");
+                    }
+                    lines << row;
+                }
+            } else if (d.contains("externalTgis") && d["externalTgis"].is_array() &&
+                       !d["externalTgis"].empty()) {
+                lines << tr("External TGIs:");
+                int n = 0;
+                for (const auto& tg : d["externalTgis"]) {
+                    if (n++ >= 16) {
+                        lines << QChar(0x2026);
+                        break;
+                    }
+                    lines << QStringLiteral("  %1:%2:%3")
+                                 .arg(hex32(tg.value("type", 0u)))
+                                 .arg(hex32(tg.value("group", 0u)))
+                                 .arg(hex64(tg.value("instance", 0ull)));
+                }
+            }
             if (d.contains("chunks")) {
                 for (const auto& ch : d["chunks"]) {
                     const auto tag = QString::fromStdString(ch.value("tag", std::string()));
-                    QString row = tag.isEmpty() ? hex32(ch.value("type", 0u)) : tag;
+                    QString row = QStringLiteral("[%1] ").arg(ch.value("index", 0));
+                    row += tag.isEmpty() ? hex32(ch.value("type", 0u)) : tag;
                     row += QStringLiteral("  %1 B").arg(ch.value("size", 0));
+                    if (ch.contains("shaderName") || ch.contains("shaderHash")) {
+                        const auto sn = QString::fromStdString(ch.value("shaderName", std::string()));
+                        row += QStringLiteral("  shader ");
+                        row += sn.isEmpty() ? hex32(ch.value("shaderHash", 0u)) : sn;
+                    }
                     if (ch.value("groupCount", 0) > 0) {
                         row += tr("  groups %1").arg(ch.value("groupCount", 0));
                     }
@@ -826,10 +904,19 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         auto pix = sxpe::resources::decode_dds_rgba(bytes);
         if (!pix) {
             if (inf) {
-                show_preview_body(tr("%1×%2 %3 (no pixel decode)")
+                QString detail = QString::fromStdString(pix.error().message);
+                if (inf->cubemap) {
+                    detail = tr("cubemap refused (2D only)");
+                } else if (inf->volume) {
+                    detail = tr("volume/3D refused (2D only)");
+                } else if (!inf->decode_supported) {
+                    detail = tr("unsupported format (see docs/spec/dds.md)");
+                }
+                show_preview_body(tr("%1×%2 %3 — %4")
                                       .arg(inf->width)
                                       .arg(inf->height)
-                                      .arg(QString::fromStdString(inf->format)));
+                                      .arg(QString::fromStdString(inf->format))
+                                      .arg(detail));
             }
             return;
         }
