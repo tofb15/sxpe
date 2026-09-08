@@ -75,7 +75,7 @@ Short recipes; step-by-step: **[docs/workflows.md](docs/workflows.md)**.
 | --- | --- | --- |
 | Open a package | File → Open | `sxpe resource list --package file.package` |
 | Remove THUM / junk thumbs | Select resources → Delete (or filter + delete) | Delete by TGI after `resource list` |
-| Merge packages | Drop several `.package` files on the window | Import / merge via bus (`resource.importPackage`) |
+| Merge packages | **Tools → Merge packages…** (Merge assistant: folder → preview → merge) or drop several files | Same bus steps as assistant (`resource.importPackage` + SXMM) |
 | Un-merge | Tools → Un-merge package… (needs SXPE `SXMM` manifest) | `package.unmerge` |
 | Import / export S3SA DLL | Resource → Editors → Import DLL / Export S3SA / View S3SA | `s3sa.importDll` / `s3sa.exportDll` / `s3sa.view` |
 | Validate before share | Tools → Validate | `sxpe package validate --package …` (via bus id) |
@@ -84,6 +84,22 @@ Short recipes; step-by-step: **[docs/workflows.md](docs/workflows.md)**.
 | Inspect Sims3Pack | File → Open Sims3Pack… / Tools → Inspect Sims3Pack… | `sxpe sims3pack list --path mod.sims3pack` |
 
 ---
+
+## If you used s3pe before
+
+SXPE is a separate project (not a fork of s3pe). Familiar jobs map roughly like this:
+
+| You did in s3pe | In SXPE |
+| --- | --- |
+| Open / Save / Save As | **File** menu (same idea) |
+| Drop several packages to combine | **Tools → Merge packages…** (Merge assistant) or drop files → **Merge into new package** |
+| Resource → Import → as DBC / from package | **Resource → Import → As DBC…** / **From package(s) into this package…** |
+| Helpers (STBL, NMAP, …) | **Resource → Editors** |
+| Auto Preview pane | **Inspector** (honest limits: no full 3D / CLIP playback) |
+| External hex/text programs | **Settings → External programs** |
+| “Just merge my Downloads folder” folklore | Prefer the Merge assistant preview + caps; see [workflows.md](docs/workflows.md) |
+
+Un-merge only works for packages SXPE itself merged (**SXMM** manifest). Mega-packs from other tools are not reversible that way.
 
 ## Documentation map
 

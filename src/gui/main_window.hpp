@@ -32,7 +32,9 @@ protected:
 private:
     PackageTab* current_tab() const;
     void add_tab(const QString& session_id, const QString& title);
-    void merge_dropped_packages(const QStringList& paths);
+    void merge_dropped_packages(const QStringList& paths, bool validate_after = false);
+    void open_merge_assistant();
+    void maybe_show_onboarding();
     void unmerge_package();
     void compare_packages();
     void find_refs();

@@ -40,6 +40,7 @@
 #include <QStyleHints>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace sxpe::gui {
@@ -225,20 +226,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
     act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
     act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
-    act(tools, tr("&Merge packages…"), {}, [this] {
-        const auto paths = QFileDialog::getOpenFileNames(
-            this, tr("Merge packages"), {},
-            tr("Packages (*.package *.dbc);;All (*.*)"));
-        if (paths.size() < 2) {
-            if (!paths.isEmpty()) {
-                QMessageBox::information(this, tr("Merge packages"),
-                                         tr("Select at least two packages to merge into a new untitled package.\n"
-                                            "To import into the open tab, use Resource → Import → From package(s) into this package…"));
-            }
-            return;
-        }
-        merge_dropped_packages(paths);
-    });
+    act(tools, tr("&Merge packages…"), {}, [this] { open_merge_assistant(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -298,6 +286,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* help = menuBar()->addMenu(tr("&Help"));
     act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
+    act(help, tr("Common &tasks…"), {}, [this] { show_common_tasks_dialog(this); });
     act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this); });
     help->addSeparator();
     act(help, tr("&About SXPE"), {}, [this] {
@@ -330,10 +319,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     rebuild_mru();
     rebuild_bookmarks();
 
-    auto* empty = new QLabel(tr("Open a package (Ctrl+O) or drop a .package file here."));
+    auto* empty = new QLabel(tr("Open a package (Ctrl+O), drop a .package file here, or try Tools → Merge packages… / Help → Common tasks."));
     empty->setAlignment(Qt::AlignCenter);
     empty->setObjectName("empty");
     tabs_->addTab(empty, tr("Start"));
+
+    QTimer::singleShot(0, this, [this] { maybe_show_onboarding(); });
 }
 
 void MainWindow::add_tab(const QString& session_id, const QString& title) {
@@ -439,7 +430,7 @@ void MainWindow::compare_packages() {
     });
 }
 
-void MainWindow::merge_dropped_packages(const QStringList& paths) {
+void MainWindow::merge_dropped_packages(const QStringList& paths, bool validate_after) {
     auto created = bus_.execute("package.new", nlohmann::json::object());
     if (!created.value("ok", false)) {
         warn_if_err(created);
@@ -528,6 +519,22 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     } else {
         QMessageBox::information(this, tr("SXPE"), msg);
     }
+    if (validate_after) {
+        if (auto* t = current_tab()) {
+            auto ven = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
+            show_validate_dialog(this, ven);
+        }
+    }
+}
+
+void MainWindow::open_merge_assistant() {
+    show_merge_assistant_dialog(this, [this](const QStringList& paths, bool validate_after) {
+        merge_dropped_packages(paths, validate_after);
+    });
+}
+
+void MainWindow::maybe_show_onboarding() {
+    show_first_run_tip_if_needed(this, smoke_mode_, [this] { open_merge_assistant(); });
 }
 
 bool MainWindow::open_path(const QString& path, bool writable) {
@@ -650,7 +657,7 @@ bool MainWindow::close_tab(int index) {
     }
     tabs_->removeTab(index);
     if (tabs_->count() == 0) {
-        auto* empty = new QLabel(tr("Open a package (Ctrl+O) or drop a .package file here."));
+        auto* empty = new QLabel(tr("Open a package (Ctrl+O), drop a .package file here, or try Tools → Merge packages… / Help → Common tasks."));
         empty->setAlignment(Qt::AlignCenter);
         empty->setObjectName("empty");
         tabs_->addTab(empty, tr("Start"));
@@ -1868,7 +1875,8 @@ void MainWindow::dropEvent(QDropEvent* e) {
     box.setInformativeText(
         tr("A merge never writes the dropped files. Duplicate resource keys: later file wins. "
            "Known leftover Sims3Pack manifests (type 0x73E93EEB instance 0) are stripped. "
-           "Same as Tools → Merge packages…. Save the result with File → Save As."));
+           "Same as Tools → Merge packages… (Merge assistant). "
+           "Save the result with File → Save As."));
     auto* as_tabs = box.addButton(tr("Open as tabs"), QMessageBox::AcceptRole);
     auto* as_merge = box.addButton(tr("Merge into new package"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Cancel);

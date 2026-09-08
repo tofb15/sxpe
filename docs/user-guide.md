@@ -39,7 +39,7 @@ Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy 
 
 ### Tools
 
-FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect Sims3Pack**, **Merge packages…**, **Un-merge package**, byte Search, **Validate**, Compact / save.
+FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect Sims3Pack**, **Merge packages…** (Merge assistant), **Un-merge package**, byte Search, **Validate**, Compact / save.
 
 ### Settings
 
@@ -47,7 +47,7 @@ Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, built-in h
 
 ### Help
 
-**Contents**, **Check for update…**, About, Warranty, Licence.
+**Contents**, **Common tasks…** (links to workflows.md), **Check for update…**, About, Warranty, Licence.
 
 ## Check for update
 
@@ -68,14 +68,28 @@ Consent: SXPE never auto-installs or silently fetches zip assets. You choose whe
 
 ## Merge and un-merge
 
-1. **Tools → Merge packages…** (or drop several files → **Merge into new package**) combines resources into a **new untitled** package. A **progress dialog** shows per-package status with a **Cancel** button that aborts and rolls back (no corrupt session). SXPE writes an **SXMM** manifest and **strips** known leftover Sims3Pack manifests (`0x73E93EEB` instance 0) by default.
-2. **Resource → Import → From package(s) into this package…** copies into the **open** tab (different intent). **As DBC into this package…** is the historical s3pe DBC-equivalent path — same bus merge/import, not a different file format.
-3. **Tools → Un-merge package…** recreates source packages **only** when an SXMM manifest is present and valid. Merges from other tools are not reversible this way.
-4. **Tools → Validate** summary highlights **conflict hotspots** (leftover manifests / duplicate TGIs).
+1. **Tools → Merge packages…** opens the **Merge assistant**: choose a **folder** (or files) → preview **count and total size** → **Merge** into a **new untitled** package → optional **Validate after merge**. A **progress dialog** shows per-package status with **Cancel** (aborts and rolls back). SXPE writes an **SXMM** manifest and **strips** known leftover Sims3Pack manifests (`0x73E93EEB` instance 0) by default.
+2. Drop several files → **Merge into new package** uses the same bus path (no folder preview step).
+3. **Resource → Import → From package(s) into this package…** copies into the **open** tab (different intent). **As DBC into this package…** is the historical s3pe DBC-equivalent path — same bus merge/import, not a different file format.
+4. **Tools → Un-merge package…** recreates source packages **only** when an SXMM manifest is present and valid. Merges from other tools are not reversible this way.
+5. **Tools → Validate** summary highlights **conflict hotspots** (leftover manifests / duplicate TGIs).
 
 Large CC sets: prefer modest batches; SXPE refuses oversized jobs with a clear `cap_exceeded` message instead of OOM. See [workflows.md](workflows.md#large-cc-batches-s3pe-oom-pain). CLI/MCP share the same bus command (`resource.importPackage`) including leftover / duplicate policies and progress events.
 
 See [spec/merge-manifest.md](spec/merge-manifest.md).
+
+## If you used s3pe before
+
+| s3pe habit | SXPE equivalent |
+| --- | --- |
+| File open / save | **File** menu |
+| Drop-merge / “combine CC” tutorials | **Tools → Merge packages…** (Merge assistant) or multi-file drop |
+| Import as DBC / from package into current | **Resource → Import → As DBC…** / **From package(s)…** |
+| Helpers wrapper | **Resource → Editors** |
+| Auto Preview | **Inspector** (no full 3D mesh / CLIP play) |
+| External programs | **Settings → External programs** |
+
+First launch shows a one-time tip pointing at **Help → Common tasks** and the Merge assistant. Details: [workflows.md](workflows.md).
 
 ## Editors
 
