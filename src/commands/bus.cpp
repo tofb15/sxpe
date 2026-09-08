@@ -1272,7 +1272,7 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"clip.info", "CLIP info",
-         "CLIP duration and track/hash names (wiki 0x6B20C4F3). No playback.",
+         "CLIP duration, anim/source/actor names, track hashes (wiki 0x6B20C4F3). No playback.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
@@ -1301,6 +1301,25 @@ std::vector<Tool> make_catalog() {
                      {"name", {{"type", "string"}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "name"})),
+         env_out, false, true, false, false});
+    add({"clip.exportAsBatch", "CLIP batch exportAs",
+         "Export many CLIPs as new names in one call. items: [{resourceId,name},…]. Cap 256. dryRun.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"items", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "items"})),
+         env_out, false, true, false, false});
+    add({"clip.set", "CLIP set metadata",
+         "Patch safe CLIP fields: animName, sourceFile, actorName, trackHashes[{index,hash}]. "
+         "No frame data / playback. dryRun + undo. See docs/spec/clip.md.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"animName", {{"type", "string"}}},
+                     {"sourceFile", {{"type", "string"}}},
+                     {"actorName", {{"type", "string"}}},
+                     {"trackHashes", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
          env_out, false, true, false, false});
     add({"s3sa.info", "S3SA info",
          "Wrapper fields and decrypted PE offset. Never LoadLibrary.",
@@ -4816,13 +4835,34 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                  {"valueKind", "f32"},
                                  {"value", c->duration_seconds},
                                  {"children", json::array()}});
-                if (!c->anim_name.empty()) {
-                    nodes.push_back({{"id", "animName"},
-                                     {"label", "animName"},
-                                     {"valueKind", "string"},
-                                     {"value", c->anim_name},
-                                     {"children", json::array()}});
+                nodes.push_back({{"id", "animName"},
+                                 {"label", "animName"},
+                                 {"valueKind", "string"},
+                                 {"value", c->anim_name},
+                                 {"children", json::array()}});
+                nodes.push_back({{"id", "sourceFile"},
+                                 {"label", "sourceFile"},
+                                 {"valueKind", "string"},
+                                 {"value", c->source_file},
+                                 {"children", json::array()}});
+                nodes.push_back({{"id", "actorName"},
+                                 {"label", "actorName"},
+                                 {"valueKind", "string"},
+                                 {"value", c->actor_name},
+                                 {"children", json::array()}});
+                json track_children = json::array();
+                for (std::size_t ti = 0; ti < hashes.size(); ++ti) {
+                    track_children.push_back({{"id", "track/" + std::to_string(ti)},
+                                              {"label", "hash"},
+                                              {"valueKind", "u32"},
+                                              {"value", hashes[ti]},
+                                              {"children", json::array()}});
                 }
+                nodes.push_back({{"id", "tracks"},
+                                 {"label", "trackHashes"},
+                                 {"valueKind", "array"},
+                                 {"value", c->track_count},
+                                 {"children", track_children}});
                 return envelope_ok({{"type", "CLIP"},
                                     {"version", c->version},
                                     {"frameDuration", c->frame_duration},
@@ -4833,6 +4873,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"actorName", c->actor_name},
                                     {"trackCount", c->track_count},
                                     {"trackHashes", hashes},
+                                    {"safeFields",
+                                     json::array({"animName", "sourceFile", "actorName", "trackHashes"})},
                                     {"partial", c->partial},
                                     {"rawSize", body->size()},
                                     {"nodes", nodes}});
@@ -4946,32 +4988,181 @@ json Bus::Impl::exec(std::string_view id, json args) {
         args["text"] = args.at("value").get<std::string>();
         return exec("stbl.set", args);
     }
-    if (cmd == "clip.exportAs") {
+    if (cmd == "clip.exportAs" || cmd == "clip.exportAsBatch") {
+        auto export_one = [&](std::uint32_t idx, const std::string& name,
+                              bool dry_run) -> json {
+            auto body = s.pkg.uncompressed(idx);
+            if (!body) {
+                return envelope_err(body.error());
+            }
+            Tgi t = s.pkg.entry(idx).tgi;
+            t.type = sxpe::resources::kClip;
+            t.instance = sxpe::games::sims3::fnv64_clip(name);
+            const auto filename =
+                sxpe::games::sims3::community_filename(t, name, "CLIP.animation");
+            if (dry_run) {
+                return envelope_ok({{"dryRun", true},
+                                    {"resourceId", tgi_json(t)},
+                                    {"filename", filename},
+                                    {"name", name}});
+            }
+            auto r = s.pkg.add(t, *body, s.pkg.entry(idx).compressed == 0xFFFF);
+            if (!r) {
+                return envelope_err(r.error());
+            }
+            return envelope_ok(
+                {{"resourceId", rid_json(s.pkg.entry(*r).tgi, s.pkg.entry(*r).ordinal)},
+                 {"filename", filename},
+                 {"name", name}});
+        };
+        if (cmd == "clip.exportAs") {
+            auto i = need_idx();
+            if (!i) {
+                return envelope_err(i.error());
+            }
+            const auto name = args.at("name").get<std::string>();
+            if (name.empty()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "name is required"));
+            }
+            return export_one(*i, name, dry(args));
+        }
+        if (!args.contains("items") || !args["items"].is_array()) {
+            return envelope_err(err(ErrorCode::invalid_argument, "items must be an array"));
+        }
+        const auto& items = args["items"];
+        constexpr std::size_t kMaxBatch = 256;
+        if (items.size() > kMaxBatch) {
+            return envelope_err(err(ErrorCode::cap_exceeded, "clip.exportAsBatch cap 256 items"));
+        }
+        const bool dry_run = dry(args);
+        json results = json::array();
+        std::size_t ok_n = 0;
+        std::size_t fail_n = 0;
+        for (const auto& it : items) {
+            if (!it.is_object() || !it.contains("name") || !it["name"].is_string()) {
+                results.push_back({{"ok", false},
+                                   {"error",
+                                    {{"code", "invalid_argument"},
+                                     {"message", "item needs name string"}}}});
+                ++fail_n;
+                continue;
+            }
+            const auto name = it["name"].get<std::string>();
+            if (name.empty()) {
+                results.push_back({{"ok", false},
+                                   {"error",
+                                    {{"code", "invalid_argument"},
+                                     {"message", "name is required"}}}});
+                ++fail_n;
+                continue;
+            }
+            json item_args = args;
+            if (it.contains("resourceId")) {
+                item_args["resourceId"] = it["resourceId"];
+            } else if (it.contains("type") || it.contains("group") || it.contains("instance")) {
+                item_args["resourceId"] = {{"type", it.value("type", 0)},
+                                           {"group", it.value("group", 0)},
+                                           {"instance", it.value("instance", 0)}};
+                if (it.contains("ordinal")) {
+                    item_args["resourceId"]["ordinal"] = it["ordinal"];
+                }
+            }
+            auto item_i = this->idx(s, item_args);
+            if (!item_i) {
+                results.push_back(envelope_err(item_i.error()));
+                ++fail_n;
+                continue;
+            }
+            if (s.pkg.entry(*item_i).tgi.type != sxpe::resources::kClip) {
+                results.push_back(envelope_err(
+                    err(ErrorCode::invalid_argument, "resourceId is not a CLIP")));
+                ++fail_n;
+                continue;
+            }
+            auto one = export_one(*item_i, name, dry_run);
+            if (one.value("ok", false)) {
+                ++ok_n;
+            } else {
+                ++fail_n;
+            }
+            results.push_back(std::move(one));
+        }
+        return envelope_ok({{"dryRun", dry_run},
+                            {"count", items.size()},
+                            {"succeeded", ok_n},
+                            {"failed", fail_n},
+                            {"results", results}});
+    }
+    if (cmd == "clip.set") {
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
+        }
+        if (s.pkg.entry(*i).tgi.type != sxpe::resources::kClip) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not a CLIP"));
         }
         auto body = s.pkg.uncompressed(*i);
         if (!body) {
             return envelope_err(body.error());
         }
-        const auto name = args.at("name").get<std::string>();
-        Tgi t = s.pkg.entry(*i).tgi;
-        t.type = sxpe::resources::kClip;
-        t.instance = sxpe::games::sims3::fnv64_clip(name);
-        if (dry(args)) {
-            return envelope_ok({{"dryRun", true},
-                                {"resourceId", tgi_json(t)},
-                                {"filename", sxpe::games::sims3::community_filename(
-                                                 t, name, "CLIP.animation")}});
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        sxpe::resources::ClipPatch patch;
+        if (args.contains("animName") && args["animName"].is_string()) {
+            patch.anim_name = args["animName"].get<std::string>();
         }
-        auto r = s.pkg.add(t, *body, s.pkg.entry(*i).compressed == 0xFFFF);
+        if (args.contains("sourceFile") && args["sourceFile"].is_string()) {
+            patch.source_file = args["sourceFile"].get<std::string>();
+        }
+        if (args.contains("actorName") && args["actorName"].is_string()) {
+            patch.actor_name = args["actorName"].get<std::string>();
+        }
+        if (args.contains("trackHashes")) {
+            if (!args["trackHashes"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "trackHashes must be an array"));
+            }
+            for (const auto& row : args["trackHashes"]) {
+                if (!row.is_object() || !row.contains("index") || !row.contains("hash")) {
+                    return envelope_err(
+                        err(ErrorCode::invalid_argument, "trackHashes entries need index+hash"));
+                }
+                const auto idx = static_cast<std::uint32_t>(as_u64(row.at("index")));
+                const auto hash = static_cast<std::uint32_t>(as_u64(row.at("hash")));
+                patch.track_hashes.emplace_back(idx, hash);
+            }
+        }
+        auto out = sxpe::resources::apply_clip(*body, patch);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
         if (!r) {
             return envelope_err(r.error());
         }
-        return envelope_ok({{"resourceId", rid_json(s.pkg.entry(*r).tgi, s.pkg.entry(*r).ordinal)},
-                            {"filename", sxpe::games::sims3::community_filename(
-                                             t, name, "CLIP.animation")}});
+        auto parsed = sxpe::resources::parse_clip(*out);
+        if (!parsed) {
+            return envelope_err(parsed.error());
+        }
+        json hashes = json::array();
+        for (auto h : parsed->track_hashes) {
+            hashes.push_back(h);
+        }
+        return envelope_ok({{"bytes", out->size()},
+                            {"version", parsed->version},
+                            {"frameDuration", parsed->frame_duration},
+                            {"frameCount", parsed->frame_count},
+                            {"durationSeconds", parsed->duration_seconds},
+                            {"animName", parsed->anim_name},
+                            {"sourceFile", parsed->source_file},
+                            {"actorName", parsed->actor_name},
+                            {"trackCount", parsed->track_count},
+                            {"trackHashes", hashes},
+                            {"partial", parsed->partial}});
     }
     if (cmd == "s3sa.info" || cmd == "s3sa.exportDll" || cmd == "s3sa.view" ||
         cmd == "s3sa.importDll") {

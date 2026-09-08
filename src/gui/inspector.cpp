@@ -683,29 +683,25 @@ void Inspector::load_preview(const nlohmann::json& rid) {
                          .arg(d.value("durationSeconds", 0.0), 0, 'f', 3)
                          .arg(d.value("frameCount", 0))
                          .arg(d.value("frameDuration", 0.0), 0, 'f', 6);
-            const auto anim = QString::fromStdString(d.value("animName", std::string()));
-            if (!anim.isEmpty()) {
-                lines << tr("Anim: %1").arg(anim);
-            }
-            const auto src = QString::fromStdString(d.value("sourceFile", std::string()));
-            if (!src.isEmpty()) {
-                lines << tr("Source: %1").arg(src);
-            }
-            const auto actor = QString::fromStdString(d.value("actorName", std::string()));
-            if (!actor.isEmpty()) {
-                lines << tr("Actor: %1").arg(actor);
-            }
-            lines << tr("%1 tracks").arg(d.value("trackCount", 0));
+            lines << tr("Anim: %1").arg(
+                QString::fromStdString(d.value("animName", std::string())));
+            lines << tr("Source: %1").arg(
+                QString::fromStdString(d.value("sourceFile", std::string())));
+            lines << tr("Actor: %1").arg(
+                QString::fromStdString(d.value("actorName", std::string())));
+            lines << tr("%1 tracks (hashes shown up to 64)").arg(d.value("trackCount", 0));
             if (d.contains("trackHashes")) {
                 int n = 0;
                 for (const auto& h : d["trackHashes"]) {
-                    if (n++ >= 12) {
-                        lines << QChar(0x2026);
-                        break;
-                    }
-                    lines << QStringLiteral("  hash %1").arg(hex32(h.get<std::uint32_t>()));
+                    lines << QStringLiteral("  [%1] %2")
+                                 .arg(n)
+                                 .arg(hex32(h.get<std::uint32_t>()));
+                    ++n;
                 }
             }
+            lines << tr("Raw size %1").arg(d.value("rawSize", 0));
+            lines << tr("Safe edit: animName, sourceFile, actorName, trackHashes "
+                        "(Editors → CLIP metadata…)");
             if (d.value("partial", false)) {
                 lines << tr("(partial parse)");
             }

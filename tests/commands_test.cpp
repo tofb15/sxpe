@@ -9,6 +9,7 @@
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/resources/objd.hpp"
 #include "sxpe/resources/casp.hpp"
+#include "sxpe/resources/clip.hpp"
 #include "sxpe/resources/rcol.hpp"
 #include "sxpe/core/caps.hpp"
 #include "sxpe/core/file_lock.hpp"
@@ -735,11 +736,109 @@ int main() {
         const auto cid = cs["data"]["sessionId"].get<std::string>();
         const auto clip_rid =
             json{{"type", sxpe::resources::kClip}, {"group", 0}, {"instance", 1}};
-        std::vector<std::byte> clip_body{std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu16 = [](std::vector<std::byte>& o, std::uint16_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 2);
+        };
+        auto wf32 = [](std::vector<std::byte>& o, float v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wcstr = [](std::vector<std::byte>& o, const char* s) {
+            while (*s) {
+                o.push_back(static_cast<std::byte>(static_cast<unsigned char>(*s++)));
+            }
+            o.push_back(std::byte{0});
+        };
+        std::vector<std::byte> s3;
+        const char mag[] = "_S3Clip_";
+        s3.insert(s3.end(), reinterpret_cast<const std::byte*>(mag),
+                  reinterpret_cast<const std::byte*>(mag) + 8);
+        wu32(s3, 2);
+        wu32(s3, 0);
+        wf32(s3, 1.0f / 30.0f);
+        wu16(s3, 30);
+        wu16(s3, 0);
+        wu32(s3, 1);
+        wu32(s3, 0);
+        const auto rules_off_field = s3.size();
+        wu32(s3, 0);
+        wu32(s3, 0);
+        const auto anim_off_field = s3.size();
+        wu32(s3, 0);
+        const auto src_off_field = s3.size();
+        wu32(s3, 0);
+        auto patch_u32 = [&](std::size_t at, std::uint32_t v) {
+            std::memcpy(s3.data() + at, &v, 4);
+        };
+        const auto anim_at = s3.size();
+        wcstr(s3, "a_walk");
+        const auto src_at = s3.size();
+        wcstr(s3, "walk.mb");
+        const auto rules_at = s3.size();
+        wu32(s3, 0);
+        wu32(s3, 0xABCDu);
+        wf32(s3, 0.0f);
+        wf32(s3, 1.0f);
+        wu16(s3, 1);
+        wu16(s3, 0x112);
+        patch_u32(rules_off_field, static_cast<std::uint32_t>(rules_at));
+        patch_u32(anim_off_field, static_cast<std::uint32_t>(anim_at));
+        patch_u32(src_off_field, static_cast<std::uint32_t>(src_at));
+        std::vector<std::byte> header;
+        wu32(header, sxpe::resources::kClip);
+        wu32(header, 0);
+        wu32(header, static_cast<std::uint32_t>(s3.size()));
+        wu32(header, 44);
+        wu32(header, 0);
+        wu32(header, 0);
+        wu32(header, 0);
+        wu32(header, 0);
+        wu32(header, 1);
+        wu32(header, 0);
+        for (int i = 0; i < 16; ++i) {
+            header.push_back(std::byte{0});
+        }
+        std::vector<std::byte> clip_body = header;
+        clip_body.insert(clip_body.end(), s3.begin(), s3.end());
+
         CHECK(bus.execute("resource.add",
                           json{{"sessionId", cid},
                                {"resourceId", clip_rid},
                                {"payloadB64", b64(clip_body)}})["ok"] == true);
+
+        auto info = bus.execute("clip.info",
+                                json{{"sessionId", cid}, {"resourceId", clip_rid}});
+        CHECK(info["ok"] == true);
+        CHECK(info["data"]["animName"] == "a_walk");
+        CHECK(info["data"]["sourceFile"] == "walk.mb");
+        CHECK(info["data"]["trackCount"] == 1);
+        CHECK(info["data"].contains("safeFields"));
+
+        auto set = bus.execute(
+            "clip.set",
+            json{{"sessionId", cid},
+                 {"resourceId", clip_rid},
+                 {"animName", "t_walk"},
+                 {"sourceFile", "renamed.mb"},
+                 {"actorName", "actor0"},
+                 {"trackHashes", json::array({json{{"index", 0}, {"hash", 0x1111u}}})}});
+        CHECK(set["ok"] == true);
+        CHECK(set["data"]["animName"] == "t_walk");
+        CHECK(set["data"]["sourceFile"] == "renamed.mb");
+        CHECK(set["data"]["actorName"] == "actor0");
+        CHECK(set["data"]["trackHashes"][0] == 0x1111u);
+
+        auto info2 = bus.execute("clip.info",
+                                 json{{"sessionId", cid}, {"resourceId", clip_rid}});
+        CHECK(info2["ok"] == true);
+        CHECK(info2["data"]["animName"] == "t_walk");
+
         auto exp = bus.execute(
             "clip.exportAs",
             json{{"sessionId", cid}, {"resourceId", clip_rid}, {"name", "a_walk"}});
@@ -747,6 +846,20 @@ int main() {
         constexpr std::uint64_t kFrozenAWalk = 0x11a06ab91bca6bdeull;
         CHECK(exp["data"]["resourceId"]["instance"].get<std::uint64_t>() == kFrozenAWalk);
         CHECK(exp["data"]["resourceId"]["type"].get<std::uint32_t>() == sxpe::resources::kClip);
+
+        auto batch = bus.execute(
+            "clip.exportAsBatch",
+            json{{"sessionId", cid},
+                 {"dryRun", true},
+                 {"items",
+                  json::array({json{{"resourceId", clip_rid}, {"name", "t_walk"}},
+                               json{{"resourceId", clip_rid}, {"name", "a2a_sit"}}})}});
+        CHECK(batch["ok"] == true);
+        CHECK(batch["data"]["succeeded"] == 2);
+        CHECK(batch["data"]["failed"] == 0);
+        CHECK(batch["data"]["results"].size() == 2);
+        CHECK(batch["data"]["results"][0]["data"]["dryRun"] == true);
+
         bus.execute("package.close", json{{"sessionId", cid}});
     }
 

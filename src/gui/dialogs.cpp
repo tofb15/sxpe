@@ -1083,6 +1083,99 @@ bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QS
     return dlg.exec() == QDialog::Accepted;
 }
 
+bool show_clip_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("clip.info", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This resource is not a CLIP, or it failed to parse."));
+        return false;
+    }
+    const auto& d = got["data"];
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("CLIP metadata"));
+    auto* form = new QFormLayout(&dlg);
+    auto* anim = new QLineEdit(QString::fromStdString(d.value("animName", std::string())));
+    auto* src = new QLineEdit(QString::fromStdString(d.value("sourceFile", std::string())));
+    auto* actor = new QLineEdit(QString::fromStdString(d.value("actorName", std::string())));
+    form->addRow(QObject::tr("Anim name"), anim);
+    form->addRow(QObject::tr("Source file"), src);
+    form->addRow(QObject::tr("Actor name"), actor);
+    auto* tracks = new QPlainTextEdit;
+    tracks->setPlaceholderText(QObject::tr("One track hash per line: index hash (hex or decimal)"));
+    QStringList track_lines;
+    if (d.contains("trackHashes") && d["trackHashes"].is_array()) {
+        int i = 0;
+        for (const auto& h : d["trackHashes"]) {
+            track_lines << QStringLiteral("%1 %2")
+                               .arg(i)
+                               .arg(h.get<std::uint32_t>(), 8, 16, QLatin1Char('0'));
+            ++i;
+        }
+    }
+    tracks->setPlainText(track_lines.join(QLatin1Char('\n')));
+    tracks->setMinimumHeight(120);
+    form->addRow(QObject::tr("Track hashes"), tracks);
+    auto* note = new QLabel(
+        QObject::tr("Safe fields only (docs/spec/clip.md). Frame data and playback are not edited. "
+                    "Use Resource → Editors → CLIP export as new name… (or clip.exportAsBatch) to "
+                    "copy with a new fnv64_clip instance."));
+    note->setWordWrap(true);
+    form->addRow(note);
+    auto* meta = new QLabel(QObject::tr("Duration %1 s · %2 frames · version %3%4")
+                                .arg(d.value("durationSeconds", 0.0), 0, 'f', 3)
+                                .arg(d.value("frameCount", 0))
+                                .arg(d.value("version", 0))
+                                .arg(d.value("partial", false) ? QObject::tr(" · partial") : QString()));
+    meta->setWordWrap(true);
+    form->addRow(meta);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"resourceId", rid},
+                            {"animName", anim->text().toStdString()},
+                            {"sourceFile", src->text().toStdString()},
+                            {"actorName", actor->text().toStdString()}};
+        nlohmann::json th = nlohmann::json::array();
+        const auto lines = tracks->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const auto& line : lines) {
+            const auto parts = line.trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            if (parts.size() < 2) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                     QObject::tr("Track line needs index and hash: %1").arg(line));
+                return;
+            }
+            bool ok_i = false;
+            bool ok_h = false;
+            const auto index = parts[0].toUInt(&ok_i, 0);
+            const auto hash = parts[1].toUInt(&ok_h, 0);
+            if (!ok_i || !ok_h) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                     QObject::tr("Invalid track index/hash: %1").arg(line));
+                return;
+            }
+            th.push_back({{"index", index}, {"hash", hash}});
+        }
+        if (!th.empty()) {
+            args["trackHashes"] = th;
+        }
+        auto env = bus.execute("clip.set", args);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(560, 420);
+    return dlg.exec() == QDialog::Accepted;
+}
+
+
 namespace {
 
 void posterize_rgb(QImage* im, int shift) {

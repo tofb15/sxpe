@@ -17,11 +17,12 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 - TGI refs: I64GT key table at `offset+8` (BYTE count, then instance/group/type). Used by `resource.findRefs` (`casp.tgi`).
 - Later CASP versions may add fields we do not read; Preview labels partial parses honestly.
 
-## CLIP (`clip.info`)
+## CLIP (`clip.info` / `clip.set`)
 
 - Main-header offsets are relative to each field (SimsWiki). Duration = `frameDuration * frameCount`.
 - Reports anim/source/actor names when present and up to 64 joint-rule hashes (track hashes). No frame decode or playback.
-- `fnv64_clip` remains for `clip.exportAs` / hashing only.
+- Safe edits: `animName`, `sourceFile`, `actorName`, `trackHashes[{index,hash}]` via `clip.set`. See [clip.md](clip.md).
+- `fnv64_clip` for `clip.exportAs` / `clip.exportAsBatch` / hashing.
 
 ## MODL / MLOD / GEOM / MATD (`rcol.summary`)
 
@@ -41,7 +42,8 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 | --- | --- |
 | `objd.get` / `objd.set` | Common header card; typed editor |
 | `casp.get` / `casp.set` | Clothing / age-gender / TGIs; typed editor |
-| `clip.info` | Duration + tracks |
+| `clip.info` / `clip.set` | Duration + tracks; safe metadata |
+| `clip.exportAs` / `clip.exportAsBatch` | Copy with new fnv64_clip instance |
 | `rcol.summary` | Chunk / LOD / v-f counts + MATD shader/textures |
 | `rcol.replaceChunk` | Replace one chunk by index; backup + undo |
 
