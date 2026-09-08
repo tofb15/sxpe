@@ -2464,7 +2464,13 @@ void show_folder_scan_dialog(
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setSelectionMode(QAbstractItemView::SingleSelection);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->horizontalHeader()->setStretchLastSection(true);
+    table->setWordWrap(false);
+    table->setTextElideMode(Qt::ElideMiddle);
+    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* hdr = table->horizontalHeader();
+    hdr->setStretchLastSection(false);
+    hdr->setSectionResizeMode(QHeaderView::Interactive);
+    hdr->setSectionResizeMode(1, QHeaderView::Stretch);
     table->verticalHeader()->setVisible(false);
     lay->addWidget(table, 1);
 
@@ -2504,17 +2510,30 @@ void show_folder_scan_dialog(
         }
         summary->setPlainText(lines.join(QLatin1Char('\n')));
 
+        const QString scan_root =
+            QDir::toNativeSeparators(QString::fromStdString(data.value("path", std::string{})));
+
         auto add_row = [&](const QString& kind, const QString& path, const QString& detail,
                            const QString& note) {
             const int r = table->rowCount();
             table->insertRow(r);
+            const QString native = QDir::toNativeSeparators(path);
+            QString shown = native;
+            if (!scan_root.isEmpty()) {
+                const QString rel = QDir(scan_root).relativeFilePath(path);
+                if (!rel.isEmpty() && QDir::isRelativePath(rel) &&
+                    !rel.startsWith(QLatin1String(".."))) {
+                    shown = QDir::toNativeSeparators(rel);
+                }
+            }
             auto put = [&](int c, const QString& s) {
                 auto* item = new QTableWidgetItem(s);
                 item->setData(Qt::UserRole, path);
+                item->setToolTip(native);
                 table->setItem(r, c, item);
             };
             put(0, kind);
-            put(1, path);
+            put(1, shown);
             put(2, detail);
             put(3, note);
         };
@@ -2558,6 +2577,9 @@ void show_folder_scan_dialog(
                 }
             }
         }
+        table->resizeColumnToContents(0);
+        table->resizeColumnToContents(2);
+        table->resizeColumnToContents(3);
     };
 
     auto run_scan = [&] {
