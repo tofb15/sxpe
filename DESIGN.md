@@ -14,7 +14,7 @@ for **0.7.0+**; it is not the workspace-only planning tree.
 
 ## Dependencies
 
-CMake `file(DOWNLOAD)` pins **nlohmann/json 3.11.3** and **CLI11 2.4.2** into the build `_vendor` directory. `vcpkg.json` lists the same two ports for optional vcpkg users. Tests use `tests/check.hpp`, not Catch2. spdlog and pugixml are not linked. Qt 6 Widgets (+ Network for update check) is optional; without it, CLI/MCP still build.
+CMake `file(DOWNLOAD)` pins **nlohmann/json 3.11.3** and **CLI11 2.4.2** into the build `_vendor` directory. `vcpkg.json` lists the same two ports for optional vcpkg users. Tests use `tests/check.hpp`, not Catch2. spdlog and pugixml are not linked. Qt 6 Widgets is optional; without it, CLI/MCP still build. Check for update is `app.checkUpdate` (WinHTTP / curl), not Qt Network.
 
 Do not copy s3pe/s3pi source. Formats come from `docs/spec` and the public URLs cited there.
 

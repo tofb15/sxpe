@@ -102,7 +102,7 @@ json parse_rest(const std::vector<std::string>& extra, json args) {
                     args[key] = v;
                 }
             } else if (!v.empty() && (std::isdigit(static_cast<unsigned char>(v.front())) || v.front() == '-' || v.front() == '+') &&
-                       v.find('.') != std::string::npos) {
+                       v.find('.') != std::string::npos && v.find('.') == v.rfind('.')) {
                 try {
                     args[key] = std::stod(v);
                 } catch (...) {
@@ -207,6 +207,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --force --dry-run --writable --force-writable --include-payload --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
+    std::cout << "  sxpe app checkUpdate\n";
     std::cout << "  sxpe package info --package mod.package\n";
     std::cout << "  sxpe package diff --path-a stock.package --path-b override.package\n";
     std::cout << "  sxpe folder scan --path Mods --format text\n";
@@ -496,6 +497,22 @@ void print_object_text(const json& data) {
         print_folder_scan_text(data);
         return;
     }
+    if (data.contains("status") && data.contains("current") && data.contains("downloads") &&
+        data.contains("htmlUrl")) {
+        if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
+            for (const auto& line : data["summary"]) {
+                if (line.is_string()) {
+                    std::cout << line.get<std::string>() << '\n';
+                }
+            }
+        } else {
+            std::cout << data.value("message", "") << '\n';
+            std::cout << "current: " << data.value("current", "") << '\n';
+            std::cout << "latest: " << data.value("tagName", data.value("latest", "")) << '\n';
+            std::cout << data.value("htmlUrl", "") << '\n';
+        }
+        return;
+    }
     if (data.contains("archiveOffset") && data.contains("entryCount") &&
         (data.value("readOnly", false) || data.value("authored", false))) {
         std::vector<std::string> lines;
@@ -630,8 +647,8 @@ bool is_list(const std::string& id) {
 
 bool skip_oneshot_open(const std::string& id) {
     return id == "package.open" || id == "session.start" || id == "package.new" || id == "manifest" ||
-           id == "hash.fnv" || id == "s3sa.wrap" || id == "package.unmerge" || id == "package.diff" ||
-           id == "folder.scan" || id == "sims3pack.info" || id == "sims3pack.list" ||
+           id == "hash.fnv" || id == "app.checkUpdate" || id == "s3sa.wrap" || id == "package.unmerge" ||
+           id == "package.diff" || id == "folder.scan" || id == "sims3pack.info" || id == "sims3pack.list" ||
            id == "sims3pack.extract" || id == "sims3pack.pack" || id == "help";
 }
 

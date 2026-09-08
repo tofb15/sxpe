@@ -50,7 +50,7 @@ Non-UI features ship on the command bus, CLI, and MCP in the **same** change.
 
 Do not reimplement JSON or CLI parsing. CMake downloads nlohmann/json **v3.11.3** and CLI11 **v2.4.2**
 into the build `_vendor` dir (see `CMakeLists.txt`). `vcpkg.json` lists those same two ports for
-optional vcpkg users. Tests use `tests/check.hpp`. Qt 6 Widgets (and Network, for Help → Check for update) is optional via `find_package`.
+optional vcpkg users. Tests use `tests/check.hpp`. Qt 6 Widgets is optional via `find_package`. Help → Check for update / `sxpe app checkUpdate` use WinHTTP (Windows) or `curl` (Linux), not Qt Network.
 See [DESIGN.md](DESIGN.md).
 
 ## Version

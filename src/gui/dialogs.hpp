@@ -68,8 +68,10 @@ void show_merge_assistant_dialog(
 /// One-shot first-run tip (skip when smoke_mode). Sets onboarding/seenFirstRunTip.
 void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
                                   const std::function<void()>& open_merge_assistant = {});
-/// Query GitHub Releases API; never downloads. Graceful offline / no-release.
-void show_check_for_update_dialog(QWidget* parent);
+/// Query GitHub Releases via `app.checkUpdate`; never downloads. Graceful offline / 404.
+void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus);
+/// Headless `--check-update` (prints JSON envelope, no window). Returns 0 if ok.
+int run_check_update_headless(const QString& latest_json_path = {});
 void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
 /// Compare two packages via package.diff. open_hit opens a path and selects a resource.
 void show_package_diff_dialog(

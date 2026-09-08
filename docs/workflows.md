@@ -109,6 +109,6 @@ Community guides (and the Sims Wiki) warn that editing a `.package` while The Si
 
 ## Check for a new SXPE build
 
-1. Help → **Check for update…**, or open [Releases](https://github.com/tofb15/sxpe/releases).
+1. Help → **Check for update…**, or `sxpe app checkUpdate`, or open [Releases](https://github.com/tofb15/sxpe/releases).
 2. If newer: open the release page and install the asset that matches your platform (v0.7.0 publishes `sxpe-0.7.0-windows-x64.zip`; Linux CLI+MCP tarball when the tag workflow attaches it; local packaging is `package.bat` / `scripts/package-linux.sh`). Keep backups of your work files.
 3. SXPE never auto-downloads updates.

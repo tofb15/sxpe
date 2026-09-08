@@ -8,6 +8,8 @@
 
 #include "sxpe/core/caps.hpp"
 #include "sxpe/core/file_lock.hpp"
+#include "sxpe/core/update_check.hpp"
+#include "sxpe/version.hpp"
 #include "sxpe/games/sims3/fnv.hpp"
 #include "sxpe/games/sims3/package.hpp"
 #include "sxpe/games/sims3/sims3pack.hpp"
@@ -1413,6 +1415,16 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "nodeId"})),
          env_out, false, true, false, false});
+    add({"app.checkUpdate", "Check for update",
+         "Compare this build to GitHub Releases /latest. Never downloads zip/tarball assets. "
+         "Uses SXPE_GITHUB_TOKEN, GITHUB_TOKEN, GH_TOKEN, or `gh auth token` for private repos. "
+         "Example: {}. Optional currentVersion / token / latestJson (tests).",
+         obj_schema({{"currentVersion", {{"type", "string"}}},
+                     {"token", {{"type", "string"}}},
+                     {"latestJson", {{"type", "string"}}},
+                     {"latestJsonPath", {{"type", "string"}}}},
+                    json::array()),
+         env_out, true, false, true, true});
     add({"hash.fnv", "FNV-1",
          "FNV-1 32/64 or CLIP (fnv64_clip age-letter masks). Example: {\"text\":\"a\",\"width\":32}.",
          obj_schema({{"text", {{"type", "string"}}},
@@ -2720,6 +2732,114 @@ json Bus::Impl::exec(std::string_view id, json args) {
             return envelope_ok({{"path", dest->string()}, {"bytes", wrapped->size()}});
         }
         return envelope_ok({{"bytes", wrapped->size()}, {"payloadB64", b64_encode(*wrapped)}});
+    }
+    if (cmd == "app.checkUpdate") {
+        std::string current = SXPE_VERSION;
+        if (args.contains("currentVersion")) {
+            if (args["currentVersion"].is_string()) {
+                current = args["currentVersion"].get<std::string>();
+            } else if (args["currentVersion"].is_number()) {
+                return envelope_err(err(ErrorCode::invalid_argument,
+                                        "currentVersion must be a string (e.g. \"0.7.0\")"));
+            }
+        }
+        auto to_json = [](sxpe::core::UpdateCheck r) {
+            json assets = json::array();
+            for (const auto& a : r.assets) {
+                assets.push_back(a);
+            }
+            json summary = json::array();
+            for (const auto& s : r.summary) {
+                summary.push_back(s);
+            }
+            return json{{"current", r.current},
+                        {"latest", r.latest},
+                        {"tagName", r.tag_name},
+                        {"htmlUrl", r.html_url},
+                        {"status", sxpe::core::update_status_id(r.status)},
+                        {"downloads", r.downloads},
+                        {"httpStatus", r.http_status},
+                        {"message", r.message},
+                        {"summary", summary},
+                        {"assets", assets}};
+        };
+        auto fill_assets = [](sxpe::core::UpdateCheck& r, const json& obj) {
+            if (!obj.contains("assets") || !obj["assets"].is_array()) {
+                return;
+            }
+            for (const auto& a : obj["assets"]) {
+                if (a.is_object() && a.contains("name") && a["name"].is_string()) {
+                    r.assets.push_back(a["name"].get<std::string>());
+                } else if (a.is_string()) {
+                    r.assets.push_back(a.get<std::string>());
+                }
+            }
+        };
+
+        std::string body;
+        int http_status = 0;
+        if (args.contains("latestJson") && args["latestJson"].is_string() &&
+            !args["latestJson"].get<std::string>().empty()) {
+            body = args["latestJson"].get<std::string>();
+            http_status = 200;
+        } else if (args.contains("latestJsonPath") && args["latestJsonPath"].is_string() &&
+                   !args["latestJsonPath"].get<std::string>().empty()) {
+            auto path = check_path(args["latestJsonPath"].get<std::string>());
+            if (!path) {
+                return envelope_err(path.error());
+            }
+            auto bytes = read_file(*path);
+            if (!bytes) {
+                return envelope_err(bytes.error(), bytes.error().code == ErrorCode::io, "none");
+            }
+            body.assign(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+            http_status = 200;
+        } else {
+            std::string token;
+            if (args.contains("token") && args["token"].is_string()) {
+                token = args["token"].get<std::string>();
+            }
+            if (token.empty()) {
+                token = sxpe::core::github_token();
+            }
+            const std::string ua = std::string("SXPE/") + current + " (check-for-update)";
+            auto http = sxpe::core::https_get(sxpe::core::kGithubLatestUrl, ua, token, 15000);
+            if (!http.error.empty() && http.status == 0) {
+                return envelope_err(err(ErrorCode::io, http.error), true, "none");
+            }
+            http_status = http.status;
+            body = std::move(http.body);
+            if (http_status == 404) {
+                auto r = sxpe::core::update_not_found(current, http_status);
+                return envelope_ok(to_json(std::move(r)));
+            }
+            if (http_status < 200 || http_status >= 300) {
+                std::string msg = "GitHub Releases request failed (HTTP " +
+                                  std::to_string(http_status) + ")";
+                if (!http.error.empty()) {
+                    msg += ": " + http.error;
+                }
+                const bool retryable = http_status == 0 || http_status == 429 || http_status >= 500;
+                return envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none");
+            }
+        }
+
+        json doc;
+        try {
+            doc = json::parse(body);
+        } catch (const json::exception& e) {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    std::string("GitHub returned non-JSON: ") + e.what()));
+        }
+        if (!doc.is_object()) {
+            return envelope_err(err(ErrorCode::invalid_argument, "GitHub returned a non-object JSON body"));
+        }
+        const auto tag = doc.value("tag_name", std::string{});
+        const auto html = doc.value("html_url", std::string{});
+        auto r = sxpe::core::evaluate_update(current, tag, html);
+        r.http_status = http_status;
+        fill_assets(r, doc);
+        return envelope_ok(to_json(std::move(r)));
     }
     if (cmd == "hash.fnv") {
         const auto text = args.at("text").get<std::string>();

@@ -54,6 +54,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `s3sa.wrap` | y | n | Stateless wrap |
 | `s3sa.view` | y | n | Export PE for external viewer; require `path` or `viewer`/`keepTemp`. Optional `viewer` `{path}` spawn. Never LoadLibrary. GUI: `ext/s3sa` + `keepTemp` |
 | `hash.fnv` | y | n | |
+| `app.checkUpdate` | y | n | GitHub `/releases/latest` vs this build; never downloads. Token via env/`gh`. |
 | `manifest` | y | n | tools/list |
 
 GUI-only (no MCP): `preview.float`, `ui.selectAll`, `ui.palette`.

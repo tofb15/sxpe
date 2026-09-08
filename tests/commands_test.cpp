@@ -81,6 +81,27 @@ int main() {
     auto h = bus.execute("hash.fnv", json{{"text", "a"}, {"width", 32}});
     CHECK(h["ok"] == true);
 
+    const json latest_fixture = {{"tag_name", "v0.7.0"},
+                                 {"html_url", "https://github.com/tofb15/sxpe/releases/tag/v0.7.0"},
+                                 {"assets", json::array({json{{"name", "sxpe-0.7.0-windows-x64.zip"}}})}};
+    auto upd = bus.execute("app.checkUpdate", json{{"currentVersion", "0.7.0"},
+                                                   {"latestJson", latest_fixture.dump()}});
+    CHECK(upd["ok"] == true);
+    CHECK(upd["data"]["status"] == "upToDate");
+    CHECK(upd["data"]["downloads"] == false);
+    CHECK(upd["data"]["tagName"] == "v0.7.0");
+    CHECK(upd["data"]["assets"].is_array());
+    CHECK(upd["data"]["assets"].size() == 1);
+
+    auto upd_new = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.6.0"},
+             {"latestJsonPath",
+              (std::filesystem::path(SXPE_SYNTHETIC_DIR) / "github-latest.json").string()}});
+    CHECK(upd_new["ok"] == true);
+    CHECK(upd_new["data"]["status"] == "newerAvailable");
+    CHECK(upd_new["data"]["downloads"] == false);
+
     auto np = bus.execute("package.new", json::object());
     CHECK(np["ok"] == true);
     const auto sid = np["data"]["sessionId"].get<std::string>();
