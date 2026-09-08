@@ -95,9 +95,9 @@ Large CC: SXPE refuses oversized jobs (`cap_exceeded`) instead of OOM. Step-by-s
 
 ## Check for update
 
-**Help → Check for update…**, CLI `sxpe app checkUpdate`, and MCP `app_checkUpdate` share `app.checkUpdate`. They GET `https://api.github.com/repos/tofb15/sxpe/releases/latest` and compare `tag_name` to this build. **Nothing is downloaded.**
+**Help → Check for update…**, CLI `sxpe app checkUpdate`, and MCP `app_checkUpdate` share `app.checkUpdate`. They GET `https://api.github.com/repos/tofb15/sxpe/releases/latest`, then the releases list, and compare the preferred `tag_name` to this build. **Nothing is downloaded.**
 
-If `/releases/latest` returns **404** (common when the newest tag is only a GitHub **pre-release** / Beta, because GitHub excludes prereleases from “latest”), SXPE falls back to listing recent releases and picks the newest **non-draft** tag, **including prereleases**.
+GitHub `/releases/latest` **ignores prereleases**. SXPE also lists recent releases and picks the newest **non-draft** tag by version (**including prereleases** / Beta). That list winner is preferred when it is newer than `/latest` (e.g. `v0.7.0` Beta while `/latest` is still `v0.6.0`). If `/latest` returns **404** (Beta-only tags), the list alone is used.
 
 | Result | Meaning |
 | --- | --- |

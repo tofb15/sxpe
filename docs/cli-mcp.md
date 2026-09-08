@@ -82,7 +82,7 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 | `resource.findRefs` / `resource.listRefs` | Inbound / outbound TGI references |
 | `s3sa.info` / `exportDll` / `importDll` / `view` | Script assembly wrapper (never LoadLibrary) |
 | `hash.fnv` | FNV helpers |
-| `app.checkUpdate` | Compare this build to GitHub Releases (falls back to list if `/latest` 404s on Beta prereleases); never downloads |
+| `app.checkUpdate` | Compare this build to GitHub Releases (prefers newer list/prerelease over `/latest`; list alone on 404); never downloads |
 | `undo` / `redo` | Session stack |
 
 Full table and flags: [spec/catalog.md](spec/catalog.md). Codec bytes: [spec/](spec/README.md).
