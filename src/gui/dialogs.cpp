@@ -24,6 +24,7 @@
 #include <QColor>
 #include <QImage>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -37,9 +38,11 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QGuiApplication>
+#include <QByteArray>
 #include <QClipboard>
 #include <QTextBrowser>
 #include <QTimer>
+#include <QEvent>
 #include <QEventLoop>
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -58,8 +61,17 @@ namespace sxpe::gui {
 
 void show_fnv_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("FNV-1 / CLIP"));
-    auto* form = new QFormLayout(&dlg);
+    dlg.setWindowTitle(QObject::tr("FNV-1 / CLIP hash"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* hint = new QLabel(QObject::tr(
+        "Type a name; hashes update live. TS3 catalog/instance hashing uses <b>lowercase FNV-1</b> "
+        "(not FNV-1a). Use 32-bit for many catalog fields, 64-bit for instances, and CLIP when the "
+        "name needs age-letter masks."));
+    hint->setWordWrap(true);
+    hint->setTextFormat(Qt::RichText);
+    lay->addWidget(hint);
+
+    auto* form = new QFormLayout;
     auto* text = new QLineEdit;
     auto* out32 = new QLineEdit;
     auto* out64 = new QLineEdit;
@@ -67,29 +79,102 @@ void show_fnv_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     out32->setReadOnly(true);
     out64->setReadOnly(true);
     outclip->setReadOnly(true);
+    out32->setPlaceholderText(QObject::tr("(empty text → blank)"));
+    out64->setPlaceholderText(QObject::tr("(empty text → blank)"));
+    outclip->setPlaceholderText(QObject::tr("(empty text → blank)"));
     form->addRow(QObject::tr("Text"), text);
-    form->addRow(QObject::tr("FNV-1 32"), out32);
-    form->addRow(QObject::tr("FNV-1 64"), out64);
-    form->addRow(QObject::tr("CLIP"), outclip);
+
+    auto* prefix = new QCheckBox(QObject::tr("Show 0x prefix"));
+    prefix->setChecked(true);
+    lay->addLayout(form);
+
+    auto make_row = [&](const QString& label, QLineEdit* field) {
+        auto* row = new QHBoxLayout;
+        row->addWidget(field, 1);
+        auto* copy = new QPushButton(QObject::tr("Copy"));
+        QObject::connect(copy, &QPushButton::clicked, &dlg, [field] {
+            if (auto* cb = QGuiApplication::clipboard()) {
+                cb->setText(field->text());
+            }
+        });
+        row->addWidget(copy);
+        form->addRow(label, row);
+        field->setCursor(Qt::PointingHandCursor);
+        QObject::connect(field, &QLineEdit::textChanged, &dlg, [field](const QString& s) {
+            field->setToolTip(s.isEmpty() ? QString() : QObject::tr("Click to copy"));
+        });
+        // Click-to-copy: select + copy on mouse release when read-only
+        field->installEventFilter(&dlg);
+    };
+    make_row(QObject::tr("FNV-1 32"), out32);
+    make_row(QObject::tr("FNV-1 64"), out64);
+    make_row(QObject::tr("CLIP"), outclip);
+    lay->addWidget(prefix);
+
+    auto* learn = new QLabel(QObject::tr(
+        "<a href=\"https://github.com/tofb15/sxpe/blob/dev/docs/spec/hashing.md\">"
+        "Learn more (docs/spec/hashing.md)</a>"));
+    learn->setOpenExternalLinks(true);
+    lay->addWidget(learn);
+
     auto run = [&] {
-        const auto s = text->text().toStdString();
-        auto a = bus.execute("hash.fnv", {{"text", s}, {"width", 32}});
-        auto b = bus.execute("hash.fnv", {{"text", s}, {"width", 64}});
-        auto c = bus.execute("hash.fnv", {{"text", s}, {"clip", true}});
-        auto fmt = [](const nlohmann::json& e) {
+        const auto s = text->text();
+        auto fmt = [&](const nlohmann::json& e, int width_hint) {
             if (!e.value("ok", false)) {
                 return QString();
             }
-            return QString::number(e["data"].value("value", 0ull), 16).toUpper();
+            const auto v = e["data"].value("value", 0ull);
+            QString hex = QString::number(v, 16).toUpper();
+            if (width_hint == 32) {
+                hex = hex.rightJustified(8, QLatin1Char('0'));
+            } else {
+                hex = hex.rightJustified(16, QLatin1Char('0'));
+            }
+            return prefix->isChecked() ? (QStringLiteral("0x") + hex) : hex;
         };
-        out32->setText(fmt(a));
-        out64->setText(fmt(b));
-        outclip->setText(fmt(c));
+        if (s.isEmpty()) {
+            out32->clear();
+            out64->clear();
+            outclip->clear();
+            return;
+        }
+        const auto stds = s.toStdString();
+        auto a = bus.execute("hash.fnv", {{"text", stds}, {"width", 32}});
+        auto b = bus.execute("hash.fnv", {{"text", stds}, {"width", 64}});
+        auto c = bus.execute("hash.fnv", {{"text", stds}, {"clip", true}});
+        out32->setText(fmt(a, 32));
+        out64->setText(fmt(b, 64));
+        outclip->setText(fmt(c, 64));
     };
     QObject::connect(text, &QLineEdit::textChanged, &dlg, run);
+    QObject::connect(prefix, &QCheckBox::toggled, &dlg, [&](bool) { run(); });
+
+    // Simple click-to-copy via mousePress on read-only fields
+    class ClickCopyFilter final : public QObject {
+    public:
+        explicit ClickCopyFilter(QObject* parent) : QObject(parent) {}
+        bool eventFilter(QObject* obj, QEvent* ev) override {
+            if (ev->type() == QEvent::MouseButtonRelease) {
+                if (auto* le = qobject_cast<QLineEdit*>(obj)) {
+                    if (le->isReadOnly() && !le->text().isEmpty()) {
+                        if (auto* cb = QGuiApplication::clipboard()) {
+                            cb->setText(le->text());
+                        }
+                    }
+                }
+            }
+            return QObject::eventFilter(obj, ev);
+        }
+    };
+    auto* filter = new ClickCopyFilter(&dlg);
+    out32->installEventFilter(filter);
+    out64->installEventFilter(filter);
+    outclip->installEventFilter(filter);
+
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    form->addRow(box);
+    lay->addWidget(box);
+    dlg.resize(520, 360);
     dlg.exec();
 }
 
@@ -156,30 +241,134 @@ void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QStrin
     dlg.exec();
 }
 
-void show_search_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session) {
+void show_search_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& select_hit) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Search"));
     auto* lay = new QVBoxLayout(&dlg);
+    auto* hint = new QLabel(QObject::tr(
+        "Searches <b>resource payloads</b> for text or hex (prefix <code>0x</code>). "
+        "This is not the resource-list filter box above the grid. Results are capped at 100 hits."));
+    hint->setWordWrap(true);
+    hint->setTextFormat(Qt::RichText);
+    lay->addWidget(hint);
+
     auto* text = new QLineEdit;
     text->setPlaceholderText(QObject::tr("Text or hex (prefix 0x)"));
-    auto* out = new QPlainTextEdit;
-    out->setReadOnly(true);
     auto* go = new QPushButton(QObject::tr("Search"));
-    lay->addWidget(text);
-    lay->addWidget(go);
-    lay->addWidget(out);
+    auto* row = new QHBoxLayout;
+    row->addWidget(text, 1);
+    row->addWidget(go);
+    lay->addLayout(row);
+
+    auto* status = new QLabel;
+    status->setWordWrap(true);
+    lay->addWidget(status);
+
+    auto* table = new QTableWidget(0, 6);
+    table->setHorizontalHeaderLabels({QObject::tr("Tag"), QObject::tr("Type"),
+                                      QObject::tr("Group"), QObject::tr("Instance"),
+                                      QObject::tr("Name"), QObject::tr("Offset")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    lay->addWidget(table, 1);
+
+    nlohmann::json last_env = nlohmann::json::object();
+
+    auto jump = [&] {
+        const auto rows = table->selectionModel() ? table->selectionModel()->selectedRows()
+                                                  : QModelIndexList{};
+        if (rows.isEmpty() || !select_hit) {
+            return;
+        }
+        const auto* item = table->item(rows.first().row(), 0);
+        if (!item) {
+            return;
+        }
+        select_hit(static_cast<std::uint32_t>(item->data(Qt::UserRole).toULongLong()),
+                   static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
+                   static_cast<std::uint64_t>(item->data(Qt::UserRole + 2).toULongLong()),
+                   static_cast<std::uint32_t>(item->data(Qt::UserRole + 3).toULongLong()));
+        dlg.accept();
+    };
+
     QObject::connect(go, &QPushButton::clicked, &dlg, [&] {
-        nlohmann::json args{{"sessionId", session.toStdString()}, {"limit", 100}};
+        table->setRowCount(0);
+        last_env = nlohmann::json::object();
         const auto s = text->text().trimmed();
-        if (s.startsWith("0x")) {
+        if (s.isEmpty()) {
+            status->setText(QObject::tr("Enter text or hex to search."));
+            return;
+        }
+        nlohmann::json args{{"sessionId", session.toStdString()}, {"limit", 100}};
+        if (s.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)) {
             args["hex"] = s.mid(2).toStdString();
         } else {
             args["text"] = s.toStdString();
         }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
         auto env = bus.execute("search.bytes", args);
-        out->setPlainText(QString::fromStdString(env.dump(2)));
+        QApplication::restoreOverrideCursor();
+        last_env = env;
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Search failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            status->setText(msg);
+            return;
+        }
+        const auto& hits = env["data"].value("hits", nlohmann::json::array());
+        if (!hits.is_array() || hits.empty()) {
+            status->setText(QObject::tr("No hits (cap 100). Try a shorter needle or hex pattern."));
+            return;
+        }
+        status->setText(QObject::tr("%1 hit(s) (cap 100). Double-click or Jump to select.")
+                            .arg(static_cast<int>(hits.size())));
+        for (const auto& h : hits) {
+            const int r = table->rowCount();
+            table->insertRow(r);
+            auto put = [&](int c, const QString& s) {
+                auto* item = new QTableWidgetItem(s);
+                item->setData(Qt::UserRole, static_cast<qulonglong>(h.value("type", 0u)));
+                item->setData(Qt::UserRole + 1, static_cast<qulonglong>(h.value("group", 0u)));
+                item->setData(Qt::UserRole + 2,
+                              static_cast<qulonglong>(h.value("instance", 0ull)));
+                item->setData(Qt::UserRole + 3, static_cast<qulonglong>(h.value("ordinal", 0u)));
+                table->setItem(r, c, item);
+            };
+            put(0, QString::fromStdString(h.value("tag", "")));
+            put(1, QString::fromStdString(
+                       h.value("typeHex", std::to_string(h.value("type", 0u)))));
+            put(2, QString::fromStdString(
+                       h.value("groupHex", std::to_string(h.value("group", 0u)))));
+            put(3, QString::fromStdString(
+                       h.value("instanceHex", std::to_string(h.value("instance", 0ull)))));
+            put(4, QString::fromStdString(h.value("name", "")));
+            put(5, QString::number(h.value("offset", 0)));
+        }
     });
-    dlg.resize(480, 320);
+    QObject::connect(text, &QLineEdit::returnPressed, go, &QPushButton::click);
+    QObject::connect(table, &QTableWidget::cellDoubleClicked, &dlg, [&](int, int) { jump(); });
+
+    auto* box = new QDialogButtonBox;
+    auto* jump_btn = box->addButton(QObject::tr("Jump"), QDialogButtonBox::ActionRole);
+    auto* copy = box->addButton(QObject::tr("Copy JSON"), QDialogButtonBox::ActionRole);
+    box->addButton(QDialogButtonBox::Close);
+    QObject::connect(jump_btn, &QPushButton::clicked, &dlg, jump);
+    QObject::connect(copy, &QPushButton::clicked, &dlg, [&] {
+        if (auto* cb = QGuiApplication::clipboard()) {
+            cb->setText(QString::fromStdString(last_env.dump(2)));
+        }
+    });
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+    dlg.resize(720, 420);
     dlg.exec();
 }
 
@@ -1454,7 +1643,8 @@ void show_contents_dialog(QWidget* parent) {
         "<h2>SXPE</h2>"
         "<p>SXPE edits Sims 3 DBPF packages (.package, .world, .dbc, .nhd).</p>"
         "<h3>File</h3>"
-        "<p>New, open (read-write or read-only), open Sims3Pack, save / save as / save copy as, close, "
+        "<p>New, open (read-write or read-only), <b>Open Sims3Pack…</b> (inspect/extract — same as "
+        "Tools → Inspect Sims3Pack…; does not open as a package tab), save / save as / save copy as, close, "
         "recent files, bookmarks, exit.</p>"
         "<ul>"
         "<li><b>New</b> — Ctrl+N</li>"
@@ -1495,19 +1685,40 @@ void show_contents_dialog(QWidget* parent) {
         "reorder, compact, create NMAP. Error and Validate text name "
         "“neighborhood / world layout lock”.</p>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), inspect Sims3Pack, "
-        "create Sims3Pack (limited packer), "
-        "<b>Merge packages…</b> (Merge assistant: folder → preview → SXMM merge → optional validate), "
-        "un-merge package, byte search, validate (conflict hotspots), compact / save.</p>"
+        "<p>Grouped for everyday package work first; specialist calculators last.</p>"
+        "<h4>Package</h4>"
         "<ul>"
-        "<li><b>Search…</b> — Ctrl+F</li>"
+        "<li><b>Merge packages…</b> — Merge assistant: folder or files → preview count/size → SXMM merge → "
+        "optional validate. Save As when done.</li>"
+        "<li><b>Un-merge package…</b> — Split an SXPE merge that still has an SXMM manifest.</li>"
+        "<li><b>Compare packages…</b> — Diff two saved packages (A-only / B-only / payload differs).</li>"
+        "<li><b>Validate package…</b> — Conflict hotspots (leftover Sims3Pack manifests / duplicate TGIs), "
+        "DIR, layout lock. Needs an open package.</li>"
+        "<li><b>Compact package…</b> — Rewrite the file, dropping session-deleted resources. Same write path "
+        "as File → Save on a normal .package; refused on .nhd/.world/.dbc.</li>"
+        "</ul>"
+        "<h4>Folder / pack</h4>"
+        "<ul>"
+        "<li><b>Scan folder…</b> — Read-only Downloads/Mods hygiene. Never deletes.</li>"
+        "<li><b>Inspect Sims3Pack…</b> — Same dialog as File → Open Sims3Pack… (list / extract; not a package tab).</li>"
+        "<li><b>Create Sims3Pack…</b> — Limited packer (CRC zeros; no Store/DRM).</li>"
+        "</ul>"
+        "<h4>Resource</h4>"
+        "<ul>"
+        "<li><b>Find references…</b> — Who points at the selected resource (also on the resource context menu).</li>"
+        "<li><b>Search…</b> — Ctrl+F. Byte search inside payloads (not the resource-list filter).</li>"
+        "</ul>"
+        "<h4>Hash</h4>"
+        "<ul>"
+        "<li><b>FNV-1 / CLIP hash…</b> — Live FNV-1 32/64 and CLIP calculator (lowercase FNV-1, not FNV-1a).</li>"
         "</ul>"
         "<h3>Settings</h3>"
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
         "built-in handlers (first-party only; plugins permanently unsupported), external programs (hex/text/S3SA viewer — not DLL plugins), save settings.</p>"
         "<h3>Help</h3>"
-        "<p>Contents (this window), <b>Common tasks</b> (links to workflows.md), "
-        "Check for update (GitHub Releases; never auto-downloads), About, Warranty, Licence.</p>"
+        "<p>Contents (this window), <b>Welcome</b>, <b>Common tasks</b> (links to workflows.md), "
+        "Check for update (GitHub Releases; never auto-downloads), "
+        "<b>Feedback</b> (GitHub Issues), About, Warranty, Licence.</p>"
         "<h3>Context menus</h3>"
         "<p>Right-click the resource list for Resource actions. Right-click a package tab "
         "to save, close (this / others / left / right), or bookmark. Right-click column "
@@ -1520,15 +1731,19 @@ void show_contents_dialog(QWidget* parent) {
     dlg.exec();
 }
 
-void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope) {
+void show_validate_dialog(
+    QWidget* parent, const nlohmann::json& envelope,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& jump_hit) {
     QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("Validate"));
+    dlg.setWindowTitle(QObject::tr("Validate package"));
     auto* lay = new QVBoxLayout(&dlg);
     auto* summary = new QPlainTextEdit;
     summary->setReadOnly(true);
     summary->setLineWrapMode(QPlainTextEdit::WidgetWidth);
 
     QStringList lines;
+    nlohmann::json hotspots = nlohmann::json::array();
     if (!envelope.value("ok", false)) {
         QString msg = QObject::tr("Command failed.");
         if (envelope.contains("error") && envelope["error"].is_object()) {
@@ -1548,6 +1763,12 @@ void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope) {
         const auto& data = envelope.contains("data") && envelope["data"].is_object()
                                ? envelope["data"]
                                : envelope;
+        if (data.value("layoutLocked", false)) {
+            dlg.setWindowTitle(QObject::tr("Validate package (layout lock)"));
+        }
+        if (data.contains("conflictHotspots") && data["conflictHotspots"].is_array()) {
+            hotspots = data["conflictHotspots"];
+        }
         if (data.contains("summary") && data["summary"].is_array() && !data["summary"].empty()) {
             for (const auto& line : data["summary"]) {
                 if (line.is_string()) {
@@ -1619,33 +1840,134 @@ void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope) {
             }
         }
     }
-    summary->setPlainText(lines.join(QLatin1Char('\n')));
+    const QString report_text = lines.join(QLatin1Char('\n'));
+    summary->setPlainText(report_text);
     lay->addWidget(summary, 1);
 
+    auto* hot_label = new QLabel(QObject::tr("Conflict hotspots (double-click or Jump):"));
+    auto* hot_table = new QTableWidget(0, 5);
+    hot_table->setHorizontalHeaderLabels({QObject::tr("Kind"), QObject::tr("Type"),
+                                          QObject::tr("Group"), QObject::tr("Instance"),
+                                          QObject::tr("Reason")});
+    hot_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    hot_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    hot_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    hot_table->horizontalHeader()->setStretchLastSection(true);
+    hot_table->verticalHeader()->setVisible(false);
+    hot_table->setMaximumHeight(160);
+    bool any_jumpable = false;
+    if (hotspots.is_array()) {
+        for (const auto& h : hotspots) {
+            const int r = hot_table->rowCount();
+            hot_table->insertRow(r);
+            const bool has_tgi = h.contains("type") || h.contains("typeHex");
+            auto put = [&](int c, const QString& s) {
+                auto* item = new QTableWidgetItem(s);
+                if (has_tgi) {
+                    item->setData(Qt::UserRole, static_cast<qulonglong>(h.value("type", 0u)));
+                    item->setData(Qt::UserRole + 1, static_cast<qulonglong>(h.value("group", 0u)));
+                    item->setData(Qt::UserRole + 2,
+                                  static_cast<qulonglong>(h.value("instance", 0ull)));
+                    item->setData(Qt::UserRole + 3,
+                                  static_cast<qulonglong>(h.value("ordinal", 0u)));
+                    item->setData(Qt::UserRole + 4, true);
+                } else {
+                    item->setData(Qt::UserRole + 4, false);
+                }
+                hot_table->setItem(r, c, item);
+            };
+            put(0, QString::fromStdString(h.value("kind", "")));
+            put(1, QString::fromStdString(
+                       h.value("typeHex", h.contains("type") ? std::to_string(h.value("type", 0u))
+                                                             : std::string{})));
+            put(2, QString::fromStdString(
+                       h.value("groupHex", h.contains("group") ? std::to_string(h.value("group", 0u))
+                                                               : std::string{})));
+            put(3, QString::fromStdString(h.value(
+                       "instanceHex",
+                       h.contains("instance") ? std::to_string(h.value("instance", 0ull))
+                                              : std::string{})));
+            put(4, QString::fromStdString(h.value("reason", "")));
+            if (has_tgi) {
+                any_jumpable = true;
+            }
+        }
+    }
+    if (hot_table->rowCount() > 0) {
+        lay->addWidget(hot_label);
+        lay->addWidget(hot_table);
+    }
+
+    auto jump = [&] {
+        if (!jump_hit) {
+            return;
+        }
+        const auto rows = hot_table->selectionModel() ? hot_table->selectionModel()->selectedRows()
+                                                      : QModelIndexList{};
+        if (rows.isEmpty()) {
+            return;
+        }
+        const auto* item = hot_table->item(rows.first().row(), 0);
+        if (!item || !item->data(Qt::UserRole + 4).toBool()) {
+            return;
+        }
+        jump_hit(static_cast<std::uint32_t>(item->data(Qt::UserRole).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
+                 static_cast<std::uint64_t>(item->data(Qt::UserRole + 2).toULongLong()),
+                 static_cast<std::uint32_t>(item->data(Qt::UserRole + 3).toULongLong()));
+        dlg.accept();
+    };
+    QObject::connect(hot_table, &QTableWidget::cellDoubleClicked, &dlg, [&](int, int) { jump(); });
+
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto* copy_report = box->addButton(QObject::tr("Copy report"), QDialogButtonBox::ActionRole);
     auto* copy = box->addButton(QObject::tr("Copy JSON"), QDialogButtonBox::ActionRole);
+    auto* jump_btn = box->addButton(QObject::tr("Jump"), QDialogButtonBox::ActionRole);
+    jump_btn->setEnabled(any_jumpable && static_cast<bool>(jump_hit));
+    QObject::connect(copy_report, &QPushButton::clicked, &dlg, [report_text] {
+        if (auto* cb = QGuiApplication::clipboard()) {
+            cb->setText(report_text);
+        }
+    });
     QObject::connect(copy, &QPushButton::clicked, &dlg, [envelope] {
         if (auto* cb = QGuiApplication::clipboard()) {
             cb->setText(QString::fromStdString(envelope.dump(2)));
         }
     });
+    QObject::connect(jump_btn, &QPushButton::clicked, &dlg, jump);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     lay->addWidget(box);
-    dlg.resize(520, 360);
+    dlg.resize(560, 440);
     dlg.exec();
 }
 
 void show_package_diff_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,
     const std::function<void(const QString& path, std::uint32_t type, std::uint32_t group,
-                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit) {
+                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit,
+    const QString& prefill_a, bool prefill_needs_save) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Compare packages"));
     auto* lay = new QVBoxLayout(&dlg);
 
+    if (prefill_needs_save) {
+        auto* save_hint = new QLabel(QObject::tr(
+            "The current tab is untitled or has unsaved changes. Compare works on <b>saved files</b> — "
+            "Save / Save As first, then browse or re-open this dialog to prefill Package A."));
+        save_hint->setWordWrap(true);
+        save_hint->setTextFormat(Qt::RichText);
+        lay->addWidget(save_hint);
+    }
+
     auto* form = new QFormLayout;
     auto* path_a = new QLineEdit;
     auto* path_b = new QLineEdit;
+    if (!prefill_a.isEmpty() && !prefill_needs_save) {
+        path_a->setText(prefill_a);
+    } else if (!prefill_a.isEmpty() && prefill_needs_save) {
+        // Still show the path as a hint of what will become A after save.
+        path_a->setPlaceholderText(prefill_a);
+    }
     auto* browse_a = new QPushButton(QObject::tr("Browse…"));
     auto* browse_b = new QPushButton(QObject::tr("Browse…"));
     auto* row_a = new QHBoxLayout;
@@ -1674,9 +1996,23 @@ void show_package_diff_dialog(
     table->verticalHeader()->setVisible(false);
     lay->addWidget(table, 1);
 
+    auto* filter_row = new QHBoxLayout;
+    auto* show_a = new QCheckBox(QObject::tr("A only"));
+    auto* show_b = new QCheckBox(QObject::tr("B only"));
+    auto* show_diff = new QCheckBox(QObject::tr("Different"));
+    show_a->setChecked(true);
+    show_b->setChecked(true);
+    show_diff->setChecked(true);
+    filter_row->addWidget(new QLabel(QObject::tr("Show:")));
+    filter_row->addWidget(show_a);
+    filter_row->addWidget(show_b);
+    filter_row->addWidget(show_diff);
+    filter_row->addStretch(1);
+    lay->addLayout(filter_row);
+
     auto* hint = new QLabel(
-        QObject::tr("Double-click a row (or Open selected) to open that package and select the "
-                    "resource. Payload equality uses SHA-256 of uncompressed bytes."));
+        QObject::tr("Double-click a row to open that side (for Different rows you choose A or B). "
+                    "Payload equality uses SHA-256 of uncompressed bytes."));
     hint->setWordWrap(true);
     lay->addWidget(hint);
 
@@ -1755,7 +2091,48 @@ void show_package_diff_dialog(
         add_rows("A only", data.value("onlyInA", nlohmann::json::array()), "onlyA");
         add_rows("B only", data.value("onlyInB", nlohmann::json::array()), "onlyB");
         add_rows("Different", data.value("different", nlohmann::json::array()), "different");
+        auto apply_filter = [&] {
+            for (int r = 0; r < table->rowCount(); ++r) {
+                const auto* item = table->item(r, 0);
+                if (!item) {
+                    continue;
+                }
+                const auto side = item->data(Qt::UserRole).toString();
+                bool show = true;
+                if (side.startsWith(QLatin1String("A"))) {
+                    show = show_a->isChecked();
+                } else if (side.startsWith(QLatin1String("B"))) {
+                    show = show_b->isChecked();
+                } else if (side.startsWith(QLatin1String("Different"))) {
+                    show = show_diff->isChecked();
+                }
+                table->setRowHidden(r, !show);
+            }
+        };
+        apply_filter();
     };
+
+    auto apply_filter_btn = [&] {
+        for (int r = 0; r < table->rowCount(); ++r) {
+            const auto* item = table->item(r, 0);
+            if (!item) {
+                continue;
+            }
+            const auto side = item->data(Qt::UserRole).toString();
+            bool show = true;
+            if (side.startsWith(QLatin1String("A"))) {
+                show = show_a->isChecked();
+            } else if (side.startsWith(QLatin1String("B"))) {
+                show = show_b->isChecked();
+            } else if (side.startsWith(QLatin1String("Different"))) {
+                show = show_diff->isChecked();
+            }
+            table->setRowHidden(r, !show);
+        }
+    };
+    QObject::connect(show_a, &QCheckBox::toggled, &dlg, [&](bool) { apply_filter_btn(); });
+    QObject::connect(show_b, &QCheckBox::toggled, &dlg, [&](bool) { apply_filter_btn(); });
+    QObject::connect(show_diff, &QCheckBox::toggled, &dlg, [&](bool) { apply_filter_btn(); });
 
     auto run_diff = [&] {
         const auto a = path_a->text().trimmed();
@@ -1786,10 +2163,21 @@ void show_package_diff_dialog(
         QString path = last_a;
         if (side.startsWith(QLatin1String("B"))) {
             path = last_b;
-        }
-        // "Different" → open A by default (user can open B via context if needed)
-        if (side.startsWith(QLatin1String("Different"))) {
-            path = last_a;
+        } else if (side.startsWith(QLatin1String("Different"))) {
+            QMessageBox box(&dlg);
+            box.setWindowTitle(QObject::tr("Compare packages"));
+            box.setText(QObject::tr("This resource differs in A and B. Open which side?"));
+            auto* a_btn = box.addButton(QObject::tr("Open in A"), QMessageBox::AcceptRole);
+            auto* b_btn = box.addButton(QObject::tr("Open in B"), QMessageBox::ActionRole);
+            box.addButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() == a_btn) {
+                path = last_a;
+            } else if (box.clickedButton() == b_btn) {
+                path = last_b;
+            } else {
+                return;
+            }
         }
         open_hit(path, static_cast<std::uint32_t>(item->data(Qt::UserRole + 1).toULongLong()),
                  static_cast<std::uint32_t>(item->data(Qt::UserRole + 2).toULongLong()),
@@ -1868,11 +2256,23 @@ void show_package_diff_dialog(
 void show_find_refs_dialog(
     QWidget* parent, sxpe::commands::Bus& bus, const QString& session, std::uint32_t type,
     std::uint32_t group, std::uint64_t instance, std::uint32_t ordinal,
+    const QString& resource_name,
     const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal)>& select_hit) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Find references"));
     auto* lay = new QVBoxLayout(&dlg);
+
+    const auto tgi_line =
+        QObject::tr("Target: %1  %2  %3  %4")
+            .arg(QStringLiteral("0x%1").arg(type, 8, 16, QLatin1Char('0')).toUpper())
+            .arg(QStringLiteral("0x%1").arg(group, 8, 16, QLatin1Char('0')).toUpper())
+            .arg(QStringLiteral("0x%1").arg(instance, 16, 16, QLatin1Char('0')).toUpper())
+            .arg(resource_name.isEmpty() ? QObject::tr("(unnamed)") : resource_name);
+    auto* header = new QLabel(tgi_line);
+    header->setWordWrap(true);
+    header->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    lay->addWidget(header);
 
     auto* summary = new QPlainTextEdit;
     summary->setReadOnly(true);
@@ -1888,7 +2288,8 @@ void show_find_refs_dialog(
     mode_row->addStretch(1);
     lay->addLayout(mode_row);
 
-    auto* byte_scan = new QCheckBox(QObject::tr("Also byte-scan payloads (slow, capped)"));
+    auto* byte_scan = new QCheckBox(
+        QObject::tr("Also byte-scan other payloads for this TGI (slow, capped; beyond REFS/OBJK/VPXY)"));
     lay->addWidget(byte_scan);
 
     auto* table = new QTableWidget(0, 6);
@@ -1903,8 +2304,10 @@ void show_find_refs_dialog(
     lay->addWidget(table, 1);
 
     auto* hint = new QLabel(
-        QObject::tr("Double-click a row (or Jump) to select that resource. Inbound scans REFS and "
-                    "OBJK/VPXY TGI lists; optional byte-scan covers other payloads."));
+        QObject::tr("Double-click a row (or Jump) to select that resource. Inbound: who points here "
+                    "(REFS / OBJK / VPXY, optional byte-scan). Outbound: what this resource lists — "
+                    "empty if the type is not a REFS/OBJK/VPXY/CASP-style table. Also available from "
+                    "the resource context menu."));
     hint->setWordWrap(true);
     lay->addWidget(hint);
 
@@ -1959,6 +2362,15 @@ void show_find_refs_dialog(
                        src.value("instanceHex", std::to_string(src.value("instance", 0ull)))));
             put(4, QString::number(static_cast<qulonglong>(src.value("ordinal", 0u))));
             put(5, QString::fromStdString(h.value("reason", "")));
+        }
+        if (table->rowCount() == 0) {
+            if (mode_outbound->isChecked()) {
+                lines << QObject::tr(
+                    "No outbound refs. This type may not be a REFS/OBJK/VPXY/CASP-style table.");
+            } else {
+                lines << QObject::tr("No inbound references found.");
+            }
+            summary->setPlainText(lines.join(QLatin1Char('\n')));
         }
     };
 
@@ -2032,6 +2444,8 @@ void show_folder_scan_dialog(
 
     auto* form = new QFormLayout;
     auto* path_edit = new QLineEdit;
+    QSettings scan_st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+    path_edit->setText(scan_st.value(QStringLiteral("tools/scanFolderLastPath")).toString());
     auto* browse = new QPushButton(QObject::tr("Browse…"));
     auto* row = new QHBoxLayout;
     row->addWidget(path_edit, 1);
@@ -2153,10 +2567,45 @@ void show_folder_scan_dialog(
                                  QObject::tr("Choose a folder to scan."));
             return;
         }
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        auto env = bus.execute("folder.scan", {{"path", p.toStdString()}});
-        QApplication::restoreOverrideCursor();
+        QSettings(QStringLiteral("SXPE"), QStringLiteral("SXPE"))
+            .setValue(QStringLiteral("tools/scanFolderLastPath"), p);
+
+        QProgressDialog progress(QObject::tr("Scanning folder…"), QObject::tr("Cancel"), 0, 0,
+                                 &dlg);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.setMinimumDuration(0);
+        progress.setValue(0);
+        progress.setLabelText(QObject::tr("Scanning %1").arg(p));
+        bus.clear_cancel();
+        bus.set_cancel_check([&] { return progress.wasCanceled(); });
+        bus.set_progress_handler([&](const nlohmann::json& ev) {
+            const auto phase = QString::fromStdString(ev.value("phase", std::string{}));
+            const auto done = ev.value("filesScanned", 0);
+            if (phase == QLatin1String("start")) {
+                progress.setLabelText(QObject::tr("Starting scan…"));
+            } else if (phase == QLatin1String("done") || phase == QLatin1String("cancelled")) {
+                progress.setLabelText(QObject::tr("Finishing… (%1 file(s))").arg(done));
+            } else {
+                progress.setLabelText(QObject::tr("Scanned %1 package(s)…").arg(done));
+            }
+            QApplication::processEvents();
+        });
+        auto env = bus.execute("folder.scan",
+                               {{"path", p.toStdString()}, {"reportProgress", true}});
+        bus.clear_progress_handler();
+        bus.clear_cancel_check();
+        bus.clear_cancel();
+        progress.reset();
+        if (env.contains("data") && env["data"].value("cancelled", false)) {
+            QMessageBox::information(&dlg, QObject::tr("Scan folder"),
+                                     QObject::tr("Scan cancelled."));
+        }
         fill(env);
+        if (env.value("ok", false) && table->rowCount() == 0) {
+            summary->appendPlainText(
+                QObject::tr("\nNo issues or duplicate TGIs in the sample. "
+                            "Scan is read-only and never deletes."));
+        }
     };
 
     auto open_selected = [&] {
@@ -2387,9 +2836,20 @@ void show_sims3pack_dialog(
 
 void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("Create Sims3Pack"));
-    dlg.resize(640, 420);
+    dlg.setWindowTitle(QObject::tr("Create Sims3Pack (limited)"));
+    dlg.resize(680, 520);
     auto* lay = new QVBoxLayout(&dlg);
+
+    auto* limits = new QLabel(QObject::tr(
+        "<b>Limited packer — not for Store upload.</b><br/>"
+        "• Packs non-recursive <code>*.package</code> files from one folder only.<br/>"
+        "• CRC values are <b>placeholder zeros</b> (algorithm unknown).<br/>"
+        "• No Store / DRM / DBPP support.<br/>"
+        "Use Tools → Inspect Sims3Pack… to verify a pack you create."));
+    limits->setWordWrap(true);
+    limits->setTextFormat(Qt::RichText);
+    limits->setStyleSheet(QStringLiteral("QLabel { background: #fff3cd; padding: 8px; }"));
+    lay->addWidget(limits);
 
     auto* form = new QFormLayout;
     auto* source_edit = new QLineEdit;
@@ -2410,20 +2870,44 @@ void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     form->addRow(QObject::tr("Display name"), display);
     auto* description = new QLineEdit;
     form->addRow(QObject::tr("Description"), description);
-    auto* package_id = new QLineEdit;
-    form->addRow(QObject::tr("Package id"), package_id);
-    auto* package_type = new QLineEdit(QStringLiteral("Object"));
-    form->addRow(QObject::tr("Type"), package_type);
-    auto* package_subtype = new QLineEdit(QStringLiteral("0x00000000"));
-    form->addRow(QObject::tr("SubType"), package_subtype);
     lay->addLayout(form);
 
-    auto* hint = new QLabel(
-        QObject::tr("Limited TS3Pack authoring: packs non-recursive *.package files from the "
-                    "source folder. No Store upload, DRM, or DBPP. CRC values are placeholder "
-                    "zeros (algorithm unknown)."));
-    hint->setWordWrap(true);
-    lay->addWidget(hint);
+    auto* preview = new QListWidget;
+    preview->setMinimumHeight(100);
+    preview->setSelectionMode(QAbstractItemView::NoSelection);
+    lay->addWidget(new QLabel(QObject::tr("Packages that will be packed (non-recursive):")));
+    lay->addWidget(preview, 1);
+
+    auto* advanced = new QGroupBox(QObject::tr("Advanced (optional)"));
+    advanced->setCheckable(true);
+    advanced->setChecked(false);
+    auto* adv_form = new QFormLayout(advanced);
+    auto* package_id = new QLineEdit;
+    adv_form->addRow(QObject::tr("Package id"), package_id);
+    auto* package_type = new QLineEdit(QStringLiteral("Object"));
+    adv_form->addRow(QObject::tr("Type"), package_type);
+    auto* package_subtype = new QLineEdit(QStringLiteral("0x00000000"));
+    adv_form->addRow(QObject::tr("SubType"), package_subtype);
+    lay->addWidget(advanced);
+
+    auto refresh_preview = [&] {
+        preview->clear();
+        const auto src = source_edit->text().trimmed();
+        if (src.isEmpty() || !QDir(src).exists()) {
+            return;
+        }
+        QDir dir(src);
+        const auto files = dir.entryList({QStringLiteral("*.package")}, QDir::Files, QDir::Name);
+        for (const auto& f : files) {
+            preview->addItem(dir.absoluteFilePath(f));
+        }
+        if (files.isEmpty()) {
+            preview->addItem(QObject::tr("(no *.package files in this folder)"));
+        }
+        if (display->text().trimmed().isEmpty()) {
+            display->setPlaceholderText(QFileInfo(src).fileName());
+        }
+    };
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Cancel);
     auto* create = box->addButton(QObject::tr("Create"), QDialogButtonBox::AcceptRole);
@@ -2433,8 +2917,10 @@ void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
         const auto d = QFileDialog::getExistingDirectory(&dlg, QObject::tr("Choose package folder"));
         if (!d.isEmpty()) {
             source_edit->setText(d);
+            refresh_preview();
         }
     });
+    QObject::connect(source_edit, &QLineEdit::editingFinished, &dlg, refresh_preview);
     QObject::connect(out_browse, &QPushButton::clicked, &dlg, [&] {
         const auto p = QFileDialog::getSaveFileName(
             &dlg, QObject::tr("Save Sims3Pack"), {},
@@ -2452,23 +2938,37 @@ void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
                                  QObject::tr("Choose a source folder and output path."));
             return;
         }
+        refresh_preview();
+        if (preview->count() == 0 ||
+            (preview->count() == 1 &&
+             preview->item(0)->text().startsWith(QLatin1Char('(')))) {
+            QMessageBox::warning(&dlg, QObject::tr("Create Sims3Pack"),
+                                 QObject::tr("No *.package files found in that folder."));
+            return;
+        }
         nlohmann::json args{{"path", out.toStdString()},
                             {"sourceDir", src.toStdString()},
                             {"force", true}};
-        if (!display->text().trimmed().isEmpty()) {
-            args["displayName"] = display->text().trimmed().toStdString();
+        auto disp = display->text().trimmed();
+        if (disp.isEmpty()) {
+            disp = QFileInfo(src).fileName();
+        }
+        if (!disp.isEmpty()) {
+            args["displayName"] = disp.toStdString();
         }
         if (!description->text().trimmed().isEmpty()) {
             args["description"] = description->text().trimmed().toStdString();
         }
-        if (!package_id->text().trimmed().isEmpty()) {
-            args["packageId"] = package_id->text().trimmed().toStdString();
-        }
-        if (!package_type->text().trimmed().isEmpty()) {
-            args["packageType"] = package_type->text().trimmed().toStdString();
-        }
-        if (!package_subtype->text().trimmed().isEmpty()) {
-            args["packageSubType"] = package_subtype->text().trimmed().toStdString();
+        if (advanced->isChecked()) {
+            if (!package_id->text().trimmed().isEmpty()) {
+                args["packageId"] = package_id->text().trimmed().toStdString();
+            }
+            if (!package_type->text().trimmed().isEmpty()) {
+                args["packageType"] = package_type->text().trimmed().toStdString();
+            }
+            if (!package_subtype->text().trimmed().isEmpty()) {
+                args["packageSubType"] = package_subtype->text().trimmed().toStdString();
+            }
         }
         auto env = bus.execute("sims3pack.pack", args);
         if (!env.value("ok", false)) {
@@ -2484,7 +2984,10 @@ void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
         const auto count = env["data"].value("entryCount", 0u);
         QMessageBox::information(
             &dlg, QObject::tr("Create Sims3Pack"),
-            QObject::tr("Wrote %1 entry(ies) to:\n%2").arg(count).arg(written));
+            QObject::tr("Wrote %1 entry(ies) to:\\n%2\\n\\n"
+                        "CRC values are placeholder zeros — not for Store upload.")
+                .arg(count)
+                .arg(written));
         dlg.accept();
     });
 
@@ -2681,6 +3184,188 @@ qint64 total_size_of(const QStringList& paths) {
 
 }  // namespace
 
+void show_unmerge_assistant_dialog(QWidget* parent, sxpe::commands::Bus& bus,
+                                   const QString& prefill_path) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Un-merge package"));
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* intro = new QLabel(QObject::tr(
+        "Split an SXPE merge back into its source packages.<br/>"
+        "<b>Only packages SXPE merged</b> (with an <b>SXMM</b> manifest) can be un-merged. "
+        "Merges from s3pe or other tools are refused."));
+    intro->setWordWrap(true);
+    intro->setTextFormat(Qt::RichText);
+    lay->addWidget(intro);
+
+    auto* form = new QFormLayout;
+    auto* path_edit = new QLineEdit(prefill_path);
+    auto* browse = new QPushButton(QObject::tr("Browse…"));
+    auto* path_row = new QHBoxLayout;
+    path_row->addWidget(path_edit, 1);
+    path_row->addWidget(browse);
+    form->addRow(QObject::tr("Merged package"), path_row);
+
+    auto* out_edit = new QLineEdit;
+    auto* out_browse = new QPushButton(QObject::tr("Browse…"));
+    auto* out_row = new QHBoxLayout;
+    out_row->addWidget(out_edit, 1);
+    out_row->addWidget(out_browse);
+    form->addRow(QObject::tr("Output folder"), out_row);
+    lay->addLayout(form);
+
+    auto* preview = new QLabel(QObject::tr("Choose a package to preview the SXMM manifest."));
+    preview->setWordWrap(true);
+    preview->setTextFormat(Qt::RichText);
+    lay->addWidget(preview);
+
+    auto* list = new QListWidget;
+    list->setSelectionMode(QAbstractItemView::NoSelection);
+    list->setMinimumHeight(120);
+    lay->addWidget(list, 1);
+
+    auto* overwrite = new QLabel(QObject::tr(
+        "Un-merge uses <code>force</code>: existing files in the output folder with the same "
+        "names may be overwritten (or get a numeric suffix if the bus renames)."));
+    overwrite->setWordWrap(true);
+    overwrite->setTextFormat(Qt::RichText);
+    lay->addWidget(overwrite);
+
+    auto refresh_preview = [&] {
+        list->clear();
+        const auto path = path_edit->text().trimmed();
+        if (path.isEmpty()) {
+            preview->setText(QObject::tr("Choose a package to preview the SXMM manifest."));
+            return;
+        }
+        auto opened = bus.execute("package.open", {{"path", path.toStdString()}});
+        if (!opened.value("ok", false)) {
+            QString msg = QObject::tr("Could not open package.");
+            if (opened.contains("error") && opened["error"].is_object()) {
+                msg = QString::fromStdString(
+                    opened["error"].value("message", msg.toStdString()));
+            }
+            preview->setText(msg);
+            return;
+        }
+        const auto sid = QString::fromStdString(opened["data"].value("sessionId", std::string{}));
+        auto listed = bus.execute(
+            "resource.list",
+            {{"sessionId", sid.toStdString()},
+             {"filter", {{"tag", "SXMM"}}},
+             {"limit", 1}});
+        if (!listed.value("ok", false) || !listed["data"].contains("items") ||
+            listed["data"]["items"].empty()) {
+            preview->setText(QObject::tr(
+                "<span style=\"color:#a60;\"><b>No SXMM manifest</b> — this is not an SXPE merge. "
+                "Use Tools → Merge packages… to create SXMM merges.</span>"));
+            bus.execute("package.close", {{"sessionId", sid.toStdString()}});
+            return;
+        }
+        const auto& item = listed["data"]["items"][0];
+        auto read = bus.execute(
+            "resource.read",
+            {{"sessionId", sid.toStdString()},
+             {"resourceId",
+              {{"type", item.value("type", 0u)},
+               {"group", item.value("group", 0u)},
+               {"instance", item.value("instance", 0ull)},
+               {"ordinal", item.value("ordinal", 0u)}}},
+             {"includePayload", true},
+             {"maxBytes", 1 << 20}});
+        bus.execute("package.close", {{"sessionId", sid.toStdString()}});
+        if (!read.value("ok", false) || !read["data"].contains("payloadB64")) {
+            preview->setText(QObject::tr(
+                "SXMM present — Un-merge can run. (Could not preview source names.)"));
+            return;
+        }
+        const auto b64 = QString::fromStdString(read["data"].value("payloadB64", std::string{}));
+        const auto bytes = QByteArray::fromBase64(b64.toUtf8());
+        nlohmann::json man;
+        try {
+            man = nlohmann::json::parse(bytes.constData(), bytes.constData() + bytes.size());
+        } catch (...) {
+            preview->setText(QObject::tr("SXMM present, but manifest JSON is invalid."));
+            return;
+        }
+        if (man.value("format", "") != "sxpe.mergeManifest" || !man.contains("sources") ||
+            !man["sources"].is_array()) {
+            preview->setText(QObject::tr("SXMM found, but not a valid SXPE merge manifest."));
+            return;
+        }
+        const auto n = static_cast<int>(man["sources"].size());
+        preview->setText(QObject::tr("SXMM OK — will write <b>%1</b> package(s).").arg(n));
+        for (const auto& src : man["sources"]) {
+            list->addItem(QString::fromStdString(
+                src.value("originalFileName", std::string{"(unnamed)"})));
+        }
+    };
+
+    QObject::connect(browse, &QPushButton::clicked, &dlg, [&] {
+        const auto p = QFileDialog::getOpenFileName(
+            &dlg, QObject::tr("Un-merge package"), path_edit->text(),
+            QObject::tr("Packages (*.package);;All files (*.*)"));
+        if (!p.isEmpty()) {
+            path_edit->setText(p);
+            refresh_preview();
+        }
+    });
+    QObject::connect(out_browse, &QPushButton::clicked, &dlg, [&] {
+        const auto d = QFileDialog::getExistingDirectory(&dlg, QObject::tr("Output folder"),
+                                                         out_edit->text());
+        if (!d.isEmpty()) {
+            out_edit->setText(d);
+        }
+    });
+    QObject::connect(path_edit, &QLineEdit::editingFinished, &dlg, refresh_preview);
+
+    auto* box = new QDialogButtonBox;
+    auto* go = box->addButton(QObject::tr("Un-merge"), QDialogButtonBox::AcceptRole);
+    box->addButton(QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(go, &QPushButton::clicked, &dlg, [&] {
+        const auto path = path_edit->text().trimmed();
+        const auto out = out_edit->text().trimmed();
+        if (path.isEmpty() || out.isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("Un-merge"),
+                                 QObject::tr("Choose a merged package and an output folder."));
+            return;
+        }
+        auto env = bus.execute("package.unmerge",
+                               {{"path", path.toStdString()},
+                                {"outDir", out.toStdString()},
+                                {"force", true}});
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Un-merge failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+                if (msg.contains(QStringLiteral("SXMM"), Qt::CaseInsensitive) ||
+                    msg.contains(QStringLiteral("not an SXPE"), Qt::CaseInsensitive)) {
+                    msg += QObject::tr(
+                        "\n\nOnly SXPE merges with an SXMM manifest can be un-merged. "
+                        "Use Tools → Merge packages… to create them.");
+                }
+            }
+            QMessageBox::warning(&dlg, QObject::tr("Un-merge"), msg);
+            return;
+        }
+        QMessageBox::information(
+            &dlg, QObject::tr("Un-merge"),
+            QObject::tr("Wrote %1 package(s) to:\n%2")
+                .arg(env["data"].value("packagesWritten", 0))
+                .arg(out));
+        dlg.accept();
+    });
+
+    if (!prefill_path.isEmpty()) {
+        refresh_preview();
+    }
+    dlg.resize(640, 480);
+    dlg.exec();
+}
+
+
 void show_common_tasks_dialog(QWidget* parent) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Common tasks"));
@@ -2715,8 +3400,33 @@ void show_common_tasks_dialog(QWidget* parent) {
                       "<h3>Clean Downloads / Mods folders</h3>"
                       "<p><b>Tools → Scan folder…</b> — read-only hygiene. SXPE never auto-deletes.</p>"
                       "<h3>Inspect a Sims3Pack</h3>"
-                      "<p><b>File → Open Sims3Pack…</b> or <b>Tools → Inspect Sims3Pack…</b>, "
-                      "then extract embedded packages.</p>"
+                      "<p><b>File → Open Sims3Pack…</b> or <b>Tools → Inspect Sims3Pack…</b> "
+                      "(same dialog) — list and extract embedded packages. Not a package tab.</p>"
+                      "<h3>Compare two packages</h3>"
+                      "<p>After a merge or save, <b>Tools → Compare packages…</b> against the previous "
+                      "good file. Filter A-only / B-only / Different. Save first if the tab is dirty.</p>"
+                      "<h3>Find who points at a resource</h3>"
+                      "<p>Select a CAS part / object → <b>Tools → Find references…</b> (or the resource "
+                      "context menu) → Jump to a hit.</p>"
+                      "<h3>Search inside payloads</h3>"
+                      "<p><b>Tools → Search…</b> (Ctrl+F) finds text/hex in resource bytes. "
+                      "Not the filter box above the grid. Jump from the results table.</p>"
+                      "<h3>Create a Sims3Pack (limited)</h3>"
+                      "<p><b>Tools → Create Sims3Pack…</b> packs a folder of <code>*.package</code> files. "
+                      "CRC zeros; no Store/DRM — not for Store upload.</p>"
+                      "<h3>Un-merge an SXPE merge</h3>"
+                      "<ol>"
+                      "<li><b>Tools → Un-merge package…</b></li>"
+                      "<li>Only works for packages SXPE merged (SXMM manifest).</li>"
+                      "<li>Choose output folder; existing files may be overwritten when force is on.</li>"
+                      "</ol>"
+                      "<h3>Compact vs Save</h3>"
+                      "<p><b>File → Save</b> writes the session (drops deleted resources). "
+                      "<b>Tools → Compact package…</b> uses the same write on a normal .package, "
+                      "but is refused on .nhd/.world/.dbc (layout lock). Prefer Save day-to-day.</p>"
+                      "<h3>FNV-1 / CLIP hash</h3>"
+                      "<p><b>Tools → FNV-1 / CLIP hash…</b> — live lowercase FNV-1 (not FNV-1a) for "
+                      "instance IDs and CLIP names. See docs/spec/hashing.md.</p>"
                       "<h3>Coming from s3pe?</h3>"
                       "<p>See the README / user guide section <b>If you used s3pe before</b> "
                       "for what maps where. The Merge assistant replaces the old "
@@ -2805,9 +3515,25 @@ void show_merge_assistant_dialog(
             return;
         }
         const auto bytes = total_size_of(selected);
-        preview->setText(QObject::tr("Ready: <b>%1</b> package(s) · <b>%2</b> total")
+        QString extra;
+        // Default bus caps (core/caps): 500 packages / 2 GiB / 200k resources.
+        constexpr qint64 kWarnBytes = 150ll * 1024 * 1024;  // soft community advice
+        constexpr int kWarnCount = 40;
+        constexpr qint64 kCapBytes = 2ll * 1024 * 1024 * 1024;
+        constexpr int kCapCount = 500;
+        if (selected.size() > kCapCount || bytes > kCapBytes) {
+            extra = QObject::tr(
+                "<br/><span style=\"color:#a60;\"><b>Over default bus caps</b> "
+                "(500 packages / 2 GiB). Merge will refuse with cap_exceeded — split the job.</span>");
+        } else if (selected.size() > kWarnCount || bytes > kWarnBytes) {
+            extra = QObject::tr(
+                "<br/><span style=\"color:#a60;\">Large batch: prefer ~20–40 packages or under "
+                "~100–150 MiB when machines are tight (same advice as workflows.md).</span>");
+        }
+        preview->setText(QObject::tr("Ready: <b>%1</b> package(s) · <b>%2</b> total%3")
                              .arg(selected.size())
-                             .arg(format_bytes(bytes)));
+                             .arg(format_bytes(bytes))
+                             .arg(extra));
         const int show = static_cast<int>(std::min<qsizetype>(selected.size(), 200));
         for (int i = 0; i < show; ++i) {
             list->addItem(selected[i]);
@@ -2912,6 +3638,33 @@ void show_merge_assistant_dialog(
     dlg.exec();
 }
 
+void show_welcome_dialog(QWidget* parent, const std::function<void()>& open_merge_assistant) {
+    const QString prerelease = QObject::tr(
+        "SXPE is a pre-release build. Bugs may still be present. "
+        "Back up important packages before you modify them.");
+    QMessageBox box(parent);
+    box.setWindowTitle(QObject::tr("Welcome to SXPE"));
+    box.setIcon(QMessageBox::Information);
+    box.setText(QObject::tr("New here? Start with Help → Common tasks."));
+    box.setInformativeText(
+        prerelease + QStringLiteral("\n\n") +
+        QObject::tr("Bug reports and feature requests: Help → Feedback…") +
+        QStringLiteral("\n\n") +
+        QObject::tr("To combine a folder of custom-content packages into one "
+                    "file, use Tools → Merge packages… (Merge assistant). "
+                    "It previews count and size, merges with an SXMM "
+                    "manifest, and can validate afterwards."));
+    auto* tasks = box.addButton(QObject::tr("Common tasks…"), QMessageBox::AcceptRole);
+    auto* merge = box.addButton(QObject::tr("Merge assistant…"), QMessageBox::ActionRole);
+    box.addButton(QObject::tr("Dismiss"), QMessageBox::RejectRole);
+    box.exec();
+    if (box.clickedButton() == tasks) {
+        show_common_tasks_dialog(parent);
+    } else if (box.clickedButton() == merge && open_merge_assistant) {
+        open_merge_assistant();
+    }
+}
+
 void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
                                   const std::function<void()>& open_merge_assistant) {
     if (smoke_mode) {
@@ -2922,24 +3675,7 @@ void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
         return;
     }
     st.setValue(QStringLiteral("onboarding/seenFirstRunTip"), true);
-    QMessageBox box(parent);
-    box.setWindowTitle(QObject::tr("Welcome to SXPE"));
-    box.setIcon(QMessageBox::Information);
-    box.setText(QObject::tr("New here? Start with Help → Common tasks."));
-    box.setInformativeText(QObject::tr(
-        "To combine a folder of custom-content packages into one file, use "
-        "Tools → Merge packages… (Merge assistant). "
-        "It previews count and size, merges safely with an SXMM manifest, "
-        "and can validate afterwards — no MTS lore required."));
-    auto* tasks = box.addButton(QObject::tr("Common tasks…"), QMessageBox::AcceptRole);
-    auto* merge = box.addButton(QObject::tr("Merge assistant…"), QMessageBox::ActionRole);
-    box.addButton(QObject::tr("Dismiss"), QMessageBox::RejectRole);
-    box.exec();
-    if (box.clickedButton() == tasks) {
-        show_common_tasks_dialog(parent);
-    } else if (box.clickedButton() == merge && open_merge_assistant) {
-        open_merge_assistant();
-    }
+    show_welcome_dialog(parent, open_merge_assistant);
 }
 
 }  // namespace sxpe::gui

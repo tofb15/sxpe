@@ -17,7 +17,10 @@ void show_details_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QStrin
                          std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                          std::uint32_t ordinal, const QString& name, bool compressed,
                          bool deleted);
-void show_search_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session);
+void show_search_dialog(
+    QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& select_hit = {});
 void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                         bool dbc);
 void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus);
@@ -65,25 +68,37 @@ void show_common_tasks_dialog(QWidget* parent);
 void show_merge_assistant_dialog(
     QWidget* parent,
     const std::function<void(const QStringList& paths, bool validate_after)>& on_merge);
-/// One-shot first-run tip (skip when smoke_mode). Sets onboarding/seenFirstRunTip.
+/// Welcome + pre-release note (Help → Welcome…, and first launch).
+void show_welcome_dialog(QWidget* parent,
+                         const std::function<void()>& open_merge_assistant = {});
+/// First-launch Welcome (skip when smoke_mode). Help → Welcome… shows it again.
 void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
                                   const std::function<void()>& open_merge_assistant = {});
 /// Query GitHub Releases via `app.checkUpdate`; never downloads. Graceful offline / 404.
 void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus);
 /// Headless `--check-update` (prints JSON envelope, no window). Returns 0 if ok.
 int run_check_update_headless(const QString& latest_json_path = {});
-void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);
+void show_validate_dialog(
+    QWidget* parent, const nlohmann::json& envelope,
+    const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                             std::uint32_t ordinal)>& jump_hit = {});
 /// Compare two packages via package.diff. open_hit opens a path and selects a resource.
+/// Prefill Package A from a saved tab path; set prefill_needs_save when dirty/untitled.
 void show_package_diff_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,
     const std::function<void(const QString& path, std::uint32_t type, std::uint32_t group,
-                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit);
+                             std::uint64_t instance, std::uint32_t ordinal)>& open_hit,
+    const QString& prefill_a = {}, bool prefill_needs_save = false);
 /// Find references to a TGI via resource.findRefs. select_hit jumps to a source resource.
 void show_find_refs_dialog(
     QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
     std::uint32_t type, std::uint32_t group, std::uint64_t instance, std::uint32_t ordinal,
+    const QString& resource_name,
     const std::function<void(std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal)>& select_hit);
+/// Tools → Un-merge package…: SXMM-only assistant (preview + overwrite note).
+void show_unmerge_assistant_dialog(QWidget* parent, sxpe::commands::Bus& bus,
+                                   const QString& prefill_path = {});
 /// Read-only folder.scan hygiene. open_path opens a package path in SXPE.
 void show_folder_scan_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,

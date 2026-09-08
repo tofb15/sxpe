@@ -85,12 +85,14 @@ Live `.github/workflows/ci.yml`:
 
 | Job | What |
 | --- | --- |
-| `linux-cli` | Linux CLI/MCP (no Qt) on every push/PR |
-| `windows-gui` | Windows GUI + `gui_smoke` on every push/PR |
+| `linux-cli` | Linux CLI/MCP (no Qt) on pushes and PRs to `dev` / `master` |
+| `windows-gui` | Windows GUI + `gui_smoke` on pushes and PRs to `dev` / `master` |
+
+Unique-topic branches do not run CI until they are a PR into `dev`/`master` or merged. Tag pushes use `release.yml` only (not a second `ci` run). A newer push on the same branch cancels an in-progress `ci` run.
 
 **Linux GUI CI is not in `ci.yml` yet.** Paste-ready job: [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) (canonical YAML - do not copy it into this page). Promoting it needs a GitHub token with **`workflow` scope**; OAuth apps without that scope cannot push `.github/workflows/*`.
 
-Tag `v*` runs [`.github/workflows/release.yml`](../.github/workflows/release.yml). The four-artifact matrix (Windows GUI zip, Windows CLI zip, Linux CLI tarball, Linux GUI tarball — Qt not vendored; plus `workflow_dispatch`) lives in [`docs/ci/release.yml`](ci/release.yml) until a `workflow`-scoped push or UI paste updates the live file. See [`docs/ci/README.md`](ci/README.md).
+Tag `v*` (and `workflow_dispatch`) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml): Windows GUI zip, Windows CLI zip, Linux CLI tarball, Linux GUI tarball (Qt not vendored). Maintainer copy: [`docs/ci/release.yml`](ci/release.yml). See [`docs/ci/README.md`](ci/README.md).
 
 ## Releases
 
