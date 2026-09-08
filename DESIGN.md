@@ -23,7 +23,7 @@ CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_
 
 ## Packaging
 
-Version lives in `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). When to bump: [docs/versioning.md](docs/versioning.md). How to compile and zip: [docs/building.md](docs/building.md). What we ship: [GitHub Releases](https://github.com/tofb15/sxpe/releases). Product story: [README](README.md).
+Version lives in `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). When to bump: [docs/versioning.md](docs/versioning.md). Git branch/commit, compile UTC, and original-vs-fork are generated into `sxpe/build_info.hpp` at build time (`cmake/embed_git.cmake`) for Help → About and `sxpe --version`. How to compile and zip: [docs/building.md](docs/building.md). What we ship: [GitHub Releases](https://github.com/tofb15/sxpe/releases). Product story: [README](README.md).
 
 ## Extensibility (honest)
 

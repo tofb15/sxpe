@@ -96,7 +96,7 @@ Tag `v*` (and `workflow_dispatch`) runs [`.github/workflows/release.yml`](../.gi
 
 ## Releases
 
-Version source: `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). **When** to bump and **by how much:** [versioning.md](versioning.md). Notes live under [`docs/releases/`](releases/TEMPLATE.md). Published assets: [GitHub Releases](https://github.com/tofb15/sxpe/releases).
+Version source: `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). **When** to bump and **by how much:** [versioning.md](versioning.md). Notes live under [`docs/releases/`](releases/TEMPLATE.md). Published assets: [GitHub Releases](https://github.com/tofb15/sxpe/releases). Help → About and `sxpe --version` also show git branch/commit, compile UTC, and whether this tree is the original GitHub repo or a fork (`cmake/embed_git.cmake`).
 
 | Platform | Local packaging | Artifact |
 | --- | --- | --- |

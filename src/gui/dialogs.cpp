@@ -1,4 +1,6 @@
 #include "dialogs.hpp"
+#include "sxpe/build_info.hpp"
+#include "sxpe/version.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
 #include "sxpe/commands/sims3pack_report.hpp"
@@ -23,14 +25,19 @@
 #include <QFontDatabase>
 #include <QColor>
 #include <QImage>
+#include <QFont>
 #include <QFormLayout>
+#include <QFrame>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QSplitter>
 #include <QMessageBox>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -47,6 +54,7 @@
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QWidget>
 
 #include <algorithm>
 #include <atomic>
@@ -56,6 +64,84 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+
+namespace {
+
+QString help_muted_css(const QWidget& w) {
+    const auto wt = w.palette().color(QPalette::WindowText);
+    return QStringLiteral("color: rgba(%1, %2, %3, 168);")
+        .arg(wt.red())
+        .arg(wt.green())
+        .arg(wt.blue());
+}
+
+QLabel* help_title_label(const QString& text) {
+    auto* t = new QLabel(text);
+    auto f = t->font();
+    f.setPointSize(f.pointSize() + 5);
+    f.setBold(true);
+    t->setFont(f);
+    return t;
+}
+
+QLabel* help_muted_label(const QString& text, const QString& css) {
+    auto* t = new QLabel(text);
+    t->setWordWrap(true);
+    t->setStyleSheet(css);
+    return t;
+}
+
+QLabel* help_link_label(const QString& text, const QString& href) {
+    auto* a = new QLabel(
+        QStringLiteral("<a href=\"%1\">%2</a>").arg(href.toHtmlEscaped(), text.toHtmlEscaped()));
+    a->setOpenExternalLinks(true);
+    a->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    return a;
+}
+
+QVBoxLayout* help_root(QDialog& dlg) {
+    dlg.setModal(true);
+    auto* root = new QVBoxLayout(&dlg);
+    root->setContentsMargins(18, 16, 18, 12);
+    root->setSpacing(8);
+    return root;
+}
+
+void help_add_close_row(QDialog& dlg, QVBoxLayout* root, QWidget* leading = nullptr) {
+    auto* row = new QHBoxLayout;
+    if (leading) {
+        row->addWidget(leading);
+    }
+    row->addStretch(1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    row->addWidget(box);
+    root->addLayout(row);
+}
+
+void help_shrink(QDialog& dlg, int width) {
+    dlg.setFixedWidth(width);
+    dlg.adjustSize();
+}
+
+QString find_repo_doc(const QString& relative) {
+    const QString dir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        dir + QLatin1Char('/') + relative,
+        dir + QStringLiteral("/../") + relative,
+        dir + QStringLiteral("/../../") + relative,
+        dir + QStringLiteral("/../../../") + relative,
+        QDir::current().absoluteFilePath(relative),
+    };
+    for (const auto& p : candidates) {
+        if (QFileInfo::exists(p)) {
+            return QFileInfo(p).absoluteFilePath();
+        }
+    }
+    return {};
+}
+
+}  // namespace
 
 namespace sxpe::gui {
 
@@ -1633,101 +1719,273 @@ void show_external_programs_dialog(QWidget* parent) {
     dlg.exec();
 }
 
+void show_about_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("About SXPE"));
+    dlg.setModal(true);
+
+    const auto wt = dlg.palette().color(QPalette::WindowText);
+    const QString muted_ss = QStringLiteral("color: rgba(%1, %2, %3, 168);")
+                                 .arg(wt.red())
+                                 .arg(wt.green())
+                                 .arg(wt.blue());
+
+    auto* root = new QVBoxLayout(&dlg);
+    root->setContentsMargins(18, 16, 18, 12);
+    root->setSpacing(8);
+
+    auto* header = new QHBoxLayout;
+    header->setSpacing(10);
+    auto* title = new QLabel(QObject::tr("SXPE"));
+    auto title_font = title->font();
+    title_font.setPointSize(title_font.pointSize() + 5);
+    title_font.setBold(true);
+    title->setFont(title_font);
+    auto* ver = new QLabel(QStringLiteral(SXPE_VERSION));
+    ver->setStyleSheet(
+        QStringLiteral("QLabel { padding: 1px 8px; border-radius: 8px; font-weight: 600; "
+                       "background: palette(highlight); color: palette(highlighted-text); }"));
+    header->addWidget(title, 0, Qt::AlignVCenter);
+    header->addWidget(ver, 0, Qt::AlignVCenter);
+    header->addStretch(1);
+    root->addLayout(header);
+
+    auto* tagline = new QLabel(QObject::tr("Unofficial Sims 3 package editor"));
+    tagline->setStyleSheet(muted_ss);
+    root->addWidget(tagline);
+
+    const QString lineage = QStringLiteral(SXPE_GIT_LINEAGE);
+    const QString source_href = QStringLiteral(SXPE_GIT_SOURCE_URL);
+    const QString canonical_href = QStringLiteral(SXPE_GIT_CANONICAL_URL);
+    auto repo_label = [](const QString& url) {
+        QString s = url;
+        s.replace(QLatin1String("https://"), QString());
+        s.replace(QLatin1String("http://"), QString());
+        if (s.endsWith(QLatin1Char('/'))) {
+            s.chop(1);
+        }
+        return s;
+    };
+    auto make_link = [](const QString& text, const QString& href) {
+        auto* a = new QLabel(
+            QStringLiteral("<a href=\"%1\">%2</a>").arg(href.toHtmlEscaped(), text.toHtmlEscaped()));
+        a->setOpenExternalLinks(true);
+        a->setTextInteractionFlags(Qt::TextBrowserInteraction);
+        return a;
+    };
+
+    if (lineage == QLatin1String("fork")) {
+        auto* banner = new QFrame;
+        banner->setObjectName(QStringLiteral("forkBanner"));
+        banner->setStyleSheet(
+            QStringLiteral("QFrame#forkBanner { background: palette(base); border-radius: 6px; "
+                           "border-left: 3px solid palette(highlight); padding: 6px 10px; }"));
+        auto* bl = new QVBoxLayout(banner);
+        bl->setContentsMargins(8, 6, 8, 6);
+        bl->setSpacing(2);
+        auto* btitle = new QLabel(QObject::tr("This build is from a fork"));
+        auto bfont = btitle->font();
+        bfont.setBold(true);
+        btitle->setFont(bfont);
+        bl->addWidget(btitle);
+        auto* orig = make_link(
+            QObject::tr("Open original · %1").arg(repo_label(canonical_href)), canonical_href);
+        bl->addWidget(orig);
+        root->addWidget(banner);
+    }
+
+    auto* grid = new QGridLayout;
+    grid->setContentsMargins(0, 4, 0, 0);
+    grid->setHorizontalSpacing(14);
+    grid->setVerticalSpacing(5);
+    grid->setColumnStretch(1, 1);
+    int row = 0;
+    auto add_key = [&](const QString& key) {
+        auto* k = new QLabel(key);
+        k->setStyleSheet(muted_ss);
+        grid->addWidget(k, row, 0, Qt::AlignRight | Qt::AlignVCenter);
+    };
+
+    add_key(QObject::tr("Branch"));
+    auto* branch = new QLabel(QStringLiteral(SXPE_GIT_BRANCH));
+    branch->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    branch->setWordWrap(true);
+    grid->addWidget(branch, row, 1);
+    ++row;
+
+    add_key(QObject::tr("Commit"));
+    auto* commit_row = new QHBoxLayout;
+    commit_row->setSpacing(8);
+    commit_row->setContentsMargins(0, 0, 0, 0);
+    const QString full_commit = QStringLiteral(SXPE_GIT_COMMIT);
+    QString short_commit = full_commit;
+    if (short_commit.size() > 12 &&
+        !short_commit.contains(QLatin1Char(' ')) &&
+        short_commit != QLatin1String("unknown")) {
+        short_commit = short_commit.left(12);
+    }
+    auto* commit = new QLabel(short_commit);
+    auto cfont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    cfont.setPointSize(commit->font().pointSize());
+    commit->setFont(cfont);
+    commit->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    commit->setToolTip(full_commit);
+    commit_row->addWidget(commit, 0, Qt::AlignVCenter);
+    if (SXPE_GIT_DIRTY) {
+        auto* dirty = new QLabel(QObject::tr("modified"));
+        dirty->setStyleSheet(
+            QStringLiteral("QLabel { padding: 0px 6px; border-radius: 6px; %1 }").arg(muted_ss));
+        dirty->setToolTip(
+            QObject::tr("Working tree had uncommitted changes when this was compiled."));
+        commit_row->addWidget(dirty, 0, Qt::AlignVCenter);
+    }
+    if (full_commit != QLatin1String("unknown") && !full_commit.isEmpty()) {
+        auto* copy = new QPushButton(QObject::tr("Copy"));
+        copy->setFlat(true);
+        copy->setCursor(Qt::PointingHandCursor);
+        copy->setToolTip(QObject::tr("Copy full commit hash"));
+        QObject::connect(copy, &QPushButton::clicked, &dlg, [full_commit] {
+            if (auto* cb = QGuiApplication::clipboard()) {
+                cb->setText(full_commit);
+            }
+        });
+        commit_row->addWidget(copy, 0, Qt::AlignVCenter);
+    }
+    commit_row->addStretch(1);
+    grid->addLayout(commit_row, row, 1);
+    ++row;
+
+    add_key(QObject::tr("Built"));
+    auto* built = new QLabel(QStringLiteral(SXPE_BUILD_UTC));
+    built->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    grid->addWidget(built, row, 1);
+    ++row;
+
+    add_key(QObject::tr("Source"));
+    auto* source_row = new QHBoxLayout;
+    source_row->setSpacing(10);
+    source_row->setContentsMargins(0, 0, 0, 0);
+    if (lineage == QLatin1String("official")) {
+        source_row->addWidget(make_link(repo_label(canonical_href), canonical_href));
+    } else if (lineage == QLatin1String("fork") && !source_href.isEmpty()) {
+        source_row->addWidget(make_link(repo_label(source_href), source_href));
+    } else {
+        auto* unk = new QLabel(QObject::tr("Unknown"));
+        unk->setStyleSheet(muted_ss);
+        source_row->addWidget(unk);
+        source_row->addWidget(make_link(QObject::tr("Original"), canonical_href));
+    }
+    source_row->addStretch(1);
+    grid->addLayout(source_row, row, 1);
+    root->addLayout(grid);
+
+    auto* legal = new QLabel(
+        QObject::tr("GPL-3.0-or-later. Unofficial. Not Electronic Arts. Not s3pe."));
+    legal->setWordWrap(true);
+    legal->setStyleSheet(muted_ss);
+    auto lfont = legal->font();
+    if (lfont.pointSize() > 8) {
+        lfont.setPointSize(lfont.pointSize() - 1);
+    }
+    legal->setFont(lfont);
+    root->addWidget(legal);
+
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    root->addWidget(box);
+
+    dlg.setFixedWidth(420);
+    dlg.adjustSize();
+    dlg.exec();
+}
+
 void show_contents_dialog(QWidget* parent) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Contents"));
-    auto* lay = new QVBoxLayout(&dlg);
-    auto* view = new QTextBrowser;
-    view->setOpenExternalLinks(true);
-    view->setHtml(QObject::tr(
-        "<h2>SXPE</h2>"
-        "<p>SXPE edits Sims 3 DBPF packages (.package, .world, .dbc, .nhd).</p>"
-        "<h3>File</h3>"
-        "<p>New, open (read-write or read-only), <b>Open Sims3Pack…</b> (inspect/extract — same as "
-        "Tools → Inspect Sims3Pack…; does not open as a package tab), save / save as / save copy as, close, "
-        "recent files, bookmarks, exit.</p>"
-        "<ul>"
-        "<li><b>New</b> — Ctrl+N</li>"
-        "<li><b>Open…</b> — Ctrl+O</li>"
-        "<li><b>Save</b> — Ctrl+S</li>"
-        "<li><b>Save As…</b> — Ctrl+Shift+S</li>"
-        "<li><b>Close</b> — Ctrl+W</li>"
-        "<li><b>Exit</b> — Ctrl+Q</li>"
-        "</ul>"
-        "<h3>Edit</h3>"
-        "<p>Undo/redo, copy/save/float preview, open in text editor, select all, command palette.</p>"
-        "<ul>"
-        "<li><b>Undo</b> — Ctrl+Z</li>"
-        "<li><b>Redo</b> — Ctrl+Y / Ctrl+Shift+Z</li>"
-        "<li><b>Select All</b> — Ctrl+A</li>"
-        "<li><b>Command palette…</b> — Ctrl+K</li>"
-        "</ul>"
-        "<h3>View</h3>"
-        "<p>Show or hide resource-list columns (same as right-clicking column headers). "
-        "Autofit and reset widths are available from the header menu. The last visible "
-        "column cannot be hidden.</p>"
-        "<h3>Resource</h3>"
-        "<p>Add, copy, paste, duplicate, replace; compression and deleted flags; details; "
-        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, Name map/NMAP, XML/ITUN, Catalog object/OBJD, CAS part/CASP, Reference table/REFS, Replace RCOL chunk, S3SA export/import/view DLL, "
-        "CLIP, DDS, SNAP PNG, VID); open in hex/text editor; delete.</p>"
-        "<ul>"
-        "<li><b>Add…</b> — Ctrl+I</li>"
-        "<li><b>Copy</b> — Ctrl+C</li>"
-        "<li><b>Paste</b> — Ctrl+V</li>"
-        "<li><b>Duplicate</b> — Ctrl+D</li>"
-        "<li><b>Copy resource key</b> — Ctrl+Shift+C</li>"
-        "<li><b>Delete</b> — Delete</li>"
-        "</ul>"
-        "<h3>Neighborhood / world layout lock</h3>"
-        "<p><b>.nhd</b>, <b>.world</b>, and <b>.dbc</b> sessions are layout-locked. "
-        "A status-bar badge appears. Safe: replace a resource payload in place if it fits "
-        "the existing hole. Not supported (actions greyed out / refused): add, delete, "
-        "reorder, compact, create NMAP. Error and Validate text name "
-        "“neighborhood / world layout lock”.</p>"
-        "<h3>Tools</h3>"
-        "<p>Grouped for everyday package work first; specialist calculators last.</p>"
-        "<h4>Package</h4>"
-        "<ul>"
-        "<li><b>Merge packages…</b> — Merge assistant: folder or files → preview count/size → SXMM merge → "
-        "optional validate. Save As when done.</li>"
-        "<li><b>Un-merge package…</b> — Split an SXPE merge that still has an SXMM manifest.</li>"
-        "<li><b>Compare packages…</b> — Diff two saved packages (A-only / B-only / payload differs).</li>"
-        "<li><b>Validate package…</b> — Conflict hotspots (leftover Sims3Pack manifests / duplicate TGIs), "
-        "DIR, layout lock. Needs an open package.</li>"
-        "<li><b>Compact package…</b> — Rewrite the file, dropping session-deleted resources. Same write path "
-        "as File → Save on a normal .package; refused on .nhd/.world/.dbc.</li>"
-        "</ul>"
-        "<h4>Folder / pack</h4>"
-        "<ul>"
-        "<li><b>Scan folder…</b> — Read-only Downloads/Mods hygiene. Never deletes.</li>"
-        "<li><b>Inspect Sims3Pack…</b> — Same dialog as File → Open Sims3Pack… (list / extract; not a package tab).</li>"
-        "<li><b>Create Sims3Pack…</b> — Limited packer (CRC zeros; no Store/DRM).</li>"
-        "</ul>"
-        "<h4>Resource</h4>"
-        "<ul>"
-        "<li><b>Find references…</b> — Who points at the selected resource (also on the resource context menu).</li>"
-        "<li><b>Search…</b> — Ctrl+F. Byte search inside payloads (not the resource-list filter).</li>"
-        "</ul>"
-        "<h4>Hash</h4>"
-        "<ul>"
-        "<li><b>FNV-1 / CLIP hash…</b> — Live FNV-1 32/64 and CLIP calculator (lowercase FNV-1, not FNV-1a).</li>"
-        "</ul>"
-        "<h3>Settings</h3>"
-        "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
-        "built-in handlers (first-party only; plugins permanently unsupported), external programs (hex/text/S3SA viewer — not DLL plugins), save settings.</p>"
-        "<h3>Help</h3>"
-        "<p>Contents (this window), <b>Welcome</b>, <b>Common tasks</b> (links to workflows.md), "
-        "Check for update (GitHub Releases; never auto-downloads), "
-        "<b>Feedback</b> (GitHub Issues), About, Warranty, Licence.</p>"
-        "<h3>Context menus</h3>"
-        "<p>Right-click the resource list for Resource actions. Right-click a package tab "
-        "to save, close (this / others / left / right), or bookmark. Right-click column "
-        "headers to show or hide columns.</p>"));
-    lay->addWidget(view, 1);
-    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
-    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    lay->addWidget(box);
-    dlg.resize(720, 560);
+    auto* root = help_root(dlg);
+    root->addWidget(help_title_label(QObject::tr("Contents")));
+    root->addWidget(help_muted_label(QObject::tr("Menus, shortcuts, and what each area is for."),
+                                    help_muted_css(dlg)));
+
+    struct Section {
+        const char* title;
+        const char* html;
+    };
+    const Section sections[] = {
+        {QT_TR_NOOP("Overview"),
+         QT_TR_NOOP("<p>SXPE edits Sims 3 <b>.package</b>, <b>.world</b>, <b>.dbc</b>, and "
+                    "<b>.nhd</b> files.</p>"
+                    "<p>Drop one file on the window to open it. Drop several to merge into a new "
+                    "package. Neighborhood files show a layout-lock badge in the status bar.</p>")},
+        {QT_TR_NOOP("File"),
+         QT_TR_NOOP("<p><b>Ctrl+N</b> New &nbsp; <b>Ctrl+O</b> Open &nbsp; <b>Ctrl+S</b> Save "
+                    "&nbsp; <b>Ctrl+Shift+S</b> Save As &nbsp; <b>Ctrl+W</b> Close &nbsp; "
+                    "<b>Ctrl+Q</b> Exit</p>"
+                    "<p>Untitled Save (Ctrl+S) asks for a path. Open Sims3Pack… inspects and "
+                    "extracts; same dialog as Tools → Inspect Sims3Pack… (not a package tab).</p>")},
+        {QT_TR_NOOP("Edit and View"),
+         QT_TR_NOOP("<p><b>Ctrl+Z</b> Undo &nbsp; <b>Ctrl+Y</b> Redo &nbsp; <b>Ctrl+A</b> Select all "
+                    "&nbsp; <b>Ctrl+K</b> Command palette</p>"
+                    "<p>View shows or hides resource-list columns (also right-click the headers). "
+                    "The last visible column cannot be hidden.</p>")},
+        {QT_TR_NOOP("Resource"),
+         QT_TR_NOOP("<p><b>Ctrl+I</b> Add &nbsp; <b>Ctrl+C</b> Copy &nbsp; <b>Ctrl+V</b> Paste "
+                    "&nbsp; <b>Ctrl+D</b> Duplicate &nbsp; <b>Ctrl+Shift+C</b> Copy TGI "
+                    "&nbsp; <b>Delete</b> Delete</p>"
+                    "<p>Editors are under Resource → Editors (STBL, NMAP, XML, OBJD, CASP, REFS, "
+                    "RCOL, S3SA, CLIP, DDS, SNAP, VID). Import/export and hex/text editors are "
+                    "on the same menu.</p>")},
+        {QT_TR_NOOP("Tools"),
+         QT_TR_NOOP("<p><b>Package:</b> Merge, Un-merge (SXPE/SXMM only), Compare, Validate, "
+                    "Compact.<br/>"
+                    "<b>Folder / pack:</b> Scan folder (never deletes), Inspect / Create Sims3Pack "
+                    "(create is a limited packer, CRC zeros, no Store/DRM).<br/>"
+                    "<b>Resource:</b> Find references, Search (Ctrl+F, payloads, not the filter "
+                    "box).<br/>"
+                    "<b>Hash:</b> FNV-1 / CLIP calculator (lowercase FNV-1, not FNV-1a).</p>"
+                    "<p>Help → Common tasks has short recipes.</p>")},
+        {QT_TR_NOOP("Settings and Help"),
+         QT_TR_NOOP("<p>Preview toggles, bookmarks, built-in handlers (first-party only; no "
+                    "plugins), external hex/text/S3SA programs.</p>"
+                    "<p>Help: this window, Welcome, Common tasks, Check for update (never "
+                    "auto-downloads), Feedback (GitHub Issues), About, Warranty, Licence.</p>")},
+        {QT_TR_NOOP("Layout lock"),
+         QT_TR_NOOP("<p><b>.nhd</b>, <b>.world</b>, and <b>.dbc</b> sessions are layout-locked. "
+                    "Safe: replace a payload that still fits the existing hole.</p>"
+                    "<p>Refused (greyed out): add, delete, reorder, compact, create NMAP.</p>")},
+        {QT_TR_NOOP("Mouse"),
+         QT_TR_NOOP("<p>Right-click the resource list for Resource actions. Right-click a package "
+                    "tab to save, close (this / others / left / right), or bookmark. Right-click "
+                    "column headers to show or hide columns.</p>")},
+    };
+
+    auto* split = new QSplitter(Qt::Horizontal);
+    auto* list = new QListWidget;
+    list->setFixedWidth(148);
+    auto* detail = new QTextBrowser;
+    detail->setOpenExternalLinks(true);
+    detail->setFrameShape(QFrame::NoFrame);
+    for (const auto& s : sections) {
+        auto* it = new QListWidgetItem(QObject::tr(s.title));
+        it->setData(Qt::UserRole, QObject::tr(s.html));
+        list->addItem(it);
+    }
+    QObject::connect(list, &QListWidget::currentItemChanged, &dlg,
+                     [detail](QListWidgetItem* cur, QListWidgetItem*) {
+                         detail->setHtml(cur ? cur->data(Qt::UserRole).toString() : QString());
+                     });
+    split->addWidget(list);
+    split->addWidget(detail);
+    split->setStretchFactor(0, 0);
+    split->setStretchFactor(1, 1);
+    split->setChildrenCollapsible(false);
+    root->addWidget(split, 1);
+    if (list->count() > 0) {
+        list->setCurrentRow(0);
+    }
+
+    help_add_close_row(dlg, root);
+    dlg.resize(560, 380);
     dlg.exec();
 }
 
@@ -3033,19 +3291,34 @@ int run_check_update_headless(const QString& latest_json_path) {
 void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Check for update"));
-    auto* lay = new QVBoxLayout(&dlg);
-    auto* status = new QLabel(QObject::tr("Checking GitHub Releases…"));
-    status->setWordWrap(true);
-    status->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    status->setOpenExternalLinks(true);
-    lay->addWidget(status);
+    auto* root = help_root(dlg);
+    auto* header = new QHBoxLayout;
+    header->addWidget(help_title_label(QObject::tr("Updates")));
+    auto* ver = new QLabel(QCoreApplication::applicationVersion());
+    ver->setStyleSheet(
+        QStringLiteral("QLabel { padding: 1px 8px; border-radius: 8px; font-weight: 600; "
+                       "background: palette(highlight); color: palette(highlighted-text); }"));
+    header->addSpacing(8);
+    header->addWidget(ver, 0, Qt::AlignVCenter);
+    header->addStretch(1);
+    root->addLayout(header);
 
-    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
-    auto* open_btn = box->addButton(QObject::tr("Open releases page"), QDialogButtonBox::ActionRole);
+    auto* heading = new QLabel(QObject::tr("Checking GitHub Releases…"));
+    auto hf = heading->font();
+    hf.setBold(true);
+    heading->setFont(hf);
+    heading->setWordWrap(true);
+    root->addWidget(heading);
+    auto* detail = new QLabel;
+    detail->setWordWrap(true);
+    detail->setStyleSheet(help_muted_css(dlg));
+    root->addWidget(detail);
+    root->addWidget(help_muted_label(
+        QObject::tr("SXPE never downloads an update for you. You choose whether to open the release page."),
+        help_muted_css(dlg)));
+
+    auto* open_btn = new QPushButton(QObject::tr("Open releases"));
     open_btn->setEnabled(false);
-    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    lay->addWidget(box);
-
     const QUrl releases_page(QStringLiteral("https://github.com/tofb15/sxpe/releases"));
     auto env = std::make_shared<nlohmann::json>();
     auto done = std::make_shared<std::atomic<bool>>(false);
@@ -3054,7 +3327,7 @@ void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
         done->store(true, std::memory_order_release);
     }).detach();
 
-    auto apply = [&dlg, status, open_btn, releases_page, env]() {
+    auto apply = [&dlg, heading, detail, open_btn, releases_page, env]() {
         const auto& result = *env;
         QUrl open = releases_page;
         auto set_open = [&](const QString& url) {
@@ -3062,25 +3335,18 @@ void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
                 open = QUrl(url);
             }
             open_btn->setEnabled(true);
-            QObject::connect(open_btn, &QPushButton::clicked, &dlg, [open] {
-                QDesktopServices::openUrl(open);
-            });
+            QObject::connect(open_btn, &QPushButton::clicked, &dlg,
+                             [open] { QDesktopServices::openUrl(open); });
         };
 
         if (!result.value("ok", false)) {
-            QString err = QStringLiteral("unknown error");
+            QString err = QObject::tr("Network or GitHub error.");
             if (result.contains("error") && result["error"].is_object() &&
                 result["error"].contains("message") && result["error"]["message"].is_string()) {
                 err = QString::fromStdString(result["error"]["message"].get<std::string>());
             }
-            const QString current = QCoreApplication::applicationVersion();
-            status->setText(QObject::tr(
-                                "Could not check for updates (network or GitHub error).<br>"
-                                "You are running SXPE %1.<br>"
-                                "Error: %2<br>"
-                                "Try again later, or open <a href=\"%3\">%3</a> in a browser.")
-                                .arg(current.toHtmlEscaped(), err.toHtmlEscaped(),
-                                     releases_page.toString().toHtmlEscaped()));
+            heading->setText(QObject::tr("Could not check"));
+            detail->setText(err);
             set_open(releases_page.toString());
             return;
         }
@@ -3090,28 +3356,28 @@ void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
         if (data.contains("htmlUrl") && data["htmlUrl"].is_string()) {
             html = QString::fromStdString(data["htmlUrl"].get<std::string>());
         }
-        if (html.isEmpty()) {
-            html = releases_page.toString();
+        const QString status = QString::fromStdString(data.value("status", std::string{}));
+        const QString message = QString::fromStdString(data.value("message", std::string{}));
+        const QString latest = QString::fromStdString(data.value("tagName", std::string{}));
+        if (status == QLatin1String("newerAvailable")) {
+            heading->setText(QObject::tr("A newer release is available"));
+            open_btn->setText(QObject::tr("Open %1").arg(latest.isEmpty() ? QStringLiteral("release")
+                                                                         : latest));
+        } else if (status == QLatin1String("upToDate")) {
+            heading->setText(QObject::tr("You are up to date"));
+        } else if (status == QLatin1String("localNewer")) {
+            heading->setText(QObject::tr("This build is newer than the latest release"));
+        } else if (status == QLatin1String("notFound")) {
+            heading->setText(QObject::tr("No public release found"));
+        } else {
+            heading->setText(message.isEmpty() ? QObject::tr("Check finished") : message);
         }
-        QString body;
-        if (data.contains("summary") && data["summary"].is_array()) {
-            for (const auto& line : data["summary"]) {
-                if (!line.is_string()) {
-                    continue;
-                }
-                const auto s = QString::fromStdString(line.get<std::string>());
-                if (s.startsWith(QLatin1String("http://")) ||
-                    s.startsWith(QLatin1String("https://"))) {
-                    body += QStringLiteral("<a href=\"%1\">%1</a><br>").arg(s.toHtmlEscaped());
-                } else {
-                    body += s.toHtmlEscaped() + QStringLiteral("<br>");
-                }
-            }
-        } else if (data.contains("message") && data["message"].is_string()) {
-            body = QString::fromStdString(data["message"].get<std::string>()).toHtmlEscaped();
+        QString extra = message;
+        if (extra.isEmpty() && !latest.isEmpty()) {
+            extra = QObject::tr("Latest tag: %1").arg(latest);
         }
-        status->setText(body);
-        set_open(html);
+        detail->setText(extra);
+        set_open(html.isEmpty() ? releases_page.toString() : html);
     };
 
     auto* timer = new QTimer(&dlg);
@@ -3124,29 +3390,14 @@ void show_check_for_update_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
     });
     timer->start(50);
 
-    dlg.resize(520, 240);
+    help_add_close_row(dlg, root, open_btn);
+    help_shrink(dlg, 420);
     dlg.exec();
 }
 
 
 
 namespace {
-
-QString find_repo_doc(const QString& relative) {
-    const QString dir = QCoreApplication::applicationDirPath();
-    const QStringList candidates = {
-        dir + QStringLiteral("/../") + relative,
-        dir + QStringLiteral("/../../") + relative,
-        dir + QStringLiteral("/../../../") + relative,
-        QDir::current().absoluteFilePath(relative),
-    };
-    for (const auto& p : candidates) {
-        if (QFileInfo::exists(p)) {
-            return QFileInfo(p).absoluteFilePath();
-        }
-    }
-    return {};
-}
 
 QString format_bytes(qint64 bytes) {
     if (bytes < 1024) {
@@ -3391,89 +3642,108 @@ void show_unmerge_assistant_dialog(QWidget* parent, sxpe::commands::Bus& bus,
 void show_common_tasks_dialog(QWidget* parent) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Common tasks"));
-    auto* lay = new QVBoxLayout(&dlg);
-    auto* view = new QTextBrowser;
-    view->setOpenExternalLinks(true);
+    auto* root = help_root(dlg);
+    root->addWidget(help_title_label(QObject::tr("Common tasks")));
+    root->addWidget(help_muted_label(
+        QObject::tr("Pick a job. The steps use the same menus as the rest of SXPE."),
+        help_muted_css(dlg)));
+
+    struct Task {
+        const char* title;
+        const char* where;
+        const char* body;
+    };
+    const Task tasks[] = {
+        {QT_TR_NOOP("Merge a folder of packages"), QT_TR_NOOP("Tools → Merge packages…"),
+         QT_TR_NOOP("Work on copies. Choose a folder or files, check count and size, then Merge. "
+                    "Optional: Validate after merge. File → Save As writes the new package; "
+                    "originals are never changed. SXPE writes an SXMM manifest so Un-merge can "
+                    "split this merge later.")},
+        {QT_TR_NOOP("Open and edit a package"), QT_TR_NOOP("File → Open…"),
+         QT_TR_NOOP("Or drop one .package on the window. Edit resources, then Save. "
+                    "Use Tools → Validate package… before you share.")},
+        {QT_TR_NOOP("Scan Downloads or Mods"), QT_TR_NOOP("Tools → Scan folder…"),
+         QT_TR_NOOP("Read-only hygiene: empty, corrupt, wrong-game, duplicate TGI. "
+                    "SXPE never deletes files.")},
+        {QT_TR_NOOP("Inspect a Sims3Pack"), QT_TR_NOOP("File → Open Sims3Pack…"),
+         QT_TR_NOOP("Same dialog as Tools → Inspect Sims3Pack…. List and extract embedded "
+                    "packages. Not a package tab. No Store/DRM unpacking.")},
+        {QT_TR_NOOP("Compare two packages"), QT_TR_NOOP("Tools → Compare packages…"),
+         QT_TR_NOOP("Diff a merge or save against the previous good file. Filter A-only / "
+                    "B-only / Different. Save first if the tab is untitled or dirty.")},
+        {QT_TR_NOOP("Find who points at a resource"), QT_TR_NOOP("Tools → Find references…"),
+         QT_TR_NOOP("Select a CAS part or object, then Find references (also on the resource "
+                    "context menu). Jump to a hit.")},
+        {QT_TR_NOOP("Search inside payloads"), QT_TR_NOOP("Tools → Search…  (Ctrl+F)"),
+         QT_TR_NOOP("Finds text or hex in resource bytes. Not the filter box above the grid. "
+                    "Jump from the results table.")},
+        {QT_TR_NOOP("Un-merge an SXPE merge"), QT_TR_NOOP("Tools → Un-merge package…"),
+         QT_TR_NOOP("Only packages SXPE merged (SXMM manifest). Choose an output folder. "
+                    "Merges from other tools cannot be split this way.")},
+        {QT_TR_NOOP("Create a Sims3Pack (limited)"), QT_TR_NOOP("Tools → Create Sims3Pack…"),
+         QT_TR_NOOP("Packs a folder of *.package files. CRC values are placeholder zeros; "
+                    "no Store or DRM. Not for Store upload.")},
+        {QT_TR_NOOP("Compact vs Save"), QT_TR_NOOP("File → Save"),
+         QT_TR_NOOP("Save writes the session and drops deleted resources. Compact package… "
+                    "is the same write on a normal .package, but is refused on .nhd/.world/.dbc. "
+                    "Prefer Save day to day.")},
+        {QT_TR_NOOP("Coming from s3pe?"), QT_TR_NOOP("Help → Contents"),
+         QT_TR_NOOP("SXPE is a separate program, not a fork of s3pe. Merge assistant replaces "
+                    "the old drop-everything flow with a preview and caps. See the user guide "
+                    "section If you used s3pe before.")},
+    };
+
+    auto* split = new QSplitter(Qt::Horizontal);
+    auto* list = new QListWidget;
+    list->setMinimumWidth(168);
+    list->setMaximumWidth(220);
+    auto* detail = new QLabel;
+    detail->setWordWrap(true);
+    detail->setTextFormat(Qt::RichText);
+    detail->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    detail->setMargin(8);
+    for (const auto& t : tasks) {
+        auto* it = new QListWidgetItem(QObject::tr(t.title));
+        it->setData(Qt::UserRole, QObject::tr(t.where));
+        it->setData(Qt::UserRole + 1, QObject::tr(t.body));
+        list->addItem(it);
+    }
+    QObject::connect(list, &QListWidget::currentItemChanged, &dlg,
+                     [detail](QListWidgetItem* cur, QListWidgetItem*) {
+                         if (!cur) {
+                             detail->clear();
+                             return;
+                         }
+                         detail->setText(QStringLiteral("<p><b>%1</b></p><p>%2</p>")
+                                             .arg(cur->data(Qt::UserRole).toString().toHtmlEscaped(),
+                                                  cur->data(Qt::UserRole + 1).toString().toHtmlEscaped()));
+                     });
+    auto* detail_wrap = new QWidget;
+    auto* dl = new QVBoxLayout(detail_wrap);
+    dl->setContentsMargins(0, 0, 0, 0);
+    dl->addWidget(detail, 1);
+    split->addWidget(list);
+    split->addWidget(detail_wrap);
+    split->setStretchFactor(0, 0);
+    split->setStretchFactor(1, 1);
+    split->setChildrenCollapsible(false);
+    root->addWidget(split, 1);
+    if (list->count() > 0) {
+        list->setCurrentRow(0);
+    }
+
     const auto workflows = find_repo_doc(QStringLiteral("docs/workflows.md"));
-    const QString workflows_link =
-        workflows.isEmpty()
-            ? QStringLiteral("https://github.com/tofb15/sxpe/blob/dev/docs/workflows.md")
-            : QUrl::fromLocalFile(workflows).toString();
-    view->setHtml(QObject::tr(
-                      "<h2>Common tasks</h2>"
-                      "<p>Short recipes for everyday mod work. Full step-by-step: "
-                      "<a href=\"%1\">workflows.md</a>.</p>"
-                      "<h3>Merge a folder of packages into one file</h3>"
-                      "<ol>"
-                      "<li>Put the <b>.package</b> files you want to combine in one folder "
-                      "(work on <b>copies</b>).</li>"
-                      "<li><b>Tools → Merge packages…</b> opens the <b>Merge assistant</b>.</li>"
-                      "<li>Choose the folder (or pick files) → check the preview count and size → "
-                      "<b>Merge</b>.</li>"
-                      "<li>Optional: tick <b>Validate after merge</b>.</li>"
-                      "<li><b>File → Save As…</b> to write the new combined package. "
-                      "Originals are never changed.</li>"
-                      "</ol>"
-                      "<p>SXPE writes an <b>SXMM</b> manifest so <b>Tools → Un-merge package…</b> "
-                      "can reverse SXPE merges later.</p>"
-                      "<h3>Open / edit a package</h3>"
-                      "<p><b>File → Open…</b> (or drop one file). Edit resources, then Save. "
-                      "Use <b>Tools → Validate</b> before you share.</p>"
-                      "<h3>Clean Downloads / Mods folders</h3>"
-                      "<p><b>Tools → Scan folder…</b> — read-only hygiene. SXPE never auto-deletes.</p>"
-                      "<h3>Inspect a Sims3Pack</h3>"
-                      "<p><b>File → Open Sims3Pack…</b> or <b>Tools → Inspect Sims3Pack…</b> "
-                      "(same dialog) — list and extract embedded packages. Not a package tab.</p>"
-                      "<h3>Compare two packages</h3>"
-                      "<p>After a merge or save, <b>Tools → Compare packages…</b> against the previous "
-                      "good file. Filter A-only / B-only / Different. Save first if the tab is dirty.</p>"
-                      "<h3>Find who points at a resource</h3>"
-                      "<p>Select a CAS part / object → <b>Tools → Find references…</b> (or the resource "
-                      "context menu) → Jump to a hit.</p>"
-                      "<h3>Search inside payloads</h3>"
-                      "<p><b>Tools → Search…</b> (Ctrl+F) finds text/hex in resource bytes. "
-                      "Not the filter box above the grid. Jump from the results table.</p>"
-                      "<h3>Create a Sims3Pack (limited)</h3>"
-                      "<p><b>Tools → Create Sims3Pack…</b> packs a folder of <code>*.package</code> files. "
-                      "CRC zeros; no Store/DRM — not for Store upload.</p>"
-                      "<h3>Un-merge an SXPE merge</h3>"
-                      "<ol>"
-                      "<li><b>Tools → Un-merge package…</b></li>"
-                      "<li>Only works for packages SXPE merged (SXMM manifest).</li>"
-                      "<li>Choose output folder; existing files may be overwritten when force is on.</li>"
-                      "</ol>"
-                      "<h3>Compact vs Save</h3>"
-                      "<p><b>File → Save</b> writes the session (drops deleted resources). "
-                      "<b>Tools → Compact package…</b> uses the same write on a normal .package, "
-                      "but is refused on .nhd/.world/.dbc (layout lock). Prefer Save day-to-day.</p>"
-                      "<h3>FNV-1 / CLIP hash</h3>"
-                      "<p><b>Tools → FNV-1 / CLIP hash…</b> — live lowercase FNV-1 (not FNV-1a) for "
-                      "instance IDs and CLIP names. See docs/spec/hashing.md.</p>"
-                      "<h3>Coming from s3pe?</h3>"
-                      "<p>See the README / user guide section <b>If you used s3pe before</b> "
-                      "for what maps where. The Merge assistant replaces the old "
-                      "“drop everything and hope” flow with a preview and safe caps.</p>")
-                      .arg(workflows_link));
-    lay->addWidget(view, 1);
-    auto* row = new QHBoxLayout;
-    auto* open_doc = new QPushButton(QObject::tr("Open workflows.md…"));
-    open_doc->setEnabled(!workflows.isEmpty());
-    QObject::connect(open_doc, &QPushButton::clicked, &dlg, [workflows] {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(workflows));
+    auto* recipes = new QPushButton(QObject::tr("Full recipes"));
+    QObject::connect(recipes, &QPushButton::clicked, &dlg, [workflows] {
+        if (!workflows.isEmpty()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(workflows));
+        } else {
+            QDesktopServices::openUrl(QUrl(QStringLiteral(
+                "https://github.com/tofb15/sxpe/blob/dev/docs/workflows.md")));
+        }
     });
-    auto* web = new QPushButton(QObject::tr("Online copy"));
-    QObject::connect(web, &QPushButton::clicked, &dlg, [] {
-        QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://github.com/tofb15/sxpe/blob/dev/docs/workflows.md")));
-    });
-    row->addWidget(open_doc);
-    row->addWidget(web);
-    row->addStretch(1);
-    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
-    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    row->addWidget(box);
-    lay->addLayout(row);
-    dlg.resize(640, 520);
+    help_add_close_row(dlg, root, recipes);
+    dlg.resize(560, 360);
     dlg.exec();
 }
 
@@ -3660,30 +3930,159 @@ void show_merge_assistant_dialog(
     dlg.exec();
 }
 
+void show_feedback_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Feedback"));
+    auto* root = help_root(dlg);
+    root->addWidget(help_title_label(QObject::tr("Feedback")));
+    root->addWidget(help_muted_label(
+        QObject::tr("Bug reports and feature requests go to GitHub Issues."),
+        help_muted_css(dlg)));
+    auto* note = new QLabel(QObject::tr(
+        "Do not attach EA or custom-content packages, and do not paste personal file paths."));
+    note->setWordWrap(true);
+    root->addWidget(note);
+    auto* open = new QPushButton(QObject::tr("Open GitHub Issues"));
+    QObject::connect(open, &QPushButton::clicked, &dlg, [&dlg] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/tofb15/sxpe/issues")));
+        dlg.accept();
+    });
+    help_add_close_row(dlg, root, open);
+    help_shrink(dlg, 420);
+    dlg.exec();
+}
+
+void show_warranty_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Warranty"));
+    auto* root = help_root(dlg);
+    root->addWidget(help_title_label(QObject::tr("No warranty")));
+    root->addWidget(help_muted_label(
+        QObject::tr("Use SXPE at your own risk. Keep backups of packages you care about."),
+        help_muted_css(dlg)));
+    auto* body = new QLabel(QObject::tr(
+        "There is no warranty for this program, to the extent permitted by applicable law. "
+        "Except when otherwise stated in writing the copyright holders and/or other parties "
+        "provide the program as is without warranty of any kind, either expressed or implied, "
+        "including the implied warranties of merchantability and fitness for a particular "
+        "purpose. See GNU GPL version 3 for the full text."));
+    body->setWordWrap(true);
+    root->addWidget(body);
+    auto* licence = new QPushButton(QObject::tr("Licence"));
+    QObject::connect(licence, &QPushButton::clicked, &dlg, [parent, &dlg] {
+        dlg.accept();
+        show_licence_dialog(parent);
+    });
+    help_add_close_row(dlg, root, licence);
+    help_shrink(dlg, 440);
+    dlg.exec();
+}
+
+void show_licence_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Licence"));
+    auto* root = help_root(dlg);
+    auto* header = new QHBoxLayout;
+    header->addWidget(help_title_label(QObject::tr("GPL-3.0-or-later")));
+    header->addStretch(1);
+    root->addLayout(header);
+    root->addWidget(help_muted_label(
+        QObject::tr("SXPE is free software. You can redistribute it and/or modify it under the GNU GPL."),
+        help_muted_css(dlg)));
+
+    QString text;
+    const auto license_path = find_repo_doc(QStringLiteral("LICENSE"));
+    if (!license_path.isEmpty()) {
+        QFile f(license_path);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            text = QString::fromUtf8(f.readAll());
+        }
+    }
+    if (text.isEmpty()) {
+        text = QObject::tr("The full licence is the LICENSE file in the SXPE source tree.");
+    }
+    auto* view = new QPlainTextEdit;
+    view->setReadOnly(true);
+    view->setPlainText(text);
+    auto ff = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    ff.setPointSize(std::max(9, view->font().pointSize() - 1));
+    view->setFont(ff);
+    root->addWidget(view, 1);
+    help_add_close_row(dlg, root);
+    dlg.resize(520, 380);
+    dlg.exec();
+}
+
 void show_welcome_dialog(QWidget* parent, const std::function<void()>& open_merge_assistant) {
-    const QString prerelease = QObject::tr(
-        "SXPE is a pre-release build. Bugs may still be present. "
-        "Back up important packages before you modify them.");
-    QMessageBox box(parent);
-    box.setWindowTitle(QObject::tr("Welcome to SXPE"));
-    box.setIcon(QMessageBox::Information);
-    box.setText(QObject::tr("New here? Start with Help → Common tasks."));
-    box.setInformativeText(
-        prerelease + QStringLiteral("\n\n") +
-        QObject::tr("Bug reports and feature requests: Help → Feedback…") +
-        QStringLiteral("\n\n") +
-        QObject::tr("To combine a folder of custom-content packages into one "
-                    "file, use Tools → Merge packages… (Merge assistant). "
-                    "It previews count and size, merges with an SXMM "
-                    "manifest, and can validate afterwards."));
-    auto* tasks = box.addButton(QObject::tr("Common tasks…"), QMessageBox::AcceptRole);
-    auto* merge = box.addButton(QObject::tr("Merge assistant…"), QMessageBox::ActionRole);
-    box.addButton(QObject::tr("Dismiss"), QMessageBox::RejectRole);
-    box.exec();
-    if (box.clickedButton() == tasks) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Welcome to SXPE"));
+    auto* root = help_root(dlg);
+    auto* header = new QHBoxLayout;
+    header->addWidget(help_title_label(QObject::tr("Welcome")));
+    header->addStretch(1);
+    root->addLayout(header);
+    root->addWidget(help_muted_label(QObject::tr("Unofficial Sims 3 package editor"),
+                                    help_muted_css(dlg)));
+
+    auto* banner = new QFrame;
+    banner->setObjectName(QStringLiteral("preBanner"));
+    banner->setStyleSheet(
+        QStringLiteral("QFrame#preBanner { background: palette(base); border-radius: 6px; "
+                       "border-left: 3px solid palette(highlight); }"));
+    auto* bl = new QVBoxLayout(banner);
+    bl->setContentsMargins(10, 8, 10, 8);
+    auto* btitle = new QLabel(QObject::tr("Pre-release"));
+    auto bf = btitle->font();
+    bf.setBold(true);
+    btitle->setFont(bf);
+    bl->addWidget(btitle);
+    auto* bbody = new QLabel(QObject::tr(
+        "Bugs may still be present. Back up important packages before you modify them."));
+    bbody->setWordWrap(true);
+    bl->addWidget(bbody);
+    root->addWidget(banner);
+
+    auto make_action = [&dlg](const QString& title, const QString& hint) {
+        auto* b = new QPushButton;
+        b->setText(title + QStringLiteral("\n") + hint);
+        b->setStyleSheet(QStringLiteral("QPushButton { text-align: left; padding: 8px 12px; }"));
+        b->setCursor(Qt::PointingHandCursor);
+        return b;
+    };
+    auto* tasks = make_action(QObject::tr("Common tasks"),
+                              QObject::tr("Short recipes for merge, scan, validate…"));
+    auto* merge = make_action(QObject::tr("Merge packages"),
+                              QObject::tr("Combine a folder of CC into one file"));
+    auto* feedback = make_action(QObject::tr("Feedback"),
+                                 QObject::tr("Report a bug or request a feature"));
+    root->addWidget(tasks);
+    root->addWidget(merge);
+    root->addWidget(feedback);
+
+    enum class Go { none, tasks, merge, feedback };
+    auto go = std::make_shared<Go>(Go::none);
+    QObject::connect(tasks, &QPushButton::clicked, &dlg, [&dlg, go] {
+        *go = Go::tasks;
+        dlg.accept();
+    });
+    QObject::connect(merge, &QPushButton::clicked, &dlg, [&dlg, go] {
+        *go = Go::merge;
+        dlg.accept();
+    });
+    QObject::connect(feedback, &QPushButton::clicked, &dlg, [&dlg, go] {
+        *go = Go::feedback;
+        dlg.accept();
+    });
+
+    help_add_close_row(dlg, root);
+    help_shrink(dlg, 420);
+    dlg.exec();
+    if (*go == Go::tasks) {
         show_common_tasks_dialog(parent);
-    } else if (box.clickedButton() == merge && open_merge_assistant) {
+    } else if (*go == Go::merge && open_merge_assistant) {
         open_merge_assistant();
+    } else if (*go == Go::feedback) {
+        show_feedback_dialog(parent);
     }
 }
 

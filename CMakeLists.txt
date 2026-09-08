@@ -7,11 +7,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Single source of truth for CLI --version, GUI About, and MCP serverInfo.
 # When bumping, keep vcpkg.json "version-string" equal to PROJECT_VERSION.
+# Git identity / compile UTC are re-embedded on every build (Help → About).
 set(SXPE_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/sxpe_version.hpp.in"
     "${SXPE_GENERATED_INCLUDE_DIR}/sxpe/version.hpp"
     @ONLY)
+set(SXPE_BUILD_INFO_HPP "${SXPE_GENERATED_INCLUDE_DIR}/sxpe/build_info.hpp")
+set(SXPE_EMBED_GIT
+    "${CMAKE_COMMAND}"
+    "-DSXPE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DSXPE_BUILD_INFO_IN=${CMAKE_CURRENT_SOURCE_DIR}/cmake/sxpe_build_info.hpp.in"
+    "-DSXPE_BUILD_INFO_OUT=${SXPE_BUILD_INFO_HPP}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_git.cmake")
+execute_process(COMMAND ${SXPE_EMBED_GIT} COMMAND_ERROR_IS_FATAL ANY)
+add_custom_target(sxpe_build_info
+    COMMAND ${SXPE_EMBED_GIT}
+    BYPRODUCTS "${SXPE_BUILD_INFO_HPP}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Embedding git identity and compile time")
 
 set(SXPE_VENDOR "${CMAKE_BINARY_DIR}/_vendor")
 file(MAKE_DIRECTORY "${SXPE_VENDOR}/nlohmann")
@@ -91,10 +105,12 @@ target_link_libraries(sxpe_commands PUBLIC sxpe_resources)
 add_executable(sxpe src/cli/main.cpp)
 target_include_directories(sxpe PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe PRIVATE sxpe_commands)
+add_dependencies(sxpe sxpe_build_info)
 
 add_executable(sxpe_mcp src/mcp/main.cpp)
 target_include_directories(sxpe_mcp PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_mcp PRIVATE sxpe_commands)
+add_dependencies(sxpe_mcp sxpe_build_info)
 
 add_executable(sxpe_tests tests/game_profile_registry_test.cpp)
 target_link_libraries(sxpe_tests PRIVATE sxpe_games_sims3)
@@ -114,6 +130,10 @@ target_link_libraries(sxpe_fnv_test PRIVATE sxpe_games_sims3)
 
 add_executable(sxpe_update_check_test tests/update_check_test.cpp)
 target_link_libraries(sxpe_update_check_test PRIVATE sxpe_core)
+
+add_executable(sxpe_build_info_test tests/build_info_test.cpp)
+target_include_directories(sxpe_build_info_test PRIVATE "${SXPE_GENERATED_INCLUDE_DIR}")
+add_dependencies(sxpe_build_info_test sxpe_build_info)
 
 add_executable(sxpe_commands_test tests/commands_test.cpp)
 target_link_libraries(sxpe_commands_test PRIVATE sxpe_commands)
@@ -169,6 +189,7 @@ if(Qt6_FOUND)
         "${SXPE_VENDOR}"
         "${SXPE_GENERATED_INCLUDE_DIR}")
     target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
+    add_dependencies(sxpe_gui sxpe_build_info)
     set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
     find_program(SXPE_WINDEPLOYQT windeployqt HINTS "${_qt_prefix}/bin")
@@ -188,6 +209,7 @@ add_test(NAME dbpf_io COMMAND sxpe_dbpf_io_test)
 add_test(NAME refpack COMMAND sxpe_refpack_test)
 add_test(NAME fnv COMMAND sxpe_fnv_test)
 add_test(NAME update_check COMMAND sxpe_update_check_test)
+add_test(NAME build_info COMMAND sxpe_build_info_test)
 add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
 add_test(NAME dds COMMAND sxpe_dds_test)

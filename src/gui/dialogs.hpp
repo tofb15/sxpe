@@ -61,8 +61,13 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                               std::uint32_t ordinal, std::uint32_t max_bytes);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
 void show_contents_dialog(QWidget* parent);
+/// Help → About SXPE: version, git branch/commit, compile UTC, original vs fork.
+void show_about_dialog(QWidget* parent);
 /// Help → Common tasks: plain-language recipes + link to docs/workflows.md.
 void show_common_tasks_dialog(QWidget* parent);
+void show_feedback_dialog(QWidget* parent);
+void show_warranty_dialog(QWidget* parent);
+void show_licence_dialog(QWidget* parent);
 /// Tools → Merge packages…: folder/files → preview count/size → merge (bus) → optional validate.
 /// Calls on_merge(paths, validate_after) when the user confirms; does not run the bus itself.
 void show_merge_assistant_dialog(
