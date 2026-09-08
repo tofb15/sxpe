@@ -20,11 +20,13 @@ public:
     MappedFile& operator=(const MappedFile&) = delete;
 
     static Result<MappedFile> open(const std::filesystem::path& path, bool writable);
-    /// Human-readable CreateFile / open(2) failure. Never a blanket "in use".
+    /// Human-readable CreateFile / open(2) / flock failure. Never a blanket "in use".
     static std::string open_error_message(bool writable);
 
     [[nodiscard]] std::uint64_t size() const { return size_; }
     [[nodiscard]] bool writable() const { return writable_; }
+    /// True when this mapping holds an exclusive write lock (Windows share mode / flock).
+    [[nodiscard]] bool holds_exclusive_lock() const { return exclusive_; }
     [[nodiscard]] std::span<const std::byte> bytes() const {
         return {static_cast<const std::byte*>(view_), static_cast<std::size_t>(size_)};
     }
@@ -49,6 +51,7 @@ private:
     void* view_{nullptr};
     std::uint64_t size_{0};
     bool writable_{false};
+    bool exclusive_{false};
 };
 
 }  // namespace sxpe::core

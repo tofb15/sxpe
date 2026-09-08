@@ -1,6 +1,7 @@
 #include "sxpe/core/mapped_file.hpp"
 
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 
 #include <string>
 
@@ -14,8 +15,8 @@
 #include <windows.h>
 #else
 #include <cerrno>
-#include <cstring>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -24,37 +25,7 @@
 namespace sxpe::core {
 
 std::string MappedFile::open_error_message(bool writable) {
-#ifdef _WIN32
-    const DWORD e = GetLastError();
-    switch (e) {
-        case ERROR_FILE_NOT_FOUND:
-        case ERROR_PATH_NOT_FOUND:
-            return "file not found";
-        case ERROR_ACCESS_DENIED:
-            return writable ? "access denied — close The Sims 3 or check file permissions"
-                            : "access denied";
-        case ERROR_SHARING_VIOLATION:
-        case ERROR_LOCK_VIOLATION:
-            return writable ? "file is in use — close The Sims 3 and try again"
-                            : "file is in use";
-        default:
-            return "open failed (Windows error " + std::to_string(e) + ")";
-    }
-#else
-    switch (errno) {
-        case ENOENT:
-            return "file not found";
-        case EACCES:
-        case EPERM:
-            return writable ? "access denied — close the game or check file permissions"
-                            : "access denied";
-        case EBUSY:
-        case ETXTBSY:
-            return "file is in use";
-        default:
-            return std::string("open failed: ") + std::strerror(errno);
-    }
-#endif
+    return map_open_failure_message(writable);
 }
 
 MappedFile& MappedFile::operator=(MappedFile&& o) noexcept {
@@ -74,9 +45,11 @@ MappedFile& MappedFile::operator=(MappedFile&& o) noexcept {
     view_ = o.view_;
     size_ = o.size_;
     writable_ = o.writable_;
+    exclusive_ = o.exclusive_;
     o.view_ = nullptr;
     o.size_ = 0;
     o.writable_ = false;
+    o.exclusive_ = false;
     return *this;
 }
 
@@ -101,6 +74,7 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
     if (as_handle(m.file_) == INVALID_HANDLE_VALUE) {
         return std::unexpected(err(ErrorCode::io, MappedFile::open_error_message(writable)));
     }
+    m.exclusive_ = writable;
     LARGE_INTEGER sz{};
     if (!GetFileSizeEx(as_handle(m.file_), &sz)) {
         m.close();
@@ -152,6 +126,7 @@ void MappedFile::close() {
         file_ = kInvalid;
     }
     size_ = 0;
+    exclusive_ = false;
 }
 
 #else
@@ -162,6 +137,20 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, bool writ
     m.fd_ = ::open(path.c_str(), writable ? O_RDWR : O_RDONLY);
     if (m.fd_ < 0) {
         return std::unexpected(err(ErrorCode::io, MappedFile::open_error_message(writable)));
+    }
+    if (writable) {
+        // Advisory exclusive lock so a second SXPE (or any flock user) cannot write concurrently.
+        // Released automatically when the fd is closed.
+        if (flock(m.fd_, LOCK_EX | LOCK_NB) != 0) {
+            const int saved = errno;
+            m.close();
+            errno = saved;
+            if (saved == EWOULDBLOCK || saved == EAGAIN || saved == EBUSY) {
+                return std::unexpected(err(ErrorCode::io, file_locked_message()));
+            }
+            return std::unexpected(err(ErrorCode::io, MappedFile::open_error_message(true)));
+        }
+        m.exclusive_ = true;
     }
     struct stat st {};
     if (fstat(m.fd_, &st) != 0) {
@@ -198,10 +187,14 @@ void MappedFile::close() {
         view_ = nullptr;
     }
     if (fd_ >= 0) {
+        if (exclusive_) {
+            flock(fd_, LOCK_UN);
+        }
         ::close(fd_);
         fd_ = -1;
     }
     size_ = 0;
+    exclusive_ = false;
 }
 
 #endif

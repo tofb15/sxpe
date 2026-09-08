@@ -7,6 +7,7 @@
 #include "sxpe/core/sha256.hpp"
 
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 #include "sxpe/games/sims3/fnv.hpp"
 #include "sxpe/games/sims3/package.hpp"
 #include "sxpe/games/sims3/sims3pack.hpp"
@@ -762,6 +763,8 @@ std::vector<Tool> make_catalog() {
          "Open a DBPF file via mmap after sniffing Sims 3 (index-only; payloads stay lazy). "
          "writable defaults false. If writable true and on-disk size >= kOpenReadOnlyBytes (256 MiB), "
          "opens read-only unless forceWritable true (openedReadOnlyDueToSize). "
+         "Sharing violations / exclusive locks return a clear io error (close the game or copy the file first). "
+         "Paths under Documents/Electronic Arts/.../Mods may add warnings[] when exclusive lock is unavailable. "
          "Example: {\"path\":\"mod.package\"}. Do not use for Sims 4.",
          obj_schema({{"path", {{"type", "string"}}},
                      {"writable", {{"type", "boolean"}, {"default", false}}},
@@ -1636,6 +1639,7 @@ struct Bus::Impl {
                 {"mappedBytes", s.pkg.mapped_bytes()},
                 {"layoutLocked", locked},
                 {"pathKind", s.pkg.path_kind()},
+                {"holdsExclusiveLock", s.pkg.holds_exclusive_lock()},
                 {"game", "sims3"}};
     }
 
@@ -2578,9 +2582,20 @@ json Bus::Impl::exec(std::string_view id, json args) {
         out["openMs"] = open_ms;
         out["openedReadOnlyDueToSize"] = demoted;
         out["readOnlyThresholdBytes"] = sxpe::core::caps::kOpenReadOnlyBytes;
+        out["holdsExclusiveLock"] = s->pkg.holds_exclusive_lock();
         if (!fec) {
             out["fileBytes"] = file_bytes;
         }
+        json warnings = json::array();
+        // Optional #68: Mods tree + cannot take exclusive lock → actionable warning (still open).
+        if (sxpe::core::looks_like_ea_mods_path(*path) && !s->pkg.holds_exclusive_lock()) {
+            auto probe = sxpe::core::probe_exclusive_write(*path);
+            if (probe.status == sxpe::core::LockProbeStatus::locked ||
+                probe.status == sxpe::core::LockProbeStatus::access_denied) {
+                warnings.push_back(sxpe::core::mods_path_lock_warning());
+            }
+        }
+        out["warnings"] = warnings;
         out["suggestedCommands"] = json::array(
             {"resource.list --session " + *idr + " --limit 100"});
         return envelope_ok(out);

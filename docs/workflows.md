@@ -98,6 +98,15 @@ No Store/DRM unpacking — unsupported packs are refused or reported clearly.
 
 See [neighborhood-layout.md](neighborhood-layout.md).
 
+## Edit packages the game might have open
+
+Community guides (and the Sims Wiki) warn that editing a `.package` while The Sims 3 has it open can drop objects or crash the game; opening in the wrong order can also make editors fail to read.
+
+1. **Prefer a copy:** copy the package out of `Documents/Electronic Arts/The Sims 3/Mods/...`, edit the copy in SXPE, then replace the Mods file after the game is closed.
+2. **If open/save fails:** SXPE maps sharing violations / exclusive-lock failures to: *file is locked — close the game or copy the file first* (same text in GUI, CLI, and MCP).
+3. **Mods warning:** opening a path under `.../Electronic Arts/.../Mods` without an exclusive lock may return `warnings[]` on `package.open` — treat it as a hint to close the game or switch to a copy.
+4. Linux: SXPE uses `flock` for writable maps so a second SXPE cannot write the same file concurrently. Windows uses restrictive `CreateFile` share modes. Advisory locks only detect cooperating lock holders; always keep backups.
+
 ## Check for a new SXPE build
 
 1. Help → **Check for update…**, or open [Releases](https://github.com/tofb15/sxpe/releases).
