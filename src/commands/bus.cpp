@@ -1416,9 +1416,12 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId", "nodeId"})),
          env_out, false, true, false, false});
     add({"app.checkUpdate", "Check for update",
-         "Compare this build to GitHub Releases /latest. Never downloads zip/tarball assets. "
-         "Uses SXPE_GITHUB_TOKEN, GITHUB_TOKEN, GH_TOKEN, or `gh auth token` for private repos. "
-         "Example: {}. Optional currentVersion / token / latestJson (tests).",
+         "Compare this build to GitHub Releases. Tries /releases/latest first; on 404 falls "
+         "back to listing recent releases and picks the newest non-draft (including "
+         "prereleases / Beta). Never downloads zip/tarball assets. Uses SXPE_GITHUB_TOKEN, "
+         "GITHUB_TOKEN, GH_TOKEN, or `gh auth token` for private repos. Example: {}. "
+         "Optional currentVersion / token / latestJson / latestJsonPath (tests; JSON object "
+         "or releases array).",
          obj_schema({{"currentVersion", {{"type", "string"}}},
                      {"token", {{"type", "string"}}},
                      {"latestJson", {{"type", "string"}}},
@@ -2775,6 +2778,46 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 }
             }
         };
+        auto release_from_object = [](const json& obj) -> sxpe::core::GithubReleaseInfo {
+            sxpe::core::GithubReleaseInfo info;
+            info.tag_name = obj.value("tag_name", std::string{});
+            info.html_url = obj.value("html_url", std::string{});
+            info.draft = obj.value("draft", false);
+            info.prerelease = obj.value("prerelease", false);
+            return info;
+        };
+        auto pick_release_object = [&](const json& doc) -> std::optional<json> {
+            if (doc.is_object()) {
+                return doc;
+            }
+            if (!doc.is_array()) {
+                return std::nullopt;
+            }
+            std::vector<sxpe::core::GithubReleaseInfo> list;
+            list.reserve(doc.size());
+            for (const auto& item : doc) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                list.push_back(release_from_object(item));
+            }
+            const auto picked = sxpe::core::pick_newest_published_release(list);
+            if (picked.tag_name.empty()) {
+                return std::nullopt;
+            }
+            for (const auto& item : doc) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                if (item.value("draft", false)) {
+                    continue;
+                }
+                if (item.value("tag_name", std::string{}) == picked.tag_name) {
+                    return item;
+                }
+            }
+            return std::nullopt;
+        };
 
         std::string body;
         int http_status = 0;
@@ -2810,10 +2853,29 @@ json Bus::Impl::exec(std::string_view id, json args) {
             http_status = http.status;
             body = std::move(http.body);
             if (http_status == 404) {
-                auto r = sxpe::core::update_not_found(current, http_status);
-                return envelope_ok(to_json(std::move(r)));
-            }
-            if (http_status < 200 || http_status >= 300) {
+                // /releases/latest excludes prereleases; Beta-only tags 404 here.
+                auto listed = sxpe::core::https_get(sxpe::core::kGithubReleasesListUrl, ua, token,
+                                                    15000);
+                if (!listed.error.empty() && listed.status == 0) {
+                    return envelope_err(err(ErrorCode::io, listed.error), true, "none");
+                }
+                if (listed.status >= 200 && listed.status < 300) {
+                    http_status = listed.status;
+                    body = std::move(listed.body);
+                } else if (listed.status == 404) {
+                    auto r = sxpe::core::update_not_found(current, 404);
+                    return envelope_ok(to_json(std::move(r)));
+                } else {
+                    std::string msg = "GitHub Releases list failed (HTTP " +
+                                      std::to_string(listed.status) + ")";
+                    if (!listed.error.empty()) {
+                        msg += ": " + listed.error;
+                    }
+                    const bool retryable =
+                        listed.status == 0 || listed.status == 429 || listed.status >= 500;
+                    return envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none");
+                }
+            } else if (http_status < 200 || http_status >= 300) {
                 std::string msg = "GitHub Releases request failed (HTTP " +
                                   std::to_string(http_status) + ")";
                 if (!http.error.empty()) {
@@ -2831,14 +2893,20 @@ json Bus::Impl::exec(std::string_view id, json args) {
             return envelope_err(err(ErrorCode::invalid_argument,
                                     std::string("GitHub returned non-JSON: ") + e.what()));
         }
-        if (!doc.is_object()) {
-            return envelope_err(err(ErrorCode::invalid_argument, "GitHub returned a non-object JSON body"));
+        auto release_obj = pick_release_object(doc);
+        if (!release_obj) {
+            if (doc.is_array()) {
+                auto r = sxpe::core::update_not_found(current, http_status ? http_status : 404);
+                return envelope_ok(to_json(std::move(r)));
+            }
+            return envelope_err(
+                err(ErrorCode::invalid_argument, "GitHub returned a non-object JSON body"));
         }
-        const auto tag = doc.value("tag_name", std::string{});
-        const auto html = doc.value("html_url", std::string{});
+        const auto tag = release_obj->value("tag_name", std::string{});
+        const auto html = release_obj->value("html_url", std::string{});
         auto r = sxpe::core::evaluate_update(current, tag, html);
         r.http_status = http_status;
-        fill_assets(r, doc);
+        fill_assets(r, *release_obj);
         return envelope_ok(to_json(std::move(r)));
     }
     if (cmd == "hash.fnv") {

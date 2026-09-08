@@ -490,6 +490,17 @@ std::string github_token() {
     return token_from_gh_cli();
 }
 
+
+GithubReleaseInfo pick_newest_published_release(const std::vector<GithubReleaseInfo>& releases) {
+    for (const auto& r : releases) {
+        if (r.draft) {
+            continue;
+        }
+        return r;
+    }
+    return {};
+}
+
 const char* update_status_id(UpdateStatus s) {
     switch (s) {
         case UpdateStatus::up_to_date:
@@ -556,8 +567,8 @@ UpdateCheck update_not_found(std::string_view current, int http_status) {
     r.http_status = http_status;
     r.downloads = false;
     r.message =
-        "GitHub returned 404. No public latest release is visible (the repository may be "
-        "private, or no releases exist).";
+        "No public non-draft GitHub Release is visible (the repository may be private, "
+        "or no releases exist yet).";
     r.summary = {r.message,
                  "You are running SXPE " + r.current + ".",
                  "Set SXPE_GITHUB_TOKEN or GITHUB_TOKEN (repo scope), or open the releases page.",

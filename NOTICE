@@ -14,5 +14,17 @@ SXPE is not Peter L Jones's s3pe and is not "s3pe 2.0".
 Prior art / inspiration (capability featureset only; no source copied):
 Peter L Jones, sims3tools / s3pe / s3pi.
 
-Third-party licenses for libraries actually used will be listed here
-as they are added (SPDX in NOTICE and Directory.Packages.props).
+Third-party components that ship with SXPE builds:
+
+- nlohmann/json 3.11.3 — MIT License
+- CLI11 2.4.2 — BSD-3-Clause
+- Qt 6 — LGPL-3.0 / GPL-3.0 / commercial
+  The Windows portable zip redistributes Qt libraries and plugins via
+  windeployqt. See https://www.qt.io/licensing/ for Qt Licensing.
+  Recipients of that zip who rely on LGPL Qt must receive the usual
+  LGPL freedoms (including the ability to relink against a modified Qt).
+  SXPE itself remains GPL-3.0-or-later (see LICENSE).
+- MSVC runtime redistributables — when the Windows package script copies
+  Visual C++ CRT DLLs into the portable zip, those Microsoft
+  redistributable binaries are included under Microsoft's terms for the
+  Visual C++ Redistributable.
