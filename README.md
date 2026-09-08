@@ -39,6 +39,7 @@ SXPE is **not** “s3pe 2.0” and does not use s3pe’s source code. If you alr
 | | s3pe | SXPE (today) |
 | --- | --- | --- |
 | Speed | Often slow on large packages | Built to open and scroll large lists more quickly |
+| Agentic support | None | JSON command line plus an MCP server, same features as the window |
 | Computer | Windows | Windows and Linux |
 | Combining many packages | Can run out of memory | Size limits, progress, and cancel instead of a mystery crash |
 | Split a merge back apart | No | Yes, for packages **SXPE** merged |
