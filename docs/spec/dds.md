@@ -4,7 +4,7 @@ SXPE parses and (where marked **decode**) expands DDS payloads for `_IMG` previe
 `dds.decode` / `dds.replace`. Caps: edge ≤ `kMaxDdsEdge` (8192). No `LoadLibrary`, no
 DirectXTex, no BC7/DX10 pipeline.
 
-Synthetic fixtures only in tests — never commit EA textures.
+Synthetic fixtures only in tests - never commit EA textures.
 
 ## Supported (decode + Replace DDS)
 

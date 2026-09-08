@@ -1,8 +1,8 @@
-# Sims3Pack (`.sims3pack`) — inspect + limited pack
+# Sims3Pack (`.sims3pack`) - inspect + limited pack
 
 **Scope:** list / extract packaged payloads, and **limited authoring** (`sims3pack.pack`) from a folder of `.package` files plus a metadata XML subset. **Not** Store download/upload, **not** DRM/DBPP decryption, **not** monetization, **not** full parity with legacy Store pack tools.
 
-Sources (public community docs only — do **not** copy EA or s3pe/s3pi proprietary tooling source):
+Sources (public community docs only - do **not** copy EA or s3pe/s3pi proprietary tooling source):
 
 - https://simswiki.info/wiki.php?title=Sims_3:SIMS3PACK
 - Cross-check: https://simswiki.info/wiki.php?title=Sims_3:DBPF (embedded `.package` payloads are ordinary TS3 DBPF)
@@ -35,12 +35,12 @@ Root `<Sims3Package Type="…" SubType="…">` with metadata elements (`ArchiveV
 | `Name` | Payload file name (often `*.package` or `*.png`) |
 | `Length` | Payload byte length |
 | `Offset` | Offset from **start of archive section** |
-| `Crc` | CRC string (algorithm **unknown** — recorded / written as zeros, not verified) |
+| `Crc` | CRC string (algorithm **unknown** - recorded / written as zeros, not verified) |
 | `Guid` | Resource GUID string |
 | `ContentType` | Resource kind string |
 | `metatags` | Ignored in v1 |
 
-SXPE scrapes these tags with a lightweight string walk (no XML DOM library). Unusual nesting or unexpected element names may yield **zero entries** even when the header is valid — see limitations.
+SXPE scrapes these tags with a lightweight string walk (no XML DOM library). Unusual nesting or unexpected element names may yield **zero entries** even when the header is valid - see limitations.
 
 ### Archive
 
@@ -101,11 +101,11 @@ Defaults when omitted: `Type=Object`, `SubType=0x00000000`, `ArchiveVersion=1.4`
 - Only the **TS3Pack-framed** layout from SimsWiki is supported. Bare XML + trailing DBPF, or a file that starts with `DBPF`/`DBPP`, is refused with a clear error.
 - CRC algorithm is unknown; values are listed / written as zeros but not validated.
 - XML scrape is best-effort; CDATA and common entities (`&amp;` …) are handled; full XML Schema fidelity is not claimed.
-- Pack is incremental / limited: enough for synthetic round-trips and simple CC packaging — not a Store authoring studio.
-- Synthetic fixtures only — do not commit EA Store packs.
+- Pack is incremental / limited: enough for synthetic round-trips and simple CC packaging - not a Store authoring studio.
+- Synthetic fixtures only - do not commit EA Store packs.
 
 ## Synthetic fixture
 
-`fixtures/synthetic/minimal.sims3pack` — crafted TS3Pack + XML + one embedded synthetic DBPF (`Hello SXPE\n` resource). Regenerate via `python fixtures/synthetic/make_synthetic.py`.
+`fixtures/synthetic/minimal.sims3pack` - crafted TS3Pack + XML + one embedded synthetic DBPF (`Hello SXPE\n` resource). Regenerate via `python fixtures/synthetic/make_synthetic.py`.
 
 Round-trip coverage: `tests/sims3pack_test.cpp` packs a folder containing that extracted `.package`, then list + extract and checks the payload.

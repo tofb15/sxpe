@@ -1,6 +1,6 @@
 # SXPE
 
-**SXPE** is an unofficial editor for *The Sims 3* package files. You can open a `.package` (and related `.world` / `.dbc` / `.nhd` files), look at what is inside, change it, and save — with the goal that the game can still load the result.
+**SXPE** is an unofficial editor for *The Sims 3* package files. You can open a `.package` (and related `.world` / `.dbc` / `.nhd` files), look at what is inside, change it, and save - with the goal that the game can still load the result.
 
 It is a **new program**, fully reimplemented from scratch in C++23. It is **inspired by** Peter L Jones’s s3pe, but it is **not a fork** of that code. Not Electronic Arts software. [GPL-3.0-or-later](LICENSE). The Sims 3 is a trademark of Electronic Arts.
 
@@ -49,14 +49,14 @@ Use **SXPE** if you want something snappier, Linux, or safer big merges. Stick w
 
 ## Where the project is headed
 
-The aim is a Sims 3 package editor you actually want to use every day: files the game can load, clear limits, and the same features in the window and in scripts. Other *Sims* games might come later; **this version is Sims 3 only**. What ships will follow feedback — nothing here is frozen forever.
+The aim is a Sims 3 package editor you actually want to use every day: files the game can load, clear limits, and the same features in the window and in scripts. Other *Sims* games might come later; **this version is Sims 3 only**. What ships will follow feedback - nothing here is frozen forever.
 
 ## What this version does not do yet
 
 - No Sims 4 packages.
 - No spinning 3D meshes or playing animations in the preview (you still get pictures and summaries).
 - No Store / DRM Sims3Pack unpacking.
-- Neighborhood, world, and `.dbc` files are treated carefully so SXPE does not rebuild them into something the game will not load — see [neighborhood layout](docs/neighborhood-layout.md).
+- Neighborhood, world, and `.dbc` files are treated carefully so SXPE does not rebuild them into something the game will not load - see [neighborhood layout](docs/neighborhood-layout.md).
 - Extra third-party editor plugins are not included right now.
 - **Help → Check for update** only tells you if a newer release exists; it never downloads a zip for you.
 
@@ -79,7 +79,7 @@ Drop one `.package` on the window to open it. Drop several to merge them (you ca
 ## First steps
 
 1. Open a **copy** of a package (never the file the game currently has open).
-2. Merge a folder of CC: **Tools → Merge packages…** — [workflows](docs/workflows.md#merge-custom-content-into-one-package).
+2. Merge a folder of CC: **Tools → Merge packages…** - [workflows](docs/workflows.md#merge-custom-content-into-one-package).
 3. **Tools → Validate** before you share.
 
 More recipes: [docs/workflows.md](docs/workflows.md). GUI reference: [docs/user-guide.md](docs/user-guide.md).
@@ -110,9 +110,9 @@ Only if you are compiling. Releases already contain binaries.
 
 These three CMake lines are **sequential steps**, not three ways to do the same thing:
 
-1. **Configure** (once, or after `CMakeLists.txt` / dependency changes) — generates the build tree.
-2. **Build** — compiles.
-3. **Test** — optional. You can run `sxpe` / `sxpe_gui` without it.
+1. **Configure** (once, or after `CMakeLists.txt` / dependency changes) - generates the build tree.
+2. **Build** - compiles.
+3. **Test** - optional. You can run `sxpe` / `sxpe_gui` without it.
 
 **Windows (Visual Studio 2022/2026):** run `build.bat`. It finds MSVC, Ninja, and Qt if the kit is at `../qt/6.8.2/msvc2022_64`, then configure + build + test. `package.bat` writes a portable zip. Do not start with the CMake preset until `cl.exe` and Ninja are on `PATH` (Developer Command Prompt).
 

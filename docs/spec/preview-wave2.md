@@ -1,8 +1,8 @@
-# Preview Wave 2 — layout notes
+# Preview Wave 2 - layout notes
 
 Issue #20. Parsers are **summary-only** for the inspector Preview tab. No mesh GL, CLIP playback, or full catalog editors.
 
-Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` / RCOL / GEOM — community layouts, not EA-shipped samples.
+Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` / RCOL / GEOM - community layouts, not EA-shipped samples.
 
 ## OBJD (`objd.get`)
 
@@ -28,7 +28,7 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 
 - RCOL header scan: internal chunk TGIs + absolute chunk ranges + external TGI table. Tags known chunk types (MODL/MLOD/GEOM/MATD/VBUF/IBUF/…).
 - MLOD: sum `VertexCount` / `PrimitiveCount` across groups when the subset size walk succeeds.
-- GEOM: bare `GEOM` fourcc or RCOL chunk — vertex count and face count (`NumFacePoints / 3`) when the format walk succeeds.
+- GEOM: bare `GEOM` fourcc or RCOL chunk - vertex count and face count (`NumFacePoints / 3`) when the format walk succeeds.
 - MATD: shader name (when hash is known) + texture TGIs from MTNF/MTRL type-code 4 params when parseable. See [rcol.md](rcol.md).
 - Caps oversized chunk tables (`4096`). Not a mesh viewer. Safe chunk replace: `rcol.replaceChunk` (backupPath + session undo).
 

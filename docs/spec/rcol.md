@@ -2,7 +2,7 @@
 
 Issue #59. Extends Preview Wave 2 `rcol.summary` with MATD material refs and a safe per-chunk replace. **Not** an in-app 3D viewport (see [preview.md](../preview.md) P3).
 
-Sources: SimsWiki RCOL / `0x01D0E75D` (MATD) / Shaders — community layouts, not EA-shipped samples.
+Sources: SimsWiki RCOL / `0x01D0E75D` (MATD) / Shaders - community layouts, not EA-shipped samples.
 
 ## `rcol.summary`
 
@@ -11,7 +11,7 @@ Sources: SimsWiki RCOL / `0x01D0E75D` (MATD) / Shaders — community layouts, no
 - MLOD/GEOM mesh counts when the subset/format walk succeeds (unchanged from Wave 2).
 - **MATD** (when the chunk starts with `MATD` and MTNF/MTRL parses):
   - `shaderHash` / `shaderName` when the hash matches the community SimsWiki shader list (FNV-1 32, lowercase).
-  - `textures[]`: type-code `4` params — either RCOL reference (`0x0/0x1/0x3` × 1-based index into internal/external tables) or TextureKey ITG (instance/type/group).
+  - `textures[]`: type-code `4` params - either RCOL reference (`0x0/0x1/0x3` × 1-based index into internal/external tables) or TextureKey ITG (instance/type/group).
   - Top-level `textures[]` flattens MATD refs; `externalTgis[]` lists the external table (often `_IMG` / TXTC / ANIM).
 - Caps oversized chunk tables (`4096`). Partial parses set `partial`.
 - Bare `GEOM` / `MATD` (no RCOL wrapper) still summarize as a single chunk.

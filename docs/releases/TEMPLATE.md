@@ -1,4 +1,4 @@
-# SXPE X.Y.Z — release notes
+# SXPE X.Y.Z - release notes
 
 **Tag:** `vX.Y.Z`
 
@@ -8,9 +8,9 @@ List every artifact that ships on this tag (or say honestly when one is local-on
 
 | Asset | Status |
 | --- | --- |
-| `sxpe-X.Y.Z-windows-x64.zip` | Windows portable (GUI + CLI + MCP + Qt plugins) — `package.bat` / `scripts/package.ps1`; attached by `.github/workflows/release.yml` on `v*` tags |
-| `sxpe-X.Y.Z-linux-x64-cli.tar.gz` | Linux CLI + MCP (no Qt) — `scripts/package-linux.sh --no-gui` |
-| `sxpe-X.Y.Z-linux-x64.tar.gz` | Optional Linux tarball including `sxpe_gui` when Qt was present at build — `scripts/package-linux.sh` (does **not** vendor Qt libs) |
+| `sxpe-X.Y.Z-windows-x64.zip` | Windows portable (GUI + CLI + MCP + Qt plugins) - `package.bat` / `scripts/package.ps1`; attached by `.github/workflows/release.yml` on `v*` tags |
+| `sxpe-X.Y.Z-linux-x64-cli.tar.gz` | Linux CLI + MCP (no Qt) - `scripts/package-linux.sh --no-gui` |
+| `sxpe-X.Y.Z-linux-x64.tar.gz` | Optional Linux tarball including `sxpe_gui` when Qt was present at build - `scripts/package-linux.sh` (does **not** vendor Qt libs) |
 
 ## Highlights
 

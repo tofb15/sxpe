@@ -40,7 +40,7 @@ Unchanged compressed resources: **copy on-disk bytes**. Re-encode only when the 
 
 ## Synthetic
 
-`fixtures/synthetic/refpack-hello.bin` — encode a short ASCII string with `10 FB` header + stop. Decoder tests use this, not FullBuild.
+`fixtures/synthetic/refpack-hello.bin` - encode a short ASCII string with `10 FB` header + stop. Decoder tests use this, not FullBuild.
 
 ## Encoder (SXPE)
 

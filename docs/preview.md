@@ -100,7 +100,7 @@ Public RCOL chunk layout (MODL/MLOD/GEOM/MATD). s3pe does **not** 3D-preview the
 
 | Tag | Preview that is still useful | Difficulty | Priority |
 | --- | --- | --- | --- |
-| `GEOM` | Vertex/face counts via `rcol.summary` — **not** a 3D view | M (counts) / **L** (mesh GL) | **counts done**, P3 GL |
+| `GEOM` | Vertex/face counts via `rcol.summary` - **not** a 3D view | M (counts) / **L** (mesh GL) | **counts done**, P3 GL |
 | `MODL` `MLOD` | LOD/chunk counts + MATD texture refs via `rcol.summary`; chunk replace | M | **done** (#59) |
 | `MATD` | Shader name, texture TGI refs via `rcol.summary` | M | **done** (#59) |
 | `VBUF` `IBUF` `VRTF` `SKIN` | Buffer sizes / format | M | P2 |
@@ -124,7 +124,7 @@ A real mesh preview (Qt + GL, skinning, materials) is a product of its own. Do n
 | `_AUD` | Fourcc / sample rate if we parse SNR; optional PCM play | M / L (playback) | P2 metadata, P3 play |
 | `VOCE` `MIXR` | Controller/mixer names | M | P2 |
 | `_VID` | VP6/AVI header; first-frame still would need a decoder | M header / **L** frames | P2 header, P3 video |
-| `ANIM` | `63A33EA7` animated texture — treat as image sequence later | L | P3 |
+| `ANIM` | `63A33EA7` animated texture - treat as image sequence later | L | P3 |
 
 s3pe does not play CLIP or audio in Preview.
 
@@ -149,37 +149,37 @@ That is how “preview for all types” is reachable without a decoder per fourc
 
 Do **not** start with 3D. Fill the Preview tab so a click always answers “what is this?”
 
-### Wave 1 — P0 (reuse codecs we have) — **done on the Preview tab**
+### Wave 1 - P0 (reuse codecs we have) - **done on the Preview tab**
 
 1. **Identity card** for every resource (TGI + tag + size + name).  
-2. **STBL** — first ~20 strings.  
-3. **NMAP** — first ~20 names.  
-4. **XML family** (`_XML`, `ITUN`) — pretty first ~4 KiB.  
-5. **S3SA** — `s3sa.info` card (PE / module hint). Wrap/import is **not** in Wave 1; see [spec/s3sa.md](spec/s3sa.md).  
+2. **STBL** - first ~20 strings.  
+3. **NMAP** - first ~20 names.  
+4. **XML family** (`_XML`, `ITUN`) - pretty first ~4 KiB.  
+5. **S3SA** - `s3sa.info` card (PE / module hint). Wrap/import is **not** in Wave 1; see [spec/s3sa.md](spec/s3sa.md).  
 6. Keep **PNG/DDS** as now; add **JPEG** magic (`IMAG` `2F7D0002`).
 
-### Wave 2 — P1 (modder daily drivers) — **done on the Preview tab** (issue #20)
+### Wave 2 - P1 (modder daily drivers) - **done on the Preview tab** (issue #20)
 
-7. Catalog **OBJD** header (name GUID, price, thumb IID) — `objd.get`.  
-8. **CASP** clothing type / flags — `casp.get` (best-effort public layout).  
-9. **OBJK** / **VPXY** — Preview surfaces `objk.get` / `vpxy.get` fields (not only Graph).  
-10. **CLIP** duration / tracks (no playback) — `clip.info`.  
-11. **MODL/MLOD/GEOM** counts only — `rcol.summary`.  
-12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`) — still open.  
-13. **S3SA codec** — already shipped earlier; see `spec/s3sa.md`.
+7. Catalog **OBJD** header (name GUID, price, thumb IID) - `objd.get`.  
+8. **CASP** clothing type / flags - `casp.get` (best-effort public layout).  
+9. **OBJK** / **VPXY** - Preview surfaces `objk.get` / `vpxy.get` fields (not only Graph).  
+10. **CLIP** duration / tracks (no playback) - `clip.info`.  
+11. **MODL/MLOD/GEOM** counts only - `rcol.summary`.  
+12. Remaining PNG type IDs from s3pe’s image list (`TWNI`, `AD366F95`, `D84E7FC*`, `FCEAB65B`) - still open.  
+13. **S3SA codec** - already shipped earlier; see `spec/s3sa.md`.
 
 Assumptions / honesty notes: [spec/preview-wave2.md](spec/preview-wave2.md).
 
-### Wave 3 — P2 / P3
+### Wave 3 - P2 / P3
 
-Audio metadata, VID header, full catalog family, then optional GL mesh / CLIP play / VP6 — only if Wave 1–2 stay solid.
+Audio metadata, VID header, full catalog family, then optional GL mesh / CLIP play / VP6 - only if Wave 1–2 stay solid.
 
 ---
 
 ## Out of scope for Preview
 
 - Executing S3SA (no `LoadLibrary`). Wrap/import lives in [spec/s3sa.md](spec/s3sa.md), not Preview.
-- Third-party GUI plugins / Handlers (permanently unsupported — see CONTRIBUTING / issue #60).  
+- Third-party GUI plugins / Handlers (permanently unsupported - see CONTRIBUTING / issue #60).  
 - Writing neighbourhood SNAPs (encode rules stay on File → Save).  
 - Pixel-perfect s3pe wrapper parity.  
 - Shipping EA packages as fixtures; use synthetic PNG/DDS/STBL/NMAP only.
