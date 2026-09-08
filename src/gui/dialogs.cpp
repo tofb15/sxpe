@@ -1,4 +1,6 @@
 #include "dialogs.hpp"
+#include "sxpe/build_info.hpp"
+#include "sxpe/version.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
 #include "sxpe/commands/sims3pack_report.hpp"
@@ -1633,6 +1635,70 @@ void show_external_programs_dialog(QWidget* parent) {
     dlg.exec();
 }
 
+void show_about_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("About SXPE"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* view = new QLabel;
+    view->setWordWrap(true);
+    view->setTextFormat(Qt::RichText);
+    view->setOpenExternalLinks(true);
+    view->setTextInteractionFlags(Qt::TextBrowserInteraction);
+
+    const QString ver = QStringLiteral(SXPE_VERSION).toHtmlEscaped();
+    const QString branch = QStringLiteral(SXPE_GIT_BRANCH).toHtmlEscaped();
+    const QString commit = QStringLiteral(SXPE_GIT_COMMIT).toHtmlEscaped();
+    const QString compiled = QStringLiteral(SXPE_BUILD_UTC).toHtmlEscaped();
+    const QString lineage = QStringLiteral(SXPE_GIT_LINEAGE);
+    const QString source = QStringLiteral(SXPE_GIT_SOURCE_URL).toHtmlEscaped();
+    const QString canonical = QStringLiteral(SXPE_GIT_CANONICAL_URL).toHtmlEscaped();
+    const QString canonical_href = QStringLiteral(SXPE_GIT_CANONICAL_URL);
+    const QString source_href = QStringLiteral(SXPE_GIT_SOURCE_URL);
+
+    QString dirty;
+    if (SXPE_GIT_DIRTY) {
+        dirty = QObject::tr("<br/>Working tree had uncommitted changes when this was compiled.");
+    }
+
+    QString origin_block;
+    if (lineage == QLatin1String("fork")) {
+        origin_block = QObject::tr(
+            "<p><b>This build is from a fork</b>, not the original SXPE repository.</p>"
+            "<p>Fork: <a href=\"%1\">%2</a><br/>"
+            "Original SXPE: <a href=\"%3\">%4</a></p>")
+                           .arg(source_href, source, canonical_href, canonical);
+    } else if (lineage == QLatin1String("official")) {
+        origin_block = QObject::tr(
+            "<p>Built from the original project: <a href=\"%1\">%2</a></p>")
+                           .arg(canonical_href, canonical);
+    } else {
+        origin_block = QObject::tr(
+            "<p>The source repository for this build could not be determined "
+            "(no git checkout, or remotes are not on GitHub).</p>"
+            "<p>Original SXPE: <a href=\"%1\">%2</a></p>")
+                           .arg(canonical_href, canonical);
+    }
+
+    view->setText(QObject::tr(
+                      "<h2>SXPE %1</h2>"
+                      "<p>Unofficial Sims 3 package editor. Not affiliated with Electronic Arts. "
+                      "Not s3pe.<br/>"
+                      "License: GPL-3.0-or-later.<br/>"
+                      "The Sims 3 is a trademark of Electronic Arts.</p>"
+                      "<h3>Build</h3>"
+                      "<p>Branch: %2<br/>"
+                      "Commit: %3%4<br/>"
+                      "Compiled: %5</p>"
+                      "%6")
+                      .arg(ver, branch, commit, dirty, compiled, origin_block));
+    lay->addWidget(view, 1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+    dlg.resize(520, 420);
+    dlg.exec();
+}
+
 void show_contents_dialog(QWidget* parent) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Contents"));
@@ -1718,7 +1784,8 @@ void show_contents_dialog(QWidget* parent) {
         "<h3>Help</h3>"
         "<p>Contents (this window), <b>Welcome</b>, <b>Common tasks</b> (links to workflows.md), "
         "Check for update (GitHub Releases; never auto-downloads), "
-        "<b>Feedback</b> (GitHub Issues), About, Warranty, Licence.</p>"
+        "<b>Feedback</b> (GitHub Issues), About (version, branch, commit, compile time, "
+        "original vs fork), Warranty, Licence.</p>"
         "<h3>Context menus</h3>"
         "<p>Right-click the resource list for Resource actions. Right-click a package tab "
         "to save, close (this / others / left / right), or bookmark. Right-click column "

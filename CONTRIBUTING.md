@@ -74,6 +74,15 @@ See [DESIGN.md](DESIGN.md).
 `sxpe/version.hpp` (`SXPE_VERSION`) for CLI `--version`, GUI About, and MCP `serverInfo.version`.
 Keep `vcpkg.json` `"version-string"` equal to that same `PROJECT_VERSION` when bumping.
 
+Git branch, commit, compile UTC, and original-vs-fork are generated into `sxpe/build_info.hpp`
+on every build (`cmake/embed_git.cmake`). Help → About and `sxpe --version` show them.
+A build is **original** if GitHub `origin` (or, if origin is not GitHub, the `github`
+remote) is `github.com/tofb15/sxpe`, or if CI `GITHUB_REPOSITORY` is that repo. A GitHub
+`origin` from another user is a **fork** even if they also added the original as a second
+remote (About links to https://github.com/tofb15/sxpe). No git checkout: lineage unknown,
+still link the original. Non-GitHub remotes (for example a private Gitea) are ignored
+for this check.
+
 **When** to change the number and **by how much:** [docs/versioning.md](docs/versioning.md).
 Ordinary PRs do **not** bump; the number changes in the release-prep change for a new GitHub tag.
 

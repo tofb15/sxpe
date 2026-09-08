@@ -4,6 +4,7 @@
 #include "sxpe/commands/find_refs_report.hpp"
 #include "sxpe/commands/folder_scan_report.hpp"
 #include "sxpe/commands/sims3pack_report.hpp"
+#include "sxpe/build_info.hpp"
 #include "sxpe/version.hpp"
 
 #include <CLI11.hpp>
@@ -683,6 +684,23 @@ int main(int argc, char** argv) {
     }
     if (want_version && !want_help) {
         std::cout << "sxpe " << SXPE_VERSION << '\n';
+        std::cout << "branch " << SXPE_GIT_BRANCH << '\n';
+        std::cout << "commit " << SXPE_GIT_COMMIT;
+        if (SXPE_GIT_DIRTY) {
+            std::cout << " (modified)";
+        }
+        std::cout << '\n';
+        std::cout << "compiled " << SXPE_BUILD_UTC << '\n';
+        const std::string_view lineage{SXPE_GIT_LINEAGE};
+        if (lineage == "fork") {
+            std::cout << "fork " << SXPE_GIT_SOURCE_URL << '\n';
+            std::cout << "original " << SXPE_GIT_CANONICAL_URL << '\n';
+        } else if (lineage == "official") {
+            std::cout << "source " << SXPE_GIT_CANONICAL_URL << '\n';
+        } else {
+            std::cout << "source unknown\n";
+            std::cout << "original " << SXPE_GIT_CANONICAL_URL << '\n';
+        }
         return 0;
     }
 

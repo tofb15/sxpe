@@ -1,0 +1,24 @@
+#pragma once
+
+// Generated at build time by cmake/embed_git.cmake (not PROJECT_VERSION).
+#ifndef SXPE_GIT_BRANCH
+#define SXPE_GIT_BRANCH "@SXPE_GIT_BRANCH@"
+#endif
+#ifndef SXPE_GIT_COMMIT
+#define SXPE_GIT_COMMIT "@SXPE_GIT_COMMIT@"
+#endif
+#ifndef SXPE_GIT_DIRTY
+#define SXPE_GIT_DIRTY @SXPE_GIT_DIRTY@
+#endif
+#ifndef SXPE_BUILD_UTC
+#define SXPE_BUILD_UTC "@SXPE_BUILD_UTC@"
+#endif
+#ifndef SXPE_GIT_LINEAGE
+#define SXPE_GIT_LINEAGE "@SXPE_GIT_LINEAGE@"
+#endif
+#ifndef SXPE_GIT_SOURCE_URL
+#define SXPE_GIT_SOURCE_URL "@SXPE_GIT_SOURCE_URL@"
+#endif
+#ifndef SXPE_GIT_CANONICAL_URL
+#define SXPE_GIT_CANONICAL_URL "@SXPE_GIT_CANONICAL_URL@"
+#endif
