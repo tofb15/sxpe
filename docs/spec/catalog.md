@@ -37,8 +37,8 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `xml.get` / `xml.set` | y / n | n / y | `_XML`/`ITUN`; UTF-8/UTF-16 sniff; cap 4 MiB |
 | `objk.get` | y | n | OBJK version / component IDs / data keys |
 | `vpxy.get` | y | n | VPXY version / entries / bbox |
-| `objd.get` | y | n | OBJD Common name/desc GUIDs, price, thumb IID |
-| `casp.get` | y | n | CASP clothing type / age-gender flags |
+| `objd.get` / `objd.set` | y / n | n / y | OBJD Common fields; set preserves trailing + TGI off |
+| `casp.get` / `casp.set` | y / n | n / y | CASP clothing/flags/TGIs; set preserves presets/mid |
 | `clip.info` | y | n | CLIP duration + track hashes (no playback) |
 | `rcol.summary` | y | n | MODL/MLOD/GEOM chunk and mesh counts |
 | `undo` / `redo` | n | y | Session mutation stack (50) |

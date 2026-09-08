@@ -70,3 +70,5 @@ SXPE: `resource.setFlags deleted` is a session flag. `package.save` / `saveAs` /
 ## Synthetic
 
 `fixtures/synthetic/single-blob.bin` — one uncompressed resource, `indexType = 0`.
+- [objd.md](objd.md) — OBJD catalog editor layout
+- [casp.md](casp.md) — CASP CAS part editor layout

@@ -7,6 +7,8 @@
 #include "sxpe/resources/types.hpp"
 #include "sxpe/resources/merge_hygiene.hpp"
 #include "sxpe/resources/xml.hpp"
+#include "sxpe/resources/objd.hpp"
+#include "sxpe/resources/casp.hpp"
 #include "sxpe/core/caps.hpp"
 #include "sxpe/core/file_lock.hpp"
 
@@ -2746,6 +2748,158 @@ int main() {
     }
 
 
+
+
+    // Issue #56: objd.set / casp.set — dryRun, undo, reopen matches Preview fields.
+    {
+        auto wu8 = [](std::vector<std::byte>& o, std::uint8_t v) { o.push_back(std::byte{v}); };
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        auto wf32 = [](std::vector<std::byte>& o, float v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto w7 = [&](std::vector<std::byte>& o, std::string_view s) {
+            wu8(o, static_cast<std::uint8_t>(s.size()));
+            const auto* p = reinterpret_cast<const std::byte*>(s.data());
+            o.insert(o.end(), p, p + s.size());
+        };
+        auto w7u = [&](std::vector<std::byte>& o, std::string_view ascii) {
+            wu8(o, static_cast<std::uint8_t>(ascii.size()));
+            for (char c : ascii) {
+                wu8(o, 0);
+                wu8(o, static_cast<std::uint8_t>(c));
+            }
+        };
+
+        std::vector<std::byte> body;
+        wu32(body, 0);
+        w7(body, "Inst");
+        wu32(body, 0x0C);
+        wu64(body, 0x1122334455667788ull);
+        wu64(body, 0x99AABBCCDDEEFF00ull);
+        w7(body, "Chair");
+        w7(body, "A chair");
+        wf32(body, 125.5f);
+        wf32(body, 1.0f);
+        wf32(body, 0.0f);
+        wu8(body, 1);
+        wu64(body, 0xABCDEF0123456789ull);
+        const auto tgi_off = static_cast<std::uint32_t>(body.size());
+        wu8(body, 0);
+        std::vector<std::byte> objd_bytes;
+        wu32(objd_bytes, 0x16);
+        wu32(objd_bytes, tgi_off);
+        wu32(objd_bytes, 1);
+        objd_bytes.insert(objd_bytes.end(), body.begin(), body.end());
+
+        auto sid_env = bus.execute("package.new", json::object());
+        CHECK(sid_env["ok"] == true);
+        const auto sid56 = sid_env["data"]["sessionId"].get<std::string>();
+        json orid{{"type", sxpe::resources::kObjd}, {"group", 0}, {"instance", 56}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid56},
+                               {"resourceId", orid},
+                               {"payloadB64", b64(objd_bytes)}})["ok"] == true);
+
+        bool saw_objd_set = false, saw_casp_set = false;
+        auto man56 = bus.execute("manifest", json::object());
+        for (const auto& tool : man56["data"]["tools"]) {
+            if (tool["name"] == "objd.set") {
+                saw_objd_set = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == false);
+                CHECK(tool["mcpName"] == "objd_set");
+            }
+            if (tool["name"] == "casp.set") {
+                saw_casp_set = true;
+                CHECK(tool["mcpName"] == "casp_set");
+            }
+        }
+        CHECK(saw_objd_set);
+        CHECK(saw_casp_set);
+
+        auto dryo = bus.execute("objd.set", json{{"sessionId", sid56},
+                                                 {"resourceId", orid},
+                                                 {"price", 250.0},
+                                                 {"dryRun", true}});
+        CHECK(dryo["ok"] == true);
+        CHECK(dryo["data"]["dryRun"] == true);
+        auto stillo = bus.execute("objd.get", json{{"sessionId", sid56}, {"resourceId", orid}});
+        CHECK(stillo["data"]["price"] == 125.5);
+
+        CHECK(bus.execute("objd.set",
+                          json{{"sessionId", sid56},
+                               {"resourceId", orid},
+                               {"price", 250.0},
+                               {"internalName", "Sofa"},
+                               {"nameGuid", 0x1}})["ok"] == true);
+        auto aftero = bus.execute("objd.get", json{{"sessionId", sid56}, {"resourceId", orid}});
+        CHECK(aftero["ok"] == true);
+        CHECK(aftero["data"]["price"] == 250.0);
+        CHECK(aftero["data"]["internalName"] == "Sofa");
+        CHECK(aftero["data"]["nameGuid"] == 1);
+        CHECK(aftero["data"]["thumbIid"] == 0xABCDEF0123456789ull);
+        CHECK(bus.execute("undo", json{{"sessionId", sid56}})["ok"] == true);
+        auto undo = bus.execute("objd.get", json{{"sessionId", sid56}, {"resourceId", orid}});
+        CHECK(undo["data"]["price"] == 125.5);
+        CHECK(undo["data"]["internalName"] == "Chair");
+
+        // CASP
+        std::vector<std::byte> casp_bytes;
+        wu32(casp_bytes, 0x12);
+        const auto ref_at = casp_bytes.size();
+        wu32(casp_bytes, 0);
+        wu32(casp_bytes, 0);
+        w7u(casp_bytes, "Top_Shirt");
+        wf32(casp_bytes, 10.0f);
+        wu8(casp_bytes, 0);
+        wu32(casp_bytes, 5);
+        wu32(casp_bytes, 0);
+        const std::uint32_t age_gender = 0x30u | (0x31u << 8);
+        wu32(casp_bytes, age_gender);
+        wu32(casp_bytes, 0x2);
+        for (int i = 0; i < 8; ++i) {
+            wu8(casp_bytes, 0);
+        }
+        const auto tgi_at = casp_bytes.size();
+        const auto ref_off = static_cast<std::uint32_t>(tgi_at - 8);
+        std::memcpy(casp_bytes.data() + ref_at, &ref_off, 4);
+        wu8(casp_bytes, 1);
+        wu64(casp_bytes, 0xABCDull);
+        wu32(casp_bytes, 0x11);
+        wu32(casp_bytes, 0x0333406Cu);
+
+        json crid{{"type", sxpe::resources::kCasp}, {"group", 0}, {"instance", 57}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid56},
+                               {"resourceId", crid},
+                               {"payloadB64", b64(casp_bytes)}})["ok"] == true);
+        CHECK(bus.execute("casp.set",
+                          json{{"sessionId", sid56},
+                               {"resourceId", crid},
+                               {"name", "Top_Edited"},
+                               {"clothingType", 6},
+                               {"ageFlags", 0x20},
+                               {"species", 1},
+                               {"genderFlags", 2}})["ok"] == true);
+        auto afterc = bus.execute("casp.get", json{{"sessionId", sid56}, {"resourceId", crid}});
+        CHECK(afterc["ok"] == true);
+        CHECK(afterc["data"]["name"] == "Top_Edited");
+        CHECK(afterc["data"]["clothingType"] == 6);
+        CHECK(afterc["data"]["ageFlags"] == 0x20);
+        CHECK(afterc["data"]["genderFlags"] == 2);
+        CHECK(afterc["data"]["tgiCount"] == 1);
+        CHECK(bus.execute("undo", json{{"sessionId", sid56}})["ok"] == true);
+        auto undoc = bus.execute("casp.get", json{{"sessionId", sid56}, {"resourceId", crid}});
+        CHECK(undoc["data"]["name"] == "Top_Shirt");
+        CHECK(undoc["data"]["clothingType"] == 5);
+    }
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";

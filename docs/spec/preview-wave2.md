@@ -38,7 +38,9 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 
 | id | notes |
 | --- | --- |
-| `objd.get` | Common header card |
-| `casp.get` | Clothing / age-gender |
+| `objd.get` / `objd.set` | Common header card; typed editor |
+| `casp.get` / `casp.set` | Clothing / age-gender / TGIs; typed editor |
 | `clip.info` | Duration + tracks |
 | `rcol.summary` | Chunk / LOD / v-f counts |
+
+See also [objd.md](objd.md) and [casp.md](casp.md) for field layout assumptions.

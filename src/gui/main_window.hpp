@@ -80,6 +80,8 @@ private:
     void open_stbl();
     void open_nmap();
     void open_xml();
+    void open_objd();
+    void open_casp();
     void export_s3sa();
     void import_s3sa();
     void view_s3sa();

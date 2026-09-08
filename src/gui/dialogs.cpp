@@ -10,6 +10,8 @@
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QDir>
 #include <QFileInfo>
 #include <QDirIterator>
@@ -637,6 +639,194 @@ bool show_xml_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& s
     return dlg.exec() == QDialog::Accepted;
 }
 
+
+bool show_objd_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("objd.get", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This resource is not a catalog object (OBJD), or it failed to parse."));
+        return false;
+    }
+    const auto& d = got["data"];
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Catalog object (OBJD)"));
+    auto* form = new QFormLayout(&dlg);
+    auto* name_guid = new QLineEdit(QString("%1").arg(d.value("nameGuid", 0ull), 16, 16, QLatin1Char('0')).toUpper());
+    auto* desc_guid = new QLineEdit(QString("%1").arg(d.value("descGuid", 0ull), 16, 16, QLatin1Char('0')).toUpper());
+    auto* iname = new QLineEdit(QString::fromStdString(d.value("internalName", std::string())));
+    auto* idesc = new QLineEdit(QString::fromStdString(d.value("internalDesc", std::string())));
+    auto* price = new QDoubleSpinBox;
+    price->setRange(0.0, 1e9);
+    price->setDecimals(3);
+    price->setValue(d.value("price", 0.0));
+    auto* thumb = new QLineEdit(QString("%1").arg(d.value("thumbIid", 0ull), 16, 16, QLatin1Char('0')).toUpper());
+    auto* inst = new QLineEdit(QString::fromStdString(d.value("instanceName", std::string())));
+    form->addRow(QObject::tr("Name GUID"), name_guid);
+    form->addRow(QObject::tr("Desc GUID"), desc_guid);
+    form->addRow(QObject::tr("Internal name"), iname);
+    form->addRow(QObject::tr("Internal desc"), idesc);
+    form->addRow(QObject::tr("Price"), price);
+    form->addRow(QObject::tr("Thumb IID"), thumb);
+    form->addRow(QObject::tr("Instance name"), inst);
+    auto* note = new QLabel(QObject::tr("Materials and unknown trailing bytes are preserved. Layout: docs/spec/objd.md"));
+    note->setWordWrap(true);
+    form->addRow(note);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        auto parse_hex = [](const QString& s, bool* ok) -> quint64 {
+            return s.trimmed().toULongLong(ok, 16);
+        };
+        bool ok = false;
+        const auto ng = parse_hex(name_guid->text(), &ok);
+        if (!ok) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Invalid name GUID hex."));
+            return;
+        }
+        const auto dg = parse_hex(desc_guid->text(), &ok);
+        if (!ok) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Invalid desc GUID hex."));
+            return;
+        }
+        const auto th = parse_hex(thumb->text(), &ok);
+        if (!ok) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Invalid thumb IID hex."));
+            return;
+        }
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"resourceId", rid},
+                            {"nameGuid", ng},
+                            {"descGuid", dg},
+                            {"internalName", iname->text().toStdString()},
+                            {"internalDesc", idesc->text().toStdString()},
+                            {"price", price->value()},
+                            {"thumbIid", th}};
+        if (!inst->text().isEmpty() || d.contains("instanceName")) {
+            args["instanceName"] = inst->text().toStdString();
+        }
+        auto env = bus.execute("objd.set", args);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(520, 360);
+    return dlg.exec() == QDialog::Accepted;
+}
+
+bool show_casp_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("casp.get", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This resource is not a CAS part (CASP), or it failed to parse."));
+        return false;
+    }
+    const auto& d = got["data"];
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("CAS part (CASP)"));
+    auto* form = new QFormLayout(&dlg);
+    auto* name = new QLineEdit(QString::fromStdString(d.value("name", std::string())));
+    auto* sort = new QDoubleSpinBox;
+    sort->setRange(-1e9, 1e9);
+    sort->setDecimals(3);
+    sort->setValue(d.value("sortPriority", 0.0));
+    auto* clothing = new QSpinBox;
+    clothing->setRange(0, 0x7fffffff);
+    clothing->setValue(static_cast<int>(d.value("clothingType", 0u)));
+    auto* type_flags = new QSpinBox;
+    type_flags->setRange(0, 0x7fffffff);
+    type_flags->setValue(static_cast<int>(d.value("typeFlags", 0u)));
+    auto* age_flags = new QSpinBox;
+    age_flags->setRange(0, 255);
+    age_flags->setValue(static_cast<int>(d.value("ageFlags", 0u)));
+    auto* species = new QSpinBox;
+    species->setRange(0, 15);
+    species->setValue(static_cast<int>(d.value("species", 0u)));
+    auto* gender = new QSpinBox;
+    gender->setRange(0, 15);
+    gender->setValue(static_cast<int>(d.value("genderFlags", 0u)));
+    auto* category = new QSpinBox;
+    category->setRange(0, 0x7fffffff);
+    category->setValue(static_cast<int>(d.value("clothingCategory", 0u)));
+    auto* tgis = new QPlainTextEdit;
+    tgis->setPlaceholderText(QObject::tr("One TGI per line: type group instance (hex or decimal)"));
+    QStringList tgi_lines;
+    if (d.contains("tgis") && d["tgis"].is_array()) {
+        for (const auto& row : d["tgis"]) {
+            tgi_lines << QString("0x%1 0x%2 0x%3")
+                             .arg(row.value("type", 0u), 8, 16, QLatin1Char('0'))
+                             .arg(row.value("group", 0u), 8, 16, QLatin1Char('0'))
+                             .arg(row.value("instance", 0ull), 16, 16, QLatin1Char('0'));
+        }
+    }
+    tgis->setPlainText(tgi_lines.join(QLatin1Char('\n')));
+    form->addRow(QObject::tr("Name"), name);
+    form->addRow(QObject::tr("Sort priority"), sort);
+    form->addRow(QObject::tr("Clothing type"), clothing);
+    form->addRow(QObject::tr("Type flags"), type_flags);
+    form->addRow(QObject::tr("Age flags"), age_flags);
+    form->addRow(QObject::tr("Species"), species);
+    form->addRow(QObject::tr("Gender flags"), gender);
+    form->addRow(QObject::tr("Category"), category);
+    form->addRow(QObject::tr("TGI refs"), tgis);
+    auto* note = new QLabel(QObject::tr("Presets and unknown mid bytes are preserved. Layout: docs/spec/casp.md"));
+    note->setWordWrap(true);
+    form->addRow(note);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        nlohmann::json tgi_arr = nlohmann::json::array();
+        const auto lines = tgis->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const auto& line : lines) {
+            const auto parts = line.simplified().split(QLatin1Char(' '));
+            if (parts.size() < 3) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                     QObject::tr("Each TGI line needs type group instance."));
+                return;
+            }
+            bool ok1 = false, ok2 = false, ok3 = false;
+            const auto ty = parts[0].toULongLong(&ok1, 0);
+            const auto gr = parts[1].toULongLong(&ok2, 0);
+            const auto in = parts[2].toULongLong(&ok3, 0);
+            if (!ok1 || !ok2 || !ok3) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Invalid TGI number."));
+                return;
+            }
+            tgi_arr.push_back({{"type", ty}, {"group", gr}, {"instance", in}});
+        }
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"resourceId", rid},
+                            {"name", name->text().toStdString()},
+                            {"sortPriority", sort->value()},
+                            {"clothingType", clothing->value()},
+                            {"typeFlags", type_flags->value()},
+                            {"ageFlags", age_flags->value()},
+                            {"species", species->value()},
+                            {"genderFlags", gender->value()},
+                            {"clothingCategory", category->value()},
+                            {"tgis", tgi_arr}};
+        auto env = bus.execute("casp.set", args);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(560, 520);
+    return dlg.exec() == QDialog::Accepted;
+}
+
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal) {
@@ -967,7 +1157,7 @@ void show_contents_dialog(QWidget* parent) {
         "column cannot be hidden.</p>"
         "<h3>Resource</h3>"
         "<p>Add, copy, paste, duplicate, replace; compression and deleted flags; details; "
-        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, Name map/NMAP, XML/ITUN, S3SA export/import/view DLL, "
+        "copy TGI key; import/export (file, package, DBC); typed editors (STBL, Name map/NMAP, XML/ITUN, Catalog object/OBJD, CAS part/CASP, S3SA export/import/view DLL, "
         "CLIP, DDS, SNAP PNG, VID); open in hex/text editor; delete.</p>"
         "<ul>"
         "<li><b>Add…</b> — Ctrl+I</li>"

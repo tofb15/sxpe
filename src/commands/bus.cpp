@@ -1192,6 +1192,40 @@ std::vector<Tool> make_catalog() {
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
+    add({"objd.set", "OBJD set",
+         "Patch catalog Common fields (name/desc GUIDs, names, price, thumb IID, instanceName). "
+         "Preserves materials, unknown trailing bytes, and TGI off. dryRun + undo.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"nameGuid", {{"type", "integer"}}},
+                     {"descGuid", {{"type", "integer"}}},
+                     {"internalName", {{"type", "string"}}},
+                     {"internalDesc", {{"type", "string"}}},
+                     {"price", {{"type", "number"}}},
+                     {"thumbIid", {{"type", "integer"}}},
+                     {"instanceName", {{"type", "string"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, false, true, false, false});
+    add({"casp.set", "CASP set",
+         "Patch CAS part name, sortPriority, clothing type/flags, age/gender/species, category, "
+         "and optional tgis[] key table. Preserves presets + unknown mid bytes. dryRun + undo.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"name", {{"type", "string"}}},
+                     {"sortPriority", {{"type", "number"}}},
+                     {"clothingType", {{"type", "integer"}}},
+                     {"typeFlags", {{"type", "integer"}}},
+                     {"ageGender", {{"type", "integer"}}},
+                     {"ageFlags", {{"type", "integer"}}},
+                     {"species", {{"type", "integer"}}},
+                     {"genderFlags", {{"type", "integer"}}},
+                     {"handedness", {{"type", "integer"}}},
+                     {"clothingCategory", {{"type", "integer"}}},
+                     {"tgis", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, false, true, false, false});
     add({"clip.info", "CLIP info",
          "CLIP duration and track/hash names (wiki 0x6B20C4F3). No playback.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
@@ -4080,6 +4114,163 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"width", inf->width},
                             {"height", inf->height},
                             {"format", inf->format}});
+    }
+    if (cmd == "objd.set" || cmd == "casp.set") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (cmd == "objd.set" && type != sxpe::resources::kObjd) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not an OBJD"));
+        }
+        if (cmd == "casp.set" && type != sxpe::resources::kCasp) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not a CASP"));
+        }
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        if (cmd == "objd.set") {
+            sxpe::resources::ObjdPatch patch;
+            if (args.contains("nameGuid")) {
+                patch.name_guid = as_u64(args.at("nameGuid"));
+            }
+            if (args.contains("descGuid")) {
+                patch.desc_guid = as_u64(args.at("descGuid"));
+            }
+            if (args.contains("internalName") && args["internalName"].is_string()) {
+                patch.internal_name = args["internalName"].get<std::string>();
+            }
+            if (args.contains("internalDesc") && args["internalDesc"].is_string()) {
+                patch.internal_desc = args["internalDesc"].get<std::string>();
+            }
+            if (args.contains("price")) {
+                const auto& pj = args.at("price");
+                if (pj.is_number()) {
+                    patch.price = pj.get<float>();
+                } else if (pj.is_string()) {
+                    patch.price = std::stof(pj.get<std::string>());
+                }
+            }
+            if (args.contains("thumbIid")) {
+                patch.thumb_iid = as_u64(args.at("thumbIid"));
+            }
+            if (args.contains("instanceName") && args["instanceName"].is_string()) {
+                patch.instance_name = args["instanceName"].get<std::string>();
+            }
+            auto out = sxpe::resources::apply_objd(*body, patch);
+            if (!out) {
+                return envelope_err(out.error());
+            }
+            if (dry(args)) {
+                return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+            }
+            if (auto u = snapshot(s, *i); !u) {
+                return envelope_err(u.error());
+            }
+            auto r = s.pkg.set_uncompressed(*i, *out, compress);
+            if (!r) {
+                return envelope_err(r.error());
+            }
+            auto parsed = sxpe::resources::parse_objd(*out);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            return envelope_ok({{"bytes", out->size()},
+                                {"nameGuid", parsed->name_guid},
+                                {"descGuid", parsed->desc_guid},
+                                {"internalName", parsed->internal_name},
+                                {"internalDesc", parsed->internal_desc},
+                                {"price", parsed->price},
+                                {"thumbIid", parsed->thumb_iid},
+                                {"instanceName", parsed->instance_name}});
+        }
+        // casp.set
+        sxpe::resources::CaspPatch patch;
+        if (args.contains("name") && args["name"].is_string()) {
+            patch.name = args["name"].get<std::string>();
+        }
+        if (args.contains("sortPriority")) {
+            const auto& sj = args.at("sortPriority");
+            if (sj.is_number()) {
+                patch.sort_priority = sj.get<float>();
+            } else if (sj.is_string()) {
+                patch.sort_priority = std::stof(sj.get<std::string>());
+            }
+        }
+        if (args.contains("clothingType")) {
+            patch.clothing_type = static_cast<std::uint32_t>(as_u64(args.at("clothingType")));
+        }
+        if (args.contains("typeFlags")) {
+            patch.type_flags = static_cast<std::uint32_t>(as_u64(args.at("typeFlags")));
+        }
+        if (args.contains("ageGender")) {
+            patch.age_gender = static_cast<std::uint32_t>(as_u64(args.at("ageGender")));
+        }
+        if (args.contains("ageFlags")) {
+            patch.age_flags = static_cast<std::uint8_t>(as_u64(args.at("ageFlags")));
+        }
+        if (args.contains("species")) {
+            patch.species = static_cast<std::uint8_t>(as_u64(args.at("species")));
+        }
+        if (args.contains("genderFlags")) {
+            patch.gender_flags = static_cast<std::uint8_t>(as_u64(args.at("genderFlags")));
+        }
+        if (args.contains("handedness")) {
+            patch.handedness = static_cast<std::uint16_t>(as_u64(args.at("handedness")));
+        }
+        if (args.contains("clothingCategory")) {
+            patch.clothing_category = static_cast<std::uint32_t>(as_u64(args.at("clothingCategory")));
+        }
+        if (args.contains("tgis")) {
+            if (!args["tgis"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "tgis must be an array"));
+            }
+            if (args["tgis"].size() > 255) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "casp tgi count"));
+            }
+            std::vector<sxpe::games::sims3::Tgi> rows;
+            rows.reserve(args["tgis"].size());
+            for (const auto& row : args["tgis"]) {
+                rows.push_back(tgi_from(row));
+            }
+            patch.tgis = std::move(rows);
+        }
+        auto out = sxpe::resources::apply_casp(*body, patch);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        auto parsed = sxpe::resources::parse_casp(*out);
+        if (!parsed) {
+            return envelope_err(parsed.error());
+        }
+        json tgi_rows = json::array();
+        for (const auto& t : parsed->tgis) {
+            tgi_rows.push_back(tgi_json(t));
+        }
+        return envelope_ok({{"bytes", out->size()},
+                            {"name", parsed->name},
+                            {"sortPriority", parsed->sort_priority},
+                            {"clothingType", parsed->clothing_type},
+                            {"typeFlags", parsed->type_flags},
+                            {"ageGender", parsed->age_gender},
+                            {"ageFlags", parsed->age_flags},
+                            {"species", parsed->species},
+                            {"genderFlags", parsed->gender_flags},
+                            {"clothingCategory", parsed->clothing_category},
+                            {"tgis", tgi_rows}});
     }
     if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "objd.get" || cmd == "casp.get" ||
         cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {

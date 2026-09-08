@@ -35,7 +35,7 @@ Column visibility for the resource list.
 
 ### Resource
 
-Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy resource key; Import (file / into-this-package / DBC-equivalent); Export; Editors (STBL, Name map, XML, S3SA, CLIP, DDS, SNAP, VID); open in hex/text editor; Delete.
+Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy resource key; Import (file / into-this-package / DBC-equivalent); Export; Editors (STBL, Name map, XML, Catalog object, CAS part, S3SA, CLIP, DDS, SNAP, VID); open in hex/text editor; Delete.
 
 ### Tools
 
@@ -98,6 +98,8 @@ First launch shows a one-time tip pointing at **Help → Common tasks** and the 
 | STBL | Resource → Editors → String table | String tables |
 | NMAP | Resource → Editors → Name map | Creates NMAP if missing when renaming |
 | XML / ITUN | Resource → Editors → XML | UTF-8 / UTF-16; size capped |
+| OBJD | Resource → Editors → Catalog object | Name/desc GUIDs, price, thumb IID |
+| CASP | Resource → Editors → CAS part | Clothing type, age/gender, TGI refs |
 | S3SA | Export / Import DLL / View | Never `LoadLibrary`s game code; View uses your configured external program |
 | CLIP | Export as new name | Hash helpers; no animation playback |
 | DDS / SNAP / VID | Replace / export | Image / video payload helpers |
