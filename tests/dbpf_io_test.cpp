@@ -1,5 +1,6 @@
 #include "check.hpp"
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 #include "sxpe/games/sims3/package.hpp"
 #include "sxpe/resources/png.hpp"
 
@@ -10,6 +11,20 @@
 #include <span>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -116,6 +131,7 @@ int main() {
     CHECK(!missing_pkg);
     if (!missing_pkg) {
         CHECK(missing_pkg.error().message.find("in use") == std::string::npos);
+        CHECK(missing_pkg.error().message.find("locked") == std::string::npos);
         CHECK(missing_pkg.error().message.find("not found") != std::string::npos);
     }
 
@@ -340,6 +356,83 @@ int main() {
         CHECK(plain.has_value() && as_text(*plain) == "compress me please!!");
     }
 
+
+
+    // Issue #68: file lock detection — actionable messages; simulate lock without EA files.
+    {
+        using sxpe::core::file_locked_message;
+        using sxpe::core::looks_like_ea_mods_path;
+        using sxpe::core::mods_path_lock_warning;
+        CHECK(file_locked_message().find("close the game or copy the file first") != std::string::npos);
+        CHECK(mods_path_lock_warning().find("Mods") != std::string::npos);
+        CHECK(looks_like_ea_mods_path(
+            tmp / "Documents" / "Electronic Arts" / "The Sims 3" / "Mods" / "Packages" / "a.package"));
+        CHECK(looks_like_ea_mods_path(
+            std::filesystem::path("C:/Users/x/Documents/Electronic Arts/The Sims 3/Mods/x.package")));
+        CHECK(!looks_like_ea_mods_path(tmp / "other" / "Mods" / "a.package"));
+        CHECK(!looks_like_ea_mods_path(tmp / "Electronic Arts" / "The Sims 3" / "Saves" / "a.package"));
+
+        auto empty_bytes = fake_header(0);
+        auto lock_target = tmp / "lock-target.bin";
+        write_bytes(lock_target, empty_bytes);
+
+#ifdef _WIN32
+        HANDLE holder = CreateFileW(lock_target.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(holder != INVALID_HANDLE_VALUE);
+        if (holder != INVALID_HANDLE_VALUE) {
+            auto blocked = Package::open(lock_target, true);
+            CHECK(!blocked);
+            if (!blocked) {
+                CHECK(blocked.error().code == ErrorCode::io);
+                CHECK(blocked.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+            // Read-only share may still fail when holder uses share-mode 0.
+            auto ro = Package::open(lock_target, false);
+            CHECK(!ro);
+            if (!ro) {
+                CHECK(ro.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+            CloseHandle(holder);
+        }
+#else
+        const int holder = ::open(lock_target.c_str(), O_RDWR);
+        CHECK(holder >= 0);
+        if (holder >= 0) {
+            CHECK(flock(holder, LOCK_EX | LOCK_NB) == 0);
+            auto blocked = Package::open(lock_target, true);
+            CHECK(!blocked);
+            if (!blocked) {
+                CHECK(blocked.error().code == ErrorCode::io);
+                CHECK(blocked.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+            // Read-only open does not take flock — still allowed.
+            auto ro = Package::open(lock_target, false);
+            CHECK(ro.has_value());
+            if (ro) {
+                CHECK(!ro->holds_exclusive_lock());
+            }
+            flock(holder, LOCK_UN);
+            ::close(holder);
+        }
+        // After unlock, writable open should succeed and hold exclusive.
+        auto wr = Package::open(lock_target, true);
+        CHECK(wr.has_value());
+        if (wr) {
+            CHECK(wr->holds_exclusive_lock());
+            // Second writable open while first holds flock must fail clearly.
+            auto second = Package::open(lock_target, true);
+            CHECK(!second);
+            if (!second) {
+                CHECK(second.error().message.find("close the game or copy the file first") !=
+                      std::string::npos);
+            }
+        }
+#endif
+    }
 
     // Issue #65: open stays O(index) even when a row claims huge mem_size.
     {

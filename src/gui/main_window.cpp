@@ -571,6 +571,15 @@ bool MainWindow::open_path(const QString& path, bool writable) {
                 .arg(mb, 0, 'f', 1)
                 .arg(sxpe::core::caps::kOpenReadOnlyBytes / (1024.0 * 1024.0), 0, 'f', 0));
     }
+    if (data.contains("warnings") && data["warnings"].is_array()) {
+        for (const auto& w : data["warnings"]) {
+            if (!w.is_string()) {
+                continue;
+            }
+            QMessageBox::warning(this, tr("SXPE"),
+                                 QString::fromStdString(w.get<std::string>()));
+        }
+    }
     return true;
 }
 

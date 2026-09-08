@@ -47,6 +47,7 @@ target_include_directories(sxpe_games INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/inc
 
 add_library(sxpe_core
     src/core/mapped_file.cpp
+    src/core/file_lock.cpp
 )
 target_link_libraries(sxpe_core PUBLIC sxpe_games)
 

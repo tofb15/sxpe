@@ -120,3 +120,8 @@ Do **not** copy FullBuild into `fixtures/` or CI. Use `SXPE_GAME_DIR` + mmap in 
 ## CI
 
 GitHub Actions must stay synthetic-only. Do not upload `fixtures/local/` or game installs.
+
+
+## File-lock detection (issue #68)
+
+`sxpe_dbpf_io_test` and `sxpe_commands_test` simulate a locked file with Windows share-mode `0` or Linux `flock(LOCK_EX|LOCK_NB)` on a **synthetic** package under the temp dir — no EA/CC bytes. Asserts actionable *close the game or copy the file first* messages and optional Mods-path `warnings[]` on `package.open`.

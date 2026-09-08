@@ -1,12 +1,14 @@
 #include "sxpe/games/sims3/package.hpp"
 
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 #include "sxpe/games/sims3/refpack.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <bit>
 #include <cctype>
+#include <cerrno>
 #include <cstring>
 #include <cstdio>
 #include <fstream>
@@ -23,6 +25,7 @@
 #endif
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -91,7 +94,7 @@ VoidResult apply_disk_writes(const std::filesystem::path& path, const std::vecto
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-        return std::unexpected(err(ErrorCode::io, core::MappedFile::open_error_message(true)));
+        return std::unexpected(err(ErrorCode::io, core::map_open_failure_message(true)));
     }
     for (const auto& w : ws) {
         if (w.data.empty()) {
@@ -114,9 +117,15 @@ VoidResult apply_disk_writes(const std::filesystem::path& path, const std::vecto
     CloseHandle(h);
     return ok();
 #else
+    // Prefer open(2) so errno maps to actionable lock / permission messages (#68).
+    const int fd = ::open(path.c_str(), O_RDWR);
+    if (fd < 0) {
+        return std::unexpected(err(ErrorCode::io, core::map_open_failure_message(true)));
+    }
+    ::close(fd);
     std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
     if (!f) {
-        return std::unexpected(err(ErrorCode::io, "reopen for write failed"));
+        return std::unexpected(err(ErrorCode::io, core::map_open_failure_message(true)));
     }
     for (const auto& w : ws) {
         if (w.data.empty()) {
@@ -142,22 +151,41 @@ VoidResult replace_file(const std::filesystem::path& dest, const std::filesystem
                           nullptr, nullptr)) {
             if (!MoveFileExW(tmp.c_str(), dest.c_str(),
                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-                return std::unexpected(err(ErrorCode::io, "ReplaceFile/MoveFile failed"));
+                return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
             }
         }
         return ok();
     }
     if (!MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_WRITE_THROUGH)) {
-        return std::unexpected(err(ErrorCode::io, "MoveFile failed"));
+        return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
     }
     return ok();
 #else
+    // If another process holds an exclusive flock, refuse with a clear message before rename.
+    if (std::filesystem::exists(dest)) {
+        auto probe = core::probe_exclusive_write(dest);
+        if (probe.status == core::LockProbeStatus::locked ||
+            probe.status == core::LockProbeStatus::access_denied) {
+            return std::unexpected(err(ErrorCode::io, probe.message));
+        }
+    }
     std::error_code ec;
     if (std::filesystem::exists(dest)) {
         std::filesystem::rename(dest, dest.native() + ".bak", ec);
+        if (ec) {
+            if (ec.category() == std::system_category()) {
+                errno = ec.value();
+                return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
+            }
+            return std::unexpected(err(ErrorCode::io, ec.message()));
+        }
     }
     std::filesystem::rename(tmp, dest, ec);
     if (ec) {
+        if (ec.category() == std::system_category()) {
+            errno = ec.value();
+            return std::unexpected(err(ErrorCode::io, core::map_save_failure_message()));
+        }
         return std::unexpected(err(ErrorCode::io, ec.message()));
     }
     return ok();

@@ -8,6 +8,7 @@
 #include "sxpe/resources/merge_hygiene.hpp"
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/core/caps.hpp"
+#include "sxpe/core/file_lock.hpp"
 
 #ifndef SXPE_SYNTHETIC_DIR
 #error "SXPE_SYNTHETIC_DIR required for sims3pack fixture tests"
@@ -18,6 +19,19 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 #include <nlohmann/json.hpp>
 #include <span>
 #include <string>
@@ -2582,6 +2596,103 @@ int main() {
                         json{{"sessionId", forced["data"]["sessionId"].get<std::string>()}});
         }
     }
+
+
+    // Issue #68: locked package → actionable bus error; Mods path warning when exclusive unavailable.
+    {
+        auto tmp68 = std::filesystem::temp_directory_path() / "sxpe-m68";
+        std::error_code ec68;
+        std::filesystem::remove_all(tmp68, ec68);
+        std::filesystem::create_directories(tmp68, ec68);
+        sxpe::commands::Bus bus68;
+        auto mk = bus68.execute("package.new", json::object());
+        CHECK(mk["ok"] == true);
+        const auto sid = mk["data"]["sessionId"].get<std::string>();
+        auto pkg_path = (tmp68 / "plain.package").string();
+        CHECK(bus68.execute("package.saveAs",
+                            json{{"sessionId", sid}, {"path", pkg_path}, {"force", true}})["ok"] ==
+              true);
+        bus68.execute("package.close", json{{"sessionId", sid}});
+
+#ifndef _WIN32
+        const int holder = ::open(pkg_path.c_str(), O_RDWR);
+        CHECK(holder >= 0);
+        if (holder >= 0) {
+            CHECK(flock(holder, LOCK_EX | LOCK_NB) == 0);
+            auto blocked = bus68.execute("package.open",
+                                         json{{"path", pkg_path}, {"writable", true}});
+            CHECK(blocked["ok"] == false);
+            CHECK(blocked["error"]["code"] == "io");
+            CHECK(blocked["error"]["message"].get<std::string>().find(
+                      "close the game or copy the file first") != std::string::npos);
+
+            auto mods_dir =
+                tmp68 / "Documents" / "Electronic Arts" / "The Sims 3" / "Mods" / "Packages";
+            std::filesystem::create_directories(mods_dir, ec68);
+            auto mods_pkg = mods_dir / "cc.package";
+            std::filesystem::copy_file(pkg_path, mods_pkg, ec68);
+            const int mods_holder = ::open(mods_pkg.c_str(), O_RDWR);
+            CHECK(mods_holder >= 0);
+            if (mods_holder >= 0) {
+                CHECK(flock(mods_holder, LOCK_EX | LOCK_NB) == 0);
+                auto warned = bus68.execute(
+                    "package.open", json{{"path", mods_pkg.string()}, {"writable", false}});
+                CHECK(warned["ok"] == true);
+                CHECK(warned["data"].contains("warnings"));
+                bool saw = false;
+                for (const auto& w : warned["data"]["warnings"]) {
+                    if (w.is_string() &&
+                        w.get<std::string>().find("Mods") != std::string::npos) {
+                        saw = true;
+                    }
+                }
+                CHECK(saw);
+                const auto warned_sid = warned["data"]["sessionId"].get<std::string>();
+                bus68.execute("package.close", json{{"sessionId", warned_sid}});
+                flock(mods_holder, LOCK_UN);
+                ::close(mods_holder);
+            }
+
+            // Save while dest is exclusively locked must surface the same message.
+            auto edit = bus68.execute("package.open",
+                                      json{{"path", pkg_path}, {"writable", false}});
+            // RO open ok while we hold exclusive flock.
+            CHECK(edit["ok"] == true);
+            const auto edit_sid = edit["data"]["sessionId"].get<std::string>();
+            // Cannot save-as over locked dest from a different session file — use new package.
+            auto mk2 = bus68.execute("package.new", json::object());
+            CHECK(mk2["ok"] == true);
+            const auto mk2_sid = mk2["data"]["sessionId"].get<std::string>();
+            auto save_blocked = bus68.execute(
+                "package.saveAs",
+                json{{"sessionId", mk2_sid}, {"path", pkg_path}, {"force", true}});
+            CHECK(save_blocked["ok"] == false);
+            CHECK(save_blocked["error"]["message"].get<std::string>().find(
+                      "close the game or copy the file first") != std::string::npos);
+            bus68.execute("package.close", json{{"sessionId", mk2_sid}});
+            bus68.execute("package.close", json{{"sessionId", edit_sid}});
+
+            flock(holder, LOCK_UN);
+            ::close(holder);
+        }
+#else
+        // Windows: exclusive share-mode 0 holder.
+        std::wstring wpath = std::filesystem::path(pkg_path).wstring();
+        HANDLE holder = CreateFileW(wpath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(holder != INVALID_HANDLE_VALUE);
+        if (holder != INVALID_HANDLE_VALUE) {
+            auto blocked = bus68.execute("package.open",
+                                         json{{"path", pkg_path}, {"writable", true}});
+            CHECK(blocked["ok"] == false);
+            CHECK(blocked["error"]["message"].get<std::string>().find(
+                      "close the game or copy the file first") != std::string::npos);
+            CloseHandle(holder);
+        }
+#endif
+        std::filesystem::remove_all(tmp68, ec68);
+    }
+
 
 
     if (g_failed != 0) {

@@ -110,6 +110,16 @@ First launch shows a one-time tip pointing at **Help → Common tasks** and the 
 - **Scan folder** — Tools → Scan folder…. Read-only hygiene over a Downloads-style tree (empty / corrupt / wrong-game / duplicate TGI sample). Does **not** auto-delete.
 - **Sims3Pack** — list embedded packages and extract; no Store/DRM handling.
 
+## Game / file locks
+
+The Sims 3 (or another tool) may keep a `.package` open. Opening or saving that same path from SXPE can corrupt the package or make the game crash.
+
+- **Open / Save:** if the OS reports a sharing violation or SXPE cannot take an exclusive lock, GUI and CLI show the same actionable bus error: **close the game or copy the file first** (not a raw I/O code).
+- **Mods folder:** paths under `Documents/Electronic Arts/.../Mods` may also show a **warning** when SXPE opens the file but cannot take an exclusive lock — prefer working on a **copy** outside Mods, then replace the mod after the game is closed.
+- CLI/MCP share these messages via the command bus (`package.open` / `package.save` / `package.saveAs`).
+
+See [workflows](workflows.md#edit-packages-the-game-might-have-open).
+
 ## Neighborhood / world / DBC layout lock
 
 `.nhd`, `.world`, and `.dbc` sessions are **layout-locked**:
