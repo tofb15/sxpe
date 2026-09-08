@@ -65,7 +65,7 @@ void show_common_tasks_dialog(QWidget* parent);
 void show_merge_assistant_dialog(
     QWidget* parent,
     const std::function<void(const QStringList& paths, bool validate_after)>& on_merge);
-/// One-shot first-run tip (skip when smoke_mode). Sets onboarding/seenFirstRunTip.
+/// One-shot welcome / pre-release note (skip when smoke_mode).
 void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
                                   const std::function<void()>& open_merge_assistant = {});
 /// Query GitHub Releases via `app.checkUpdate`; never downloads. Graceful offline / 404.
