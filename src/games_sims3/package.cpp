@@ -308,9 +308,8 @@ VoidResult Package::parse_mapped() {
         e.compressed = static_cast<std::uint16_t>(f[7] & 0xFFFFu);
         e.unknown2 = static_cast<std::uint16_t>(f[7] >> 16);
         e.ordinal = 0;
-        if (e.mem_size > kMaxResourceBytes || e.file_size > kMaxResourceBytes) {
-            return std::unexpected(err(ErrorCode::cap_exceeded, "resource size cap"));
-        }
+        // Do not refuse the whole package when one resource exceeds kMaxResourceBytes —
+        // open/list stay O(index). Full decode / preview refuse later with clear caps.
         if (static_cast<std::uint64_t>(e.chunk_offset) + e.file_size > map_.size()) {
             return std::unexpected(err(ErrorCode::corrupt, "payload out of range"));
         }
@@ -318,7 +317,10 @@ VoidResult Package::parse_mapped() {
         entries_.push_back(e);
     }
     original_count_ = static_cast<std::uint32_t>(entries_.size());
-    compute_payload_capacities();
+    // Hole capacities only needed for writable in-place edits; skip the O(n log n) sort on RO.
+    if (writable_) {
+        compute_payload_capacities();
+    }
     recompute_ordinals();
     overrides_.assign(entries_.size(), std::nullopt);
     deleted_.assign(entries_.size(), 0);
@@ -395,7 +397,11 @@ Result<std::vector<std::byte>> Package::peek(std::uint32_t i, std::uint32_t max_
         return std::vector<std::byte>(s->begin(), s->begin() + static_cast<std::ptrdiff_t>(n));
     }
     if (e.mem_size > sxpe::core::caps::kMaxLivePreviewBytes) {
-        return std::unexpected(err(ErrorCode::cap_exceeded, "preview cap"));
+        return std::unexpected(
+            err(ErrorCode::cap_exceeded,
+                "preview cap: compressed resource is " + std::to_string(e.mem_size) +
+                    " bytes uncompressed; live preview/decode skipped above " +
+                    std::to_string(sxpe::core::caps::kMaxLivePreviewBytes) + " bytes"));
     }
     auto u = uncompressed(i);
     if (!u) {
@@ -408,11 +414,27 @@ Result<std::vector<std::byte>> Package::peek(std::uint32_t i, std::uint32_t max_
 }
 
 Result<std::vector<std::byte>> Package::uncompressed(std::uint32_t i) const {
+    if (i >= entries_.size()) {
+        return std::unexpected(err(ErrorCode::not_found, "index"));
+    }
+    const auto& e = entries_[i];
+    if (e.mem_size > kMaxResourceBytes) {
+        return std::unexpected(
+            err(ErrorCode::cap_exceeded,
+                "resource exceeds decode cap (" + std::to_string(e.mem_size) +
+                    " > " + std::to_string(kMaxResourceBytes) +
+                    " bytes); refuse full decode — use raw export in chunks or a hex peek"));
+    }
+    if (e.compressed == 0 && e.file_size > kMaxResourceBytes) {
+        return std::unexpected(
+            err(ErrorCode::cap_exceeded,
+                "resource exceeds decode cap (" + std::to_string(e.file_size) +
+                    " > " + std::to_string(kMaxResourceBytes) + " bytes)"));
+    }
     auto disk = payload_on_disk(i);
     if (!disk) {
         return std::unexpected(disk.error());
     }
-    const auto& e = entries_[i];
     if (e.compressed == 0) {
         return *disk;
     }

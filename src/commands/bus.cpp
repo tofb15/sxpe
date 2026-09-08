@@ -385,13 +385,25 @@ struct Session {
     std::vector<UndoItem> undo;
     std::vector<UndoItem> redo;
     json clipboard = json::array();
+    /// Cached NMAP instance→name map for snappy resource.list / ui_index pagination.
+    std::unordered_map<std::uint64_t, std::string> names;
+    bool names_ready{false};
+    void invalidate_names() {
+        names_ready = false;
+        names.clear();
+    }
 };
 
 sxpe::resources::Nmap load_nmap(Package& pkg) {
     sxpe::resources::Nmap merged;
     merged.version = 1;
     for (std::uint32_t i = 0; i < pkg.count(); ++i) {
-        if (pkg.entry(i).tgi.type != kNmap) {
+        const auto& e = pkg.entry(i);
+        if (e.tgi.type != kNmap) {
+            continue;
+        }
+        // Never decode a huge NMAP just to label the grid — keeps list O(index).
+        if (e.mem_size > sxpe::core::caps::kMaxNmapIndexBytes) {
             continue;
         }
         auto body = pkg.uncompressed(i);
@@ -402,14 +414,14 @@ sxpe::resources::Nmap load_nmap(Package& pkg) {
         if (!n) {
             continue;
         }
-        for (auto& e : n->entries) {
-            merged.entries.push_back(std::move(e));
+        for (auto& ne : n->entries) {
+            merged.entries.push_back(std::move(ne));
         }
     }
     return merged;
 }
 
-std::unordered_map<std::uint64_t, std::string> name_index(Package& pkg) {
+std::unordered_map<std::uint64_t, std::string> build_name_index(Package& pkg) {
     auto names = load_nmap(pkg);
     std::unordered_map<std::uint64_t, std::string> m;
     m.reserve(names.entries.size() * 2 + 1);
@@ -417,6 +429,14 @@ std::unordered_map<std::uint64_t, std::string> name_index(Package& pkg) {
         m.insert_or_assign(e.instance, std::move(e.name));
     }
     return m;
+}
+
+const std::unordered_map<std::uint64_t, std::string>& name_index(Session& s) {
+    if (!s.names_ready) {
+        s.names = build_name_index(s.pkg);
+        s.names_ready = true;
+    }
+    return s.names;
 }
 
 json item_meta(Package& pkg, std::uint32_t i,
@@ -738,9 +758,13 @@ std::vector<Tool> make_catalog() {
          false});
     add({"package.open",
          "Open package",
-         "Open a DBPF file via mmap after sniffing Sims 3. Example: {\"path\":\"mod.package\"}. Do not use for Sims 4.",
+         "Open a DBPF file via mmap after sniffing Sims 3 (index-only; payloads stay lazy). "
+         "writable defaults false. If writable true and on-disk size >= kOpenReadOnlyBytes (256 MiB), "
+         "opens read-only unless forceWritable true (openedReadOnlyDueToSize). "
+         "Example: {\"path\":\"mod.package\"}. Do not use for Sims 4.",
          obj_schema({{"path", {{"type", "string"}}},
                      {"writable", {{"type", "boolean"}, {"default", false}}},
+                     {"forceWritable", {{"type", "boolean"}, {"default", false}}},
                      {"game", {{"type", "string"}}}},
                     json::array({"path"})),
          env_out,
@@ -1588,7 +1612,7 @@ Result<std::vector<UiRow>> Bus::ui_index(std::string_view session_id) {
     if (!s) {
         return std::unexpected(err(ErrorCode::not_found, "session"));
     }
-    auto names = name_index(s->pkg);
+    const auto& names = name_index(*s);
     std::vector<UiRow> rows;
     rows.reserve(s->pkg.count());
     for (std::uint32_t i = 0; i < s->pkg.count(); ++i) {
@@ -2398,22 +2422,41 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!path) {
             return envelope_err(path.error());
         }
-        const bool wr = args.value("writable", false);
+        bool wr = args.value("writable", false);
+        const bool force_wr = args.value("forceWritable", false);
+        std::error_code fec;
+        const auto file_bytes = std::filesystem::file_size(*path, fec);
+        bool demoted = false;
+        if (wr && !force_wr && !fec && file_bytes >= sxpe::core::caps::kOpenReadOnlyBytes) {
+            wr = false;
+            demoted = true;
+        }
         if (auto* existing = find_by_path(*path)) {
             auto out = info(*existing);
             out["alreadyOpen"] = true;
             return envelope_ok(out);
         }
+        const auto t0 = std::chrono::steady_clock::now();
         auto p = Package::open(*path, wr);
         if (!p) {
             return envelope_err(p.error(), p.error().code == ErrorCode::io, "none");
         }
+        const auto open_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count());
         auto idr = add_session(std::move(*p));
         if (!idr) {
             return envelope_err(idr.error());
         }
         auto* s = find(*idr);
         auto out = info(*s);
+        out["openMs"] = open_ms;
+        out["openedReadOnlyDueToSize"] = demoted;
+        out["readOnlyThresholdBytes"] = sxpe::core::caps::kOpenReadOnlyBytes;
+        if (!fec) {
+            out["fileBytes"] = file_bytes;
+        }
         out["suggestedCommands"] = json::array(
             {"resource.list --session " + *idr + " --limit 100"});
         return envelope_ok(out);
@@ -2446,6 +2489,14 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_err(sr.error());
     }
     Session& s = **sr;
+    for (const auto& t : catalog) {
+        if (t.id == cmd) {
+            if (!t.read_only) {
+                s.invalidate_names();
+            }
+            break;
+        }
+    }
 
     if (cmd == "package.info") {
         return envelope_ok(info(s));
@@ -2583,7 +2634,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         return envelope_ok({{"path", path->string()}});
     }
     if (cmd == "resource.list") {
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         json filter = args.value("filter", json::object());
         std::uint32_t limit = args.value("limit", kListDefault);
         if (limit == 0 || limit > kListMax) {
@@ -2663,24 +2714,28 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!i) {
             return envelope_err(i.error());
         }
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         json data = item_meta(s.pkg, *i, names);
         if (args.value("includePayload", false)) {
-            auto body = s.pkg.uncompressed(*i);
-            if (!body) {
-                return envelope_err(body.error());
+            const auto& e = s.pkg.entry(*i);
+            if (e.mem_size > sxpe::core::caps::kMaxResourceBytes) {
+                return envelope_err(
+                    err(ErrorCode::cap_exceeded,
+                        "resource exceeds decode cap (" + std::to_string(e.mem_size) +
+                            " bytes); refuse includePayload — metadata only"));
             }
             std::uint32_t maxb = args.value("maxBytes", 0);
             if (maxb == 0 || maxb > kPayloadCap) {
                 maxb = kPayloadCap;
             }
-            if (body->size() > maxb) {
-                data["payloadB64"] = b64_encode(std::span<const std::byte>(body->data(), maxb));
-                data["truncated"] = true;
-            } else {
-                data["payloadB64"] = b64_encode(*body);
-                data["truncated"] = false;
+            // peek: uncompressed resources are mmap-sliced; compressed refuse above live preview.
+            auto body = s.pkg.peek(*i, maxb);
+            if (!body) {
+                return envelope_err(body.error());
             }
+            data["payloadB64"] = b64_encode(*body);
+            data["truncated"] = e.mem_size > maxb || body->size() >= maxb;
+            data["bytes"] = body->size();
         }
         return envelope_ok(data);
     }
@@ -4465,7 +4520,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
             static_cast<std::uint32_t>(args.value("byteScanMaxBytes", 1u << 20));
         const auto bs_max_res =
             static_cast<std::uint32_t>(args.value("byteScanMaxResources", 500));
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         json hits = json::array();
         std::uint32_t scanned_refs = 0;
         std::uint32_t scanned_objk = 0;
@@ -4655,7 +4710,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json hits = json::array();
         const auto limit = args.value("limit", 100);
-        auto names = name_index(s.pkg);
+        const auto& names = name_index(s);
         for (std::uint32_t i = 0; i < s.pkg.count() && hits.size() < limit; ++i) {
             if (s.pkg.entry(i).mem_size > 16u << 20) {
                 continue;

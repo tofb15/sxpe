@@ -20,6 +20,7 @@ A local Windows portable zip (`package.bat`) ships `sxpe-cli.bat` and `sxpe-mcp.
 - **CLI:** `sxpe <noun> <verb> [flags]`.
 - **MCP:** tool name `noun_verb` (same id with `_`).
 - **Sessions:** many commands take `sessionId` after `package.open`. One-shot CLI often uses `--package PATH` (open → run → save if writing → close).
+- **Huge packages:** `package.open` with `--writable` demotes to read-only at ≥256 MiB (`openedReadOnlyDueToSize`) unless `--force-writable`. Preview/list stay index-first; see [testing.md](testing.md#huge-package-open-performance-issue-65).
 
 Discover tools:
 

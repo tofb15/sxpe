@@ -187,7 +187,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "                     Alternative to --id (hex 0xAABB is ok); do not mix with --id\n";
     std::cout << "  --name TEXT        NMAP display name (resource.rename / nmap.set)\n";
     std::cout << "  --text TEXT        hash.fnv / search.bytes / xml.set\n";
-    std::cout << "  --force --dry-run --writable --include-payload --limit N\n";
+    std::cout << "  --force --dry-run --writable --force-writable --include-payload --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
     std::cout << "  sxpe package info --package mod.package\n";
@@ -654,6 +654,7 @@ int main(int argc, char** argv) {
     bool dry = false;
     bool force = false;
     bool writable = false;
+    bool force_writable = false;
     bool include_payload = false;
     bool want_progress = false;
     int limit = 0;
@@ -674,6 +675,8 @@ int main(int argc, char** argv) {
     app.add_option("--instance", inst_s, "Resource instance (decimal or 0x hex)");
     app.add_option("--ordinal", ord_s, "Duplicate TGI ordinal (default 0)");
     app.add_flag("--writable", writable);
+    app.add_flag("--force-writable", force_writable,
+                 "Allow writable open above the large-package read-only threshold");
     app.add_flag("--include-payload", include_payload);
     app.add_flag("--progress", want_progress,
                  "Emit merge/import progress JSON lines on stderr");
@@ -736,6 +739,9 @@ int main(int argc, char** argv) {
     }
     if (writable) {
         args["writable"] = true;
+    }
+    if (force_writable) {
+        args["forceWritable"] = true;
     }
     if (include_payload) {
         args["includePayload"] = true;

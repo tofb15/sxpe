@@ -5,6 +5,7 @@
 #include "palette.hpp"
 #include "resource_model.hpp"
 
+#include "sxpe/core/caps.hpp"
 #include "sxpe/resources/types.hpp"
 #include "sxpe/resources/xml.hpp"
 
@@ -520,14 +521,16 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
 
 bool MainWindow::open_path(const QString& path, bool writable) {
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    // Bus demotes writable→RO above kOpenReadOnlyBytes unless forceWritable (not used here).
     auto env = bus_.execute("package.open", {{"path", path.toStdString()}, {"writable", writable}});
     if (!env.value("ok", false)) {
         QApplication::restoreOverrideCursor();
         warn_if_err(env);
         return false;
     }
-    const auto sid = QString::fromStdString(env["data"]["sessionId"].get<std::string>());
-    if (env["data"].value("alreadyOpen", false)) {
+    const auto& data = env["data"];
+    const auto sid = QString::fromStdString(data["sessionId"].get<std::string>());
+    if (data.value("alreadyOpen", false)) {
         QApplication::restoreOverrideCursor();
         const int i = tab_index_for_session(sid);
         if (i >= 0) {
@@ -535,9 +538,21 @@ bool MainWindow::open_path(const QString& path, bool writable) {
         }
         return true;
     }
-    add_tab(sid, QFileInfo(path).fileName() + (writable ? QString() : tr(" [read-only]")));
+    const bool rw = data.value("readWrite", writable);
+    add_tab(sid, QFileInfo(path).fileName() + (rw ? QString() : tr(" [read-only]")));
     remember_mru(path);
     QApplication::restoreOverrideCursor();
+    if (data.value("openedReadOnlyDueToSize", false)) {
+        const auto mb = data.value("fileBytes", 0ull) / (1024.0 * 1024.0);
+        QMessageBox::information(
+            this, tr("SXPE"),
+            tr("Opened read-only because the file is %1 MB (threshold %2 MB). "
+               "Huge packages stay index-mapped; use File → Open Read-Only intentionally, "
+               "or reopen with an explicit writable override from CLI (--writable with "
+               "forceWritable) if you must edit.")
+                .arg(mb, 0, 'f', 1)
+                .arg(sxpe::core::caps::kOpenReadOnlyBytes / (1024.0 * 1024.0), 0, 'f', 0));
+    }
     return true;
 }
 

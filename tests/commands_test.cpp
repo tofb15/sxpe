@@ -13,6 +13,7 @@
 #error "SXPE_SYNTHETIC_DIR required for sims3pack fixture tests"
 #endif
 
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
@@ -2161,6 +2162,228 @@ int main() {
             bus.execute("package.close", json{{"sessionId", sid}});
         }
     }
+
+
+    // Issue #65: huge-package open performance — synthetic large index, RO threshold, preview caps.
+    {
+        auto huge = tmp / "huge-65";
+        std::filesystem::remove_all(huge);
+        std::filesystem::create_directories(huge);
+
+        auto poke_u32 = [](std::vector<std::byte>& o, std::size_t off, std::uint32_t v) {
+            for (int i = 0; i < 4; ++i) {
+                o[off + static_cast<std::size_t>(i)] = static_cast<std::byte>((v >> (8 * i)) & 0xFFu);
+            }
+        };
+
+        // Large-index package: N empty rows, payloads share offset 96 / size 0 (O(index) open).
+        const auto n_entries = sxpe::core::caps::kLargeIndexBenchmarkEntries;
+        {
+            const std::uint32_t index_size = 4u + n_entries * 32u;
+            std::vector<std::byte> file(96u + index_size, std::byte{0});
+            file[0] = std::byte{'D'};
+            file[1] = std::byte{'B'};
+            file[2] = std::byte{'P'};
+            file[3] = std::byte{'F'};
+            poke_u32(file, 4, 2);           // major
+            poke_u32(file, 0x24, n_entries);
+            poke_u32(file, 0x2C, index_size);
+            poke_u32(file, 0x3C, 3);        // index version
+            poke_u32(file, 0x40, 96);       // index pos
+            std::size_t off = 96;
+            poke_u32(file, off, 0);  // indexType = 0 (no shared)
+            off += 4;
+            for (std::uint32_t i = 0; i < n_entries; ++i) {
+                poke_u32(file, off + 0, 1);              // type
+                poke_u32(file, off + 4, 0);              // group
+                poke_u32(file, off + 8, 0);              // instance hi
+                poke_u32(file, off + 12, i);             // instance lo
+                poke_u32(file, off + 16, 96);            // chunk
+                poke_u32(file, off + 20, 0x80000000u);   // file_size high bit, len 0
+                poke_u32(file, off + 24, 0);             // mem_size
+                poke_u32(file, off + 28, 0);             // flags
+                off += 32;
+            }
+            auto path = huge / "large-index.package";
+            {
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(file.data()),
+                        static_cast<std::streamsize>(file.size()));
+            }
+
+            auto t0 = std::chrono::steady_clock::now();
+            auto opened = bus.execute("package.open", json{{"path", path.string()}});
+            auto ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count());
+            CHECK(opened["ok"] == true);
+            CHECK(opened["data"].value("indexCount", 0u) == n_entries);
+            CHECK(opened["data"].contains("openMs"));
+            CHECK(ms <= sxpe::core::caps::kLargeIndexOpenBudgetMs);
+            CHECK(opened["data"].value("openMs", 999999ull) <=
+                  sxpe::core::caps::kLargeIndexOpenBudgetMs);
+            const auto sid = opened["data"]["sessionId"].get<std::string>();
+
+            auto t_list0 = std::chrono::steady_clock::now();
+            auto page1 = bus.execute("resource.list",
+                                     json{{"sessionId", sid}, {"limit", 100}});
+            auto page2 = bus.execute(
+                "resource.list",
+                json{{"sessionId", sid},
+                     {"limit", 100},
+                     {"cursor", page1["data"].value("nextCursor", "")}});
+            auto list_ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t_list0)
+                    .count());
+            CHECK(page1["ok"] == true);
+            CHECK(page1["data"]["items"].size() == 100);
+            CHECK(page1["data"].value("truncated", false) == true);
+            CHECK(page2["ok"] == true);
+            CHECK(page2["data"]["items"].size() == 100);
+            // Two paged lists must stay snappy (name cache + no payload decode).
+            CHECK(list_ms <= sxpe::core::caps::kLargeIndexOpenBudgetMs);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Oversized mem_size row: open/list OK; decode/preview refuse with cap_exceeded.
+        {
+            const std::uint32_t mem =
+                sxpe::core::caps::kMaxLivePreviewBytes + (1u << 20);
+            std::vector<std::byte> file(96 + 4 + 32, std::byte{0});
+            file[0] = std::byte{'D'};
+            file[1] = std::byte{'B'};
+            file[2] = std::byte{'P'};
+            file[3] = std::byte{'F'};
+            poke_u32(file, 4, 2);
+            poke_u32(file, 0x24, 1);
+            poke_u32(file, 0x2C, 4 + 32);
+            poke_u32(file, 0x3C, 3);
+            poke_u32(file, 0x40, 96);
+            poke_u32(file, 96, 0);
+            std::size_t off = 100;
+            poke_u32(file, off + 0, 0x00B2D882);  // _IMG-ish
+            poke_u32(file, off + 4, 0);
+            poke_u32(file, off + 8, 0);
+            poke_u32(file, off + 12, 1);
+            poke_u32(file, off + 16, 96);
+            poke_u32(file, off + 20, 0x80000000u);  // empty on disk
+            poke_u32(file, off + 24, mem);
+            poke_u32(file, off + 28, 0x0000FFFFu);  // compressed
+            auto path = huge / "huge-resource.package";
+            {
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(file.data()),
+                        static_cast<std::streamsize>(file.size()));
+            }
+            auto opened = bus.execute("package.open", json{{"path", path.string()}});
+            CHECK(opened["ok"] == true);
+            const auto sid = opened["data"]["sessionId"].get<std::string>();
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 10}});
+            CHECK(list["ok"] == true);
+            CHECK(list["data"]["items"].size() == 1);
+            CHECK(list["data"]["items"][0].value("memSize", 0u) == mem);
+            auto hex = bus.execute(
+                "hex.get",
+                json{{"sessionId", sid},
+                     {"resourceId", list["data"]["items"][0]},
+                     {"maxBytes", 256}});
+            CHECK(hex["ok"] == false);
+            CHECK(hex["error"].value("code", "") == "cap_exceeded");
+            auto text = bus.execute(
+                "text.get",
+                json{{"sessionId", sid},
+                     {"resourceId", list["data"]["items"][0]},
+                     {"maxBytes", 256}});
+            CHECK(text["ok"] == false);
+            CHECK(text["error"].value("code", "") == "cap_exceeded");
+            auto readp = bus.execute(
+                "resource.read",
+                json{{"sessionId", sid},
+                     {"resourceId", list["data"]["items"][0]},
+                     {"includePayload", true},
+                     {"maxBytes", 256}});
+            CHECK(readp["ok"] == false);
+            CHECK(readp["error"].value("code", "") == "cap_exceeded");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Entry above kMaxResourceBytes: package still opens (index path).
+        {
+            const std::uint32_t mem = sxpe::core::caps::kMaxResourceBytes + 1;
+            std::vector<std::byte> file(96 + 4 + 32, std::byte{0});
+            file[0] = std::byte{'D'};
+            file[1] = std::byte{'B'};
+            file[2] = std::byte{'P'};
+            file[3] = std::byte{'F'};
+            poke_u32(file, 4, 2);
+            poke_u32(file, 0x24, 1);
+            poke_u32(file, 0x2C, 4 + 32);
+            poke_u32(file, 0x3C, 3);
+            poke_u32(file, 0x40, 96);
+            poke_u32(file, 96, 0);
+            std::size_t off = 100;
+            poke_u32(file, off + 0, 1);
+            poke_u32(file, off + 4, 0);
+            poke_u32(file, off + 8, 0);
+            poke_u32(file, off + 12, 9);
+            poke_u32(file, off + 16, 96);
+            poke_u32(file, off + 20, 0x80000000u);
+            poke_u32(file, off + 24, mem);
+            poke_u32(file, off + 28, 0);
+            auto path = huge / "oversize-entry.package";
+            {
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(file.data()),
+                        static_cast<std::streamsize>(file.size()));
+            }
+            auto opened = bus.execute("package.open", json{{"path", path.string()}});
+            CHECK(opened["ok"] == true);
+            CHECK(opened["data"].value("indexCount", 0) == 1);
+            bus.execute("package.close",
+                        json{{"sessionId", opened["data"]["sessionId"].get<std::string>()}});
+        }
+
+        // Auto read-only above kOpenReadOnlyBytes (sparse file — no full disk write).
+        {
+            auto path = huge / "sparse-ro.package";
+            {
+                std::vector<std::byte> header(100, std::byte{0});
+                header[0] = std::byte{'D'};
+                header[1] = std::byte{'B'};
+                header[2] = std::byte{'P'};
+                header[3] = std::byte{'F'};
+                poke_u32(header, 4, 2);
+                poke_u32(header, 0x24, 0);
+                poke_u32(header, 0x2C, 4);
+                poke_u32(header, 0x3C, 3);
+                poke_u32(header, 0x40, 96);
+                poke_u32(header, 96, 0);
+                std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(header.data()),
+                        static_cast<std::streamsize>(header.size()));
+            }
+            std::filesystem::resize_file(path, sxpe::core::caps::kOpenReadOnlyBytes);
+            auto demoted = bus.execute(
+                "package.open", json{{"path", path.string()}, {"writable", true}});
+            CHECK(demoted["ok"] == true);
+            CHECK(demoted["data"].value("openedReadOnlyDueToSize", false) == true);
+            CHECK(demoted["data"].value("readWrite", true) == false);
+            bus.execute("package.close",
+                        json{{"sessionId", demoted["data"]["sessionId"].get<std::string>()}});
+
+            auto forced = bus.execute(
+                "package.open",
+                json{{"path", path.string()}, {"writable", true}, {"forceWritable", true}});
+            CHECK(forced["ok"] == true);
+            CHECK(forced["data"].value("openedReadOnlyDueToSize", true) == false);
+            CHECK(forced["data"].value("readWrite", false) == true);
+            bus.execute("package.close",
+                        json{{"sessionId", forced["data"]["sessionId"].get<std::string>()}});
+        }
+    }
+
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
