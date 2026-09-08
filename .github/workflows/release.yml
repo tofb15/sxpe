@@ -1,23 +1,38 @@
 # MAINTAINER-ONLY - not end-user documentation.
-# GitHub Actions workflow to attach portable artifacts on version tags (v0.7.0, …).
-# Live copy: .github/workflows/release.yml (same contents).
+# Attach four portable artifacts on v* tags (and workflow_dispatch).
+# Live: .github/workflows/release.yml
+# Maintainer copy: docs/ci/release.yml (keep identical).
 # See docs/ci/README.md and docs/building.md.
+#
+# Four artifacts per tag:
+#   sxpe-<ver>-windows-x64.zip       GUI + CLI + MCP + Qt (windeployqt)
+#   sxpe-<ver>-windows-x64-cli.zip   CLI + MCP only (no Qt / no sxpe_gui)
+#   sxpe-<ver>-linux-x64-cli.tar.gz  CLI + MCP (--no-gui)
+#   sxpe-<ver>-linux-x64.tar.gz      CLI + MCP + sxpe_gui (Qt not vendored)
 name: release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to re-package (e.g. v0.7.0). Leave empty to use the triggering ref."
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   windows-portable:
-    name: Windows portable zip
+    name: Windows portable zip (GUI)
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: jurplel/install-qt-action@v4.3.1
         with:
@@ -47,12 +62,86 @@ jobs:
           ./scripts/package.ps1 -BuildDir build -SkipBuild
           Get-ChildItem dist -Filter "*.zip" | ForEach-Object { $_.FullName }
 
+      - name: Resolve release meta
+        id: meta
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          NOTES="docs/releases/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes_path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload Release asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.meta.outputs.tag }}
           files: dist/sxpe-*-windows-x64.zip
           fail_on_unmatched_files: true
-          body_path: docs/releases/v0.7.0.md
+          body_path: ${{ steps.meta.outputs.notes_path }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows-cli:
+    name: Windows CLI zip
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: x64
+
+      - name: Configure (no Qt)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+
+      - name: Package CLI zip
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 -BuildDir build -SkipBuild -NoGui
+          Get-ChildItem dist -Filter "*-cli.zip" | ForEach-Object { $_.FullName }
+
+      - name: Resolve release meta
+        id: meta
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          NOTES="docs/releases/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes_path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          files: dist/sxpe-*-windows-x64-cli.zip
+          fail_on_unmatched_files: true
+          body_path: ${{ steps.meta.outputs.notes_path }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -61,6 +150,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install ninja and CMake 3.28
         run: |
@@ -80,10 +171,94 @@ jobs:
       - name: Package CLI+MCP
         run: ./scripts/package-linux.sh --skip-build --no-gui
 
+      - name: Resolve release meta
+        id: meta
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          NOTES="docs/releases/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes_path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload Release asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.meta.outputs.tag }}
           files: dist/sxpe-*-linux-x64-cli.tar.gz
           fail_on_unmatched_files: true
+          body_path: ${{ steps.meta.outputs.notes_path }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  linux-gui:
+    name: Linux GUI tarball
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: "6.8.2"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+          archives: qtbase
+          install-deps: true
+
+      - name: Install ninja and CMake 3.28
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++ wget
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.sh
+          sudo sh cmake-3.28.6-linux-x86_64.sh --skip-license --prefix=/usr/local
+          cmake --version
+          g++ --version
+
+      - name: Configure, build, test
+        run: |
+          cmake --preset default
+          cmake --build --preset default --parallel
+          ctest --preset default --output-on-failure
+
+      - name: Package CLI+MCP+GUI (Qt not vendored)
+        run: ./scripts/package-linux.sh --skip-build
+
+      - name: Resolve release meta
+        id: meta
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          NOTES="docs/releases/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes_path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          files: dist/sxpe-*-linux-x64.tar.gz
+          fail_on_unmatched_files: true
+          body_path: ${{ steps.meta.outputs.notes_path }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
