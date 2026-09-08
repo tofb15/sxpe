@@ -20,6 +20,8 @@ Three surfaces, **one command bus** (same operations, same JSON envelopes):
 | CLI | `sxpe` | Scripts and terminals (Qt-free) |
 | MCP | `sxpe_mcp` | Agents over stdio (Qt-free) |
 
+![SXPE main window: resource grid and XML inspector](docs/images/sxpe-gui.png)
+
 Typical work: open a package, browse resources by TGI and name, edit STBL / NMAP / XML / catalog / CAS / CLIP metadata, merge or un-merge packages, validate, compare, scan a Downloads folder, inspect Sims3Packs, import/export S3SA DLLs (never loaded in-process).
 
 ## Why it exists
