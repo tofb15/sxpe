@@ -152,6 +152,7 @@ These are **buy-mode definitions**: name/description GUIDs (into STBL), price, f
 | --- | --- | --- |
 | **DIR** | `E86B1EEF` | **Compression directory.** Optional list of TGI + uncompressed size. EA TS3 packages omit it (MemSize is already in the index). 20-byte records. |
 | **SXMM** | `53584D4D` | **SXPE merge manifest.** JSON listing which resources came from which source package. Required for un-merge. |
+| **S3MF** | `73E93EEB` | **Sims3Pack leftover manifest XML** (instance 0). Launcher leftover; strip on merge (`leftoverManifestPolicy`). Not gameplay `_XML`. |
 | **S3SA** | `073FAA07` | **Script assembly.** .NET DLL (PE) wrapped for the game. `s3sa.importDll` / `exportDll` / `s3sa.view` wrap, decrypt, and open via an external viewer. Never load it with `LoadLibrary`. |
 | **_XML** | `0333406C` | **XML resource.** Tuning, instantiator doors (`kInstantiator`), snippets. UTF-8 or UTF-16, often with a BOM. Edit via `xml.get`/`xml.set` / Editors → XML…. |
 | **ITUN** | `03B33DDF` | **Interaction tuning.** XML for autonomy, ads, pie-menu (TTAB-like). Same editor as `_XML`. |

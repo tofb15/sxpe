@@ -172,14 +172,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     import_menu_ = res->addMenu(tr("&Import"));
     auto* imp = import_menu_;
     act(imp, tr("From &file…"), {}, [this] { import_files(); });
-    act(imp, tr("From &package(s)…"), {}, [this] {
+    act(imp, tr("From &package(s) into this package…"), {}, [this] {
         if (auto* t = current_tab()) {
             show_import_dialog(this, bus_, t->session_id(), false);
             t->reload();
         }
     });
     act(imp, tr("&Replace selected from package…"), {}, [this] { replace_from_package(); });
-    act(imp, tr("As &DBC…"), {}, [this] {
+    act(imp, tr("As &DBC into this package…"), {}, [this] {
         auto* t = current_tab();
         if (!t) {
             return;
@@ -224,6 +224,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
     act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
     act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
+    act(tools, tr("&Merge packages…"), {}, [this] {
+        const auto paths = QFileDialog::getOpenFileNames(
+            this, tr("Merge packages"), {},
+            tr("Packages (*.package *.dbc);;All (*.*)"));
+        if (paths.size() < 2) {
+            if (!paths.isEmpty()) {
+                QMessageBox::information(this, tr("Merge packages"),
+                                         tr("Select at least two packages to merge into a new untitled package.\n"
+                                            "To import into the open tab, use Resource → Import → From package(s) into this package…"));
+            }
+            return;
+        }
+        merge_dropped_packages(paths);
+    });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
@@ -459,6 +473,8 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
                              {"paths", arr},
                              {"force", true},
                              {"writeMergeManifest", true},
+                             {"leftoverManifestPolicy", "strip"},
+                             {"duplicateTgiPolicy", "force"},
                              {"reportProgress", true}});
     bus_.clear_progress_handler();
     QApplication::restoreOverrideCursor();
@@ -475,10 +491,25 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     const auto imported = env["data"].value("imported", 0);
     const auto pkgs = env["data"].value("packages", 0);
     const auto failed = env["data"].value("failed", 0);
+    const auto stripped = env["data"].contains("strippedLeftovers") &&
+                                  env["data"]["strippedLeftovers"].is_array()
+                              ? env["data"]["strippedLeftovers"].size()
+                              : 0;
+    const auto dups = env["data"].contains("duplicates") && env["data"]["duplicates"].is_array()
+                          ? env["data"]["duplicates"].size()
+                          : 0;
     QString msg = tr("Merged %1 resource(s) from %2 file(s) into a new untitled package. "
                      "Use File → Save As to write it. The original files were not changed.")
                       .arg(imported)
                       .arg(pkgs);
+    if (stripped > 0) {
+        msg += QLatin1Char('\n') +
+               tr("Stripped %1 leftover Sims3Pack manifest resource(s) (allowlist).").arg(stripped);
+    }
+    if (dups > 0) {
+        msg += QLatin1Char('\n') +
+               tr("%1 duplicate TGI(s) resolved with policy force (overwrite).").arg(dups);
+    }
     if (failed > 0) {
         msg += QLatin1Char('\n') + tr("%1 file(s) could not be imported.").arg(failed);
         QMessageBox::warning(this, tr("SXPE"), msg);
@@ -1613,14 +1644,14 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* imp = m.addMenu(tr("&Import"));
     imp->setEnabled(!locked);
     imp->addAction(tr("From &file…"), this, [this] { import_files(); });
-    imp->addAction(tr("From &package(s)…"), this, [this] {
+    imp->addAction(tr("From &package(s) into this package…"), this, [this] {
         if (auto* tab = current_tab()) {
             show_import_dialog(this, bus_, tab->session_id(), false);
             tab->reload();
         }
     });
     imp->addAction(tr("&Replace selected from package…"), this, [this] { replace_from_package(); });
-    imp->addAction(tr("As &DBC…"), this, [this] {
+    imp->addAction(tr("As &DBC into this package…"), this, [this] {
         if (auto* tab = current_tab()) {
             show_import_dialog(this, bus_, tab->session_id(), true);
             tab->reload();
@@ -1809,8 +1840,9 @@ void MainWindow::dropEvent(QDropEvent* e) {
     box.setWindowTitle(tr("Drop %1 files").arg(files.size()));
     box.setText(tr("Open each file in its own tab, or merge every resource into a new untitled package?"));
     box.setInformativeText(
-        tr("A merge never writes the dropped files. If two packages share a resource key, "
-           "the later file wins. Save the result with File → Save As."));
+        tr("A merge never writes the dropped files. Duplicate resource keys: later file wins. "
+           "Known leftover Sims3Pack manifests (type 0x73E93EEB instance 0) are stripped. "
+           "Same as Tools → Merge packages…. Save the result with File → Save As."));
     auto* as_tabs = box.addButton(tr("Open as tabs"), QMessageBox::AcceptRole);
     auto* as_merge = box.addButton(tr("Merge into new package"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Cancel);

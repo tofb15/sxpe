@@ -89,6 +89,8 @@ sxpe resource importPackage --session s-1 --progress \
 
 Caps: `--max-packages`, `--max-total-bytes`, `--max-resources` (camelCase on the bus). Optional explicit checkpoint: `--checkpoint-path OUT.package --checkpoint-between-packages true`.
 
+Hygiene (#64): `leftoverManifestPolicy` defaults to `strip` (allowlisted Sims3Pack leftover `0x73E93EEB` instance 0). `duplicateTgiPolicy` is `force` | `skip` | `fail` (defaults from `--force`). Response lists `strippedLeftovers[]` and `duplicates[]`. `resource.importDbc` is the DBC-equivalent of the same import path. `package.validate` returns `conflictHotspots[]` in the summary.
+
 ## Examples
 
 ```text

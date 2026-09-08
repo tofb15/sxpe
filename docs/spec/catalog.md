@@ -22,7 +22,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.save` | n | y | unmap then ReplaceFile |
 | `package.saveAs` | n | y | |
 | `package.info` | y | n | Includes `layoutLocked`, `pathKind` (nhd/world/dbc/package) |
-| `package.validate` | y | n | Returns `layoutLocked`, `pathKind`, `summary[]` (names neighborhood / world layout lock) |
+| `package.validate` | y | n | Returns `layoutLocked`, `pathKind`, `conflictHotspots[]`, `summary[]` (layout lock + conflict hotspots) |
 | `package.diff` | y | n | Compare two packages by TGI+ordinal; SHA-256 of uncompressed payload; `summary[]` |
 | `folder.scan` | y | n | Read-only recursive `*.package` hygiene; empty/corrupt/wrong-game + duplicate TGI sample; `summary[]` |
 | `sims3pack.info` / `sims3pack.list` / `sims3pack.extract` | y / y / y* | n | Read-only TS3Pack inspect; extract writes files (`openWorld`); no Store/DRM |
@@ -61,5 +61,5 @@ See [s3sa.md](s3sa.md). Do not `resource.add` a raw `.dll` as type `073FAA07`.
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
 | `package.unmerge` | n | y | Recreate sources from SXMM; refuse if missing |
-| `resource.importPackage` | n | y | Merge/import; caps + progress + optional checkpoint; `dirPolicy` strip / copy-through / rebuild(refused) |
+| `resource.importPackage` | n | y | Merge/import; caps + progress + checkpoint; `dirPolicy`; `leftoverManifestPolicy` strip/keep/warn; `duplicateTgiPolicy` force/skip/fail |
 | `package.makeScriptMod` | n | y | Optional later: S3SA + `_XML` `kInstantiator` + NMAP |

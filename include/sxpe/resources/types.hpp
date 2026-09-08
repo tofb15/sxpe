@@ -17,6 +17,7 @@ inline constexpr std::uint32_t kClip = 0x6B20C4F3;
 inline constexpr std::uint32_t kS3sa = 0x073FAA07;
 inline constexpr std::uint32_t kDir = 0xE86B1EEF;
 inline constexpr std::uint32_t kSxmm = 0x53584D4D;  // 'SXMM' SXPE merge manifest
+inline constexpr std::uint32_t kSims3PackLeftoverManifest = 0x73E93EEB;  // Sims3Pack leftover manifest XML
 inline constexpr std::uint32_t kCasp = 0x034AEECB;
 inline constexpr std::uint32_t kXml = 0x0333406C;
 inline constexpr std::uint32_t kItun = 0x03B33DDF;
@@ -162,6 +163,7 @@ inline constexpr TypeInfo kTypes[] = {
     {0xDEA2951C, "COAT", "Coat set"},
     {kDir, "DIR", "Compression directory"},
     {kSxmm, "SXMM", "SXPE merge manifest"},
+    {kSims3PackLeftoverManifest, "S3MF", "Sims3Pack leftover manifest XML"},
     {0xF1EDBD86, "CRMT", "Catalog roof pattern"},
 };
 

@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,12 @@ inline std::string validate_issue_label(const std::string& code) {
     if (code == "dir_unmatched") {
         return "DIR has entries that do not match the index (TGI + mem_size)";
     }
+    if (code == "leftover_manifest") {
+        return "Leftover Sims3Pack manifest TGI(s) present (conflict hotspot; strip on merge)";
+    }
+    if (code == "duplicate_tgi") {
+        return "Duplicate TGI(s) in package (same type+group+instance, multiple ordinals)";
+    }
     return code;
 }
 
@@ -32,7 +39,9 @@ inline std::vector<std::string> format_validate_summary(bool valid, std::uint32_
                                                         const nlohmann::json& dir,
                                                         const nlohmann::json& issues,
                                                         bool layout_locked = false,
-                                                        const std::string& path_kind = {}) {
+                                                        const std::string& path_kind = {},
+                                                        const nlohmann::json& conflict_hotspots =
+                                                            nlohmann::json::array()) {
     std::vector<std::string> summary;
     summary.push_back(valid ? "Result: OK — no issues found." : "Result: issues found.");
     summary.push_back("Resources (index): " + std::to_string(index_count));
@@ -60,6 +69,30 @@ inline std::vector<std::string> format_validate_summary(bool valid, std::uint32_
             summary.push_back("  Unmatched: " + std::to_string(dir.value("unmatched", 0ull)));
         }
     }
+    if (conflict_hotspots.is_array() && !conflict_hotspots.empty()) {
+        summary.push_back("Conflict hotspots (" + std::to_string(conflict_hotspots.size()) + "):");
+        for (const auto& h : conflict_hotspots) {
+            if (!h.is_object()) {
+                summary.push_back("  • " + h.dump());
+                continue;
+            }
+            const auto kind = h.value("kind", std::string{});
+            const auto reason = h.value("reason", std::string{});
+            const auto t = h.value("type", 0u);
+            const auto g = h.value("group", 0u);
+            const auto inst = h.value("instance", 0ull);
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "%08X-%08X-%016llX", static_cast<unsigned>(t),
+                          static_cast<unsigned>(g), static_cast<unsigned long long>(inst));
+            std::string line = std::string("  • [") + (kind.empty() ? "hotspot" : kind) + "] " + buf;
+            if (!reason.empty()) {
+                line += " — " + reason;
+            }
+            summary.push_back(std::move(line));
+        }
+    } else {
+        summary.push_back("Conflict hotspots: none");
+    }
     if (!issues.is_array() || issues.empty()) {
         summary.push_back("Issues: none");
     } else {
@@ -79,10 +112,12 @@ inline nlohmann::json validate_summary_json(bool valid, std::uint32_t index_coun
                                             const nlohmann::json& dir,
                                             const nlohmann::json& issues,
                                             bool layout_locked = false,
-                                            const std::string& path_kind = {}) {
+                                            const std::string& path_kind = {},
+                                            const nlohmann::json& conflict_hotspots =
+                                                nlohmann::json::array()) {
     nlohmann::json arr = nlohmann::json::array();
-    for (const auto& line :
-         format_validate_summary(valid, index_count, dir, issues, layout_locked, path_kind)) {
+    for (const auto& line : format_validate_summary(valid, index_count, dir, issues, layout_locked,
+                                                    path_kind, conflict_hotspots)) {
         arr.push_back(line);
     }
     return arr;

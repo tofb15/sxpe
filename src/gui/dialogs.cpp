@@ -181,8 +181,8 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
                         bool dbc) {
     const auto paths = QFileDialog::getOpenFileNames(
         parent,
-        dbc ? QObject::tr("Import DBC (Shift+click or Ctrl+click to select several)")
-            : QObject::tr("Import packages (Shift+click or Ctrl+click to select several)"),
+        dbc ? QObject::tr("Import as DBC into this package (Shift/Ctrl+click for several)")
+            : QObject::tr("Import packages into this package (Shift/Ctrl+click for several)"),
         {},
         dbc ? QObject::tr("DBC (*.dbc *.package);;All (*.*)")
             : QObject::tr("Packages (*.package *.dbc *.world *.nhd);;All (*.*)"));
@@ -217,6 +217,8 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
     auto env = bus.execute(cmd, {{"sessionId", session.toStdString()},
                                  {"paths", arr},
                                  {"force", true},
+                                 {"leftoverManifestPolicy", "strip"},
+                                 {"duplicateTgiPolicy", "force"},
                                  {"reportProgress", true}});
     bus.clear_progress_handler();
     progress.setValue(progress.maximum());
@@ -228,11 +230,26 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
     const auto imported = env["data"].value("imported", 0);
     const auto pkgs = env["data"].value("packages", 0);
     const auto failed = env["data"].value("failed", 0);
+    const auto stripped = env["data"].contains("strippedLeftovers") &&
+                                  env["data"]["strippedLeftovers"].is_array()
+                              ? env["data"]["strippedLeftovers"].size()
+                              : 0;
+    const auto dups = env["data"].contains("duplicates") && env["data"]["duplicates"].is_array()
+                          ? env["data"]["duplicates"].size()
+                          : 0;
     QString msg = QObject::tr("Imported %1 resource(s) from %2 package(s).").arg(imported).arg(pkgs);
+    if (stripped > 0) {
+        msg += QLatin1Char('\n') +
+               QObject::tr("Stripped %1 leftover Sims3Pack manifest resource(s).").arg(stripped);
+    }
+    if (dups > 0) {
+        msg += QLatin1Char('\n') +
+               QObject::tr("%1 duplicate TGI(s) overwritten (policy force).").arg(dups);
+    }
     if (failed > 0) {
         msg += QLatin1Char('\n') + QObject::tr("%1 file(s) failed.").arg(failed);
         QMessageBox::warning(parent, QObject::tr("SXPE"), msg);
-    } else if (paths.size() > 1) {
+    } else if (paths.size() > 1 || stripped > 0 || dups > 0) {
         QMessageBox::information(parent, QObject::tr("SXPE"), msg);
     }
 }
@@ -952,7 +969,7 @@ void show_contents_dialog(QWidget* parent) {
         "reorder, compact, create NMAP. Error and Validate text name "
         "“neighborhood / world layout lock”.</p>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), inspect Sims3Pack, un-merge package, byte search, validate, compact / save.</p>"
+        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), inspect Sims3Pack, <b>Merge packages…</b>, un-merge package, byte search, validate (conflict hotspots), compact / save.</p>"
         "<ul>"
         "<li><b>Search…</b> — Ctrl+F</li>"
         "</ul>"
