@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -931,7 +932,11 @@ std::vector<Tool> make_catalog() {
          "Duplicate NMAP TGIs concatenate name records and the name map is moved to index 0 "
          "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge. "
          "dirPolicy: strip (default with writeMergeManifest), copy-through, or rebuild (not yet; refused). "
-         "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages.",
+         "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages. "
+         "Caps (defaults in core/caps): maxPackages, maxTotalBytes, maxResources — refuse with cap_exceeded "
+         "before OOM; split the job. reportProgress (default true) emits bus progress events and returns "
+         "progress[] in data. Optional checkpointPath + checkpointBetweenPackages saves after each source "
+         "(explicit; not autosave) and remaps so RAM stays bounded.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
@@ -939,6 +944,17 @@ std::vector<Tool> make_catalog() {
                      {"dirPolicy",
                       {{"type", "string"},
                        {"description", "strip | copy-through | rebuild (rebuild refused for now)"}}},
+                     {"maxPackages", {{"type", "integer"}, {"default", 500}}},
+                     {"maxTotalBytes", {{"type", "integer"}, {"default", 2147483648}}},
+                     {"maxResources", {{"type", "integer"}, {"default", 200000}}},
+                     {"reportProgress", {{"type", "boolean"}, {"default", true}}},
+                     {"checkpointPath",
+                      {{"type", "string"},
+                       {"description", "Explicit save path when checkpointBetweenPackages is true"}}},
+                     {"checkpointBetweenPackages",
+                      {{"type", "boolean"},
+                       {"default", false},
+                       {"description", "Save to checkpointPath after each successful source package"}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId"})),
@@ -951,10 +967,17 @@ std::vector<Tool> make_catalog() {
                     json::array({"path", "outDir"})),
          env_out, false, true, false, true});
     add({"resource.importDbc", "Import DBC",
-         "Treat .dbc/DBPF files as packages and copy resources. Pass path or paths[].",
+         "Treat .dbc/DBPF files as packages and copy resources. Pass path or paths[]. "
+         "Same caps / reportProgress / checkpoint* as resource.importPackage.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                     {"maxPackages", {{"type", "integer"}}},
+                     {"maxTotalBytes", {{"type", "integer"}}},
+                     {"maxResources", {{"type", "integer"}}},
+                     {"reportProgress", {{"type", "boolean"}, {"default", true}}},
+                     {"checkpointPath", {{"type", "string"}}},
+                     {"checkpointBetweenPackages", {{"type", "boolean"}, {"default", false}}},
                      {"force", force_prop()},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId"})),
@@ -1327,6 +1350,13 @@ struct Bus::Impl {
     std::vector<std::unique_ptr<Session>> sessions;
     std::uint32_t next_id{1};
     std::map<std::string, json> idem;
+    ProgressHandler progress;
+
+    void emit_progress(json ev) {
+        if (progress) {
+            progress(ev);
+        }
+    }
 
     Session* find(const std::string& id) {
         for (auto& s : sessions) {
@@ -1497,6 +1527,16 @@ Bus::Bus() : impl_(std::make_unique<Impl>()) {}
 Bus::~Bus() = default;
 Bus::Bus(Bus&&) noexcept = default;
 Bus& Bus::operator=(Bus&&) noexcept = default;
+
+void Bus::set_progress_handler(ProgressHandler handler) {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->progress = std::move(handler);
+}
+
+void Bus::clear_progress_handler() {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->progress = nullptr;
+}
 
 std::vector<Tool> Bus::tools() const { return impl_->catalog; }
 
@@ -2888,9 +2928,73 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (paths.empty()) {
             return envelope_err(err(ErrorCode::invalid_argument, "need path or paths"));
         }
+        auto merge_u32 = [&](const char* key, std::uint32_t def) -> std::uint32_t {
+            if (!args.contains(key)) {
+                return def;
+            }
+            const auto v = as_u64(args.at(key));
+            if (v > 0xFFFFFFFFull) {
+                return def;
+            }
+            return static_cast<std::uint32_t>(v);
+        };
+        auto merge_u64 = [&](const char* key, std::uint64_t def) -> std::uint64_t {
+            if (!args.contains(key)) {
+                return def;
+            }
+            return as_u64(args.at(key));
+        };
+        const auto max_packages =
+            merge_u32("maxPackages", sxpe::core::caps::kMergeMaxPackages);
+        const auto max_total_bytes =
+            merge_u64("maxTotalBytes", sxpe::core::caps::kMergeMaxTotalBytes);
+        const auto max_resources =
+            merge_u32("maxResources", sxpe::core::caps::kMergeMaxResources);
+        const bool report_progress = args.value("reportProgress", true);
+        const bool checkpoint_between = args.value("checkpointBetweenPackages", false);
+        std::optional<std::filesystem::path> checkpoint_path;
+        if (args.contains("checkpointPath") && args["checkpointPath"].is_string()) {
+            auto cp = check_path(args["checkpointPath"].get<std::string>());
+            if (!cp) {
+                return envelope_err(cp.error());
+            }
+            checkpoint_path = *cp;
+        }
+        if (checkpoint_between && !checkpoint_path) {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "checkpointBetweenPackages requires checkpointPath "
+                                    "(explicit save; SXPE never autosaves mid-merge)"));
+        }
+        if (paths.size() > max_packages) {
+            return envelope_err(
+                err(ErrorCode::cap_exceeded,
+                    "too many packages (" + std::to_string(paths.size()) + " > maxPackages " +
+                        std::to_string(max_packages) + "); split the job"));
+        }
+        // Preflight on-disk sizes so we refuse before copying into RAM.
+        std::uint64_t total_bytes = 0;
+        for (const auto& rawp : paths) {
+            auto path = check_path(rawp);
+            if (!path) {
+                continue;
+            }
+            std::error_code ec;
+            const auto sz = std::filesystem::file_size(*path, ec);
+            if (!ec) {
+                total_bytes += sz;
+            }
+        }
+        if (total_bytes > max_total_bytes) {
+            return envelope_err(
+                err(ErrorCode::cap_exceeded,
+                    "total input bytes (" + std::to_string(total_bytes) +
+                        ") exceed maxTotalBytes (" + std::to_string(max_total_bytes) +
+                        "); split the job"));
+        }
         json packages = json::array();
         json errors = json::array();
         json sources = json::array();
+        json progress_log = json::array();
         const bool write_man = args.value("writeMergeManifest", false);
         std::string dir_policy;
         if (args.contains("dirPolicy") && args["dirPolicy"].is_string()) {
@@ -2907,24 +3011,81 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     "dirPolicy 'rebuild' is not yet implemented; use 'strip' or "
                                     "'copy-through'"));
         }
+        auto push_progress = [&](json ev) {
+            if (!report_progress) {
+                return;
+            }
+            progress_log.push_back(ev);
+            emit_progress(ev);
+        };
+        const auto packages_total = static_cast<std::uint32_t>(paths.size());
+        push_progress({{"command", cmd},
+                       {"phase", "start"},
+                       {"packagesDone", 0},
+                       {"packagesTotal", packages_total},
+                       {"imported", 0},
+                       {"totalInputBytes", total_bytes}});
         std::uint32_t imported = 0;
         std::uint32_t would = 0;
         int src_n = 0;
+        std::uint32_t packages_done = 0;
         for (const auto& rawp : paths) {
             auto path = check_path(rawp);
             if (!path) {
                 errors.push_back({{"path", rawp}, {"message", path.error().message}});
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", rawp},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported},
+                               {"message", path.error().message}});
                 continue;
             }
             auto src = Package::open(*path, false);
             if (!src) {
                 errors.push_back({{"path", path->string()}, {"message", src.error().message}});
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported},
+                               {"message", src.error().message}});
                 continue;
             }
             would += src->count();
             if (dry(args)) {
                 packages.push_back({{"path", path->string()}, {"count", src->count()}});
+                ++packages_done;
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", true},
+                               {"dryRun", true},
+                               {"count", src->count()},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported}});
                 continue;
+            }
+            if (imported + src->count() > max_resources) {
+                errors.push_back(
+                    {{"path", path->string()},
+                     {"message",
+                      "resource count would exceed maxResources (" +
+                          std::to_string(max_resources) + "); split the job"}});
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported},
+                               {"message", "maxResources"}});
+                break;
             }
             std::uint32_t n = 0;
             bool file_ok = true;
@@ -2989,10 +3150,64 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     src_ent["nameMap"] = std::move(snap);
                 }
                 sources.push_back(std::move(src_ent));
+                ++packages_done;
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", true},
+                               {"importedThisPackage", n},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported}});
+                // Explicit checkpoint: flush to disk and remap so overrides do not pile up.
+                if (checkpoint_between && checkpoint_path) {
+                    // SXMM is written once at end; mid-merge checkpoints are raw content only.
+                    if (auto pin = pin_nmap_front(s.pkg); !pin) {
+                        return envelope_err(pin.error());
+                    }
+                    if (auto sv = s.pkg.save_as(*checkpoint_path); !sv) {
+                        errors.push_back({{"path", checkpoint_path->string()},
+                                          {"message", "checkpoint failed: " + sv.error().message}});
+                        push_progress({{"command", cmd},
+                                       {"phase", "checkpoint"},
+                                       {"path", checkpoint_path->string()},
+                                       {"ok", false},
+                                       {"packagesDone", packages_done},
+                                       {"packagesTotal", packages_total},
+                                       {"imported", imported},
+                                       {"message", sv.error().message}});
+                        break;
+                    }
+                    push_progress({{"command", cmd},
+                                   {"phase", "checkpoint"},
+                                   {"path", checkpoint_path->string()},
+                                   {"ok", true},
+                                   {"packagesDone", packages_done},
+                                   {"packagesTotal", packages_total},
+                                   {"imported", imported}});
+                }
+            } else {
+                push_progress({{"command", cmd},
+                               {"phase", "package"},
+                               {"path", path->string()},
+                               {"ok", false},
+                               {"packagesDone", packages_done},
+                               {"packagesTotal", packages_total},
+                               {"imported", imported}});
             }
         }
         if (dry(args)) {
-            return envelope_ok({{"dryRun", true}, {"packages", packages.size()}, {"count", would}});
+            json out{{"dryRun", true},
+                     {"packages", packages.size()},
+                     {"count", would},
+                     {"totalInputBytes", total_bytes},
+                     {"maxPackages", max_packages},
+                     {"maxTotalBytes", max_total_bytes},
+                     {"maxResources", max_resources}};
+            if (report_progress) {
+                out["progress"] = std::move(progress_log);
+            }
+            return envelope_ok(std::move(out));
         }
         if (write_man && imported > 0) {
             json man{{"format", "sxpe.mergeManifest"},
@@ -3032,12 +3247,29 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 return envelope_err(pin.error());
             }
         }
+        push_progress({{"command", cmd},
+                       {"phase", "done"},
+                       {"packagesDone", packages_done},
+                       {"packagesTotal", packages_total},
+                       {"imported", imported},
+                       {"failed", errors.size()}});
         json out{{"imported", imported},
                  {"packages", packages.size()},
                  {"failed", errors.size()},
                  {"errors", errors},
                  {"mergeManifest", write_man},
-                 {"dirPolicy", dir_policy}};
+                 {"dirPolicy", dir_policy},
+                 {"totalInputBytes", total_bytes},
+                 {"maxPackages", max_packages},
+                 {"maxTotalBytes", max_total_bytes},
+                 {"maxResources", max_resources},
+                 {"checkpointBetweenPackages", checkpoint_between}};
+        if (checkpoint_path) {
+            out["checkpointPath"] = checkpoint_path->string();
+        }
+        if (report_progress) {
+            out["progress"] = std::move(progress_log);
+        }
         if (imported == 0 && !errors.empty()) {
             return envelope_err(err(ErrorCode::refused, errors[0].value("message", "import failed")),
                                 false);

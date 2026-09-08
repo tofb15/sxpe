@@ -68,9 +68,11 @@ Consent: SXPE never auto-installs or silently fetches zip assets. You choose whe
 
 ## Merge and un-merge
 
-1. Drop multiple `.package` files (or import from package) to combine resources.
-2. SXPE stores an **SXMM** merge manifest in the result.
+1. Drop multiple `.package` files (or import from package) to combine resources. A **progress dialog** shows per-package status.
+2. SXPE stores an **SXMM** merge manifest in the result (drop-merge).
 3. **Tools → Un-merge package…** recreates source packages **only** when that manifest is present and valid. Merges from other tools are not reversible this way.
+
+Large CC sets: prefer modest batches; SXPE refuses oversized jobs with a clear `cap_exceeded` message instead of OOM. See [workflows.md](workflows.md#large-cc-batches-s3pe-oom-pain). CLI/MCP share the same bus command (`resource.importPackage`) including progress events.
 
 See [spec/merge-manifest.md](spec/merge-manifest.md).
 

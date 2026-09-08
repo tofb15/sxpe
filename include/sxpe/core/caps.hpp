@@ -24,4 +24,11 @@ inline constexpr std::uint32_t kFolderScanMaxDuplicateSamples = 100;
 /// Max file paths listed per duplicate TGI sample.
 inline constexpr std::uint32_t kFolderScanMaxPathsPerDuplicate = 8;
 
+/// Large-merge defaults (resource.importPackage / importDbc). Refuse before OOM.
+inline constexpr std::uint32_t kMergeMaxPackages = 500;
+/// Aggregate on-disk size of input packages (not dest). ~2 GiB keeps peak RAM sane.
+inline constexpr std::uint64_t kMergeMaxTotalBytes = 2ull << 30;
+/// Soft cap on resources copied in one merge command.
+inline constexpr std::uint32_t kMergeMaxResources = 200'000;
+
 }  // namespace sxpe::core::caps

@@ -24,6 +24,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
 #include <QTableWidget>
@@ -193,9 +194,32 @@ void show_import_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString
         arr.push_back(p.toStdString());
     }
     const char* cmd = dbc ? "resource.importDbc" : "resource.importPackage";
+    QProgressDialog progress(
+        dbc ? QObject::tr("Importing DBC…") : QObject::tr("Importing packages…"),
+        QString(), 0, paths.size(), parent);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    bus.set_progress_handler([&](const nlohmann::json& ev) {
+        const int done = ev.value("packagesDone", 0);
+        const int total = ev.value("packagesTotal", paths.size());
+        progress.setMaximum(std::max(1, total));
+        progress.setValue(std::min(done, progress.maximum()));
+        if (ev.contains("path") && ev["path"].is_string()) {
+            progress.setLabelText(
+                QObject::tr("Importing %1 (%2 / %3)")
+                    .arg(QString::fromStdString(ev["path"].get<std::string>()))
+                    .arg(done)
+                    .arg(total));
+        }
+        QApplication::processEvents();
+    });
     auto env = bus.execute(cmd, {{"sessionId", session.toStdString()},
                                  {"paths", arr},
-                                 {"force", true}});
+                                 {"force", true},
+                                 {"reportProgress", true}});
+    bus.clear_progress_handler();
+    progress.setValue(progress.maximum());
     if (!env.value("ok", false)) {
         QMessageBox::warning(parent, QObject::tr("SXPE"),
                              QString::fromStdString(env["error"].value("message", env.dump())));
