@@ -291,7 +291,7 @@ void show_handlers_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
         "Compiled first-party type handlers (always on).")));
     lay->addWidget(list);
     lay->addWidget(new QLabel(QObject::tr(
-        "Third-party GUI plugins are not supported in this build.")));
+        "Third-party GUI plugins / DLL Handlers are permanently unsupported (no plugin SDK).")));
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     lay->addWidget(box);
@@ -1498,7 +1498,7 @@ void show_contents_dialog(QWidget* parent) {
         "</ul>"
         "<h3>Settings</h3>"
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
-        "built-in handlers, external programs (hex/text/S3SA viewer), save settings.</p>"
+        "built-in handlers (first-party only; plugins permanently unsupported), external programs (hex/text/S3SA viewer — not DLL plugins), save settings.</p>"
         "<h3>Help</h3>"
         "<p>Contents (this window), <b>Common tasks</b> (links to workflows.md), "
         "Check for update (GitHub Releases; never auto-downloads), About, Warranty, Licence.</p>"

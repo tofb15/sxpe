@@ -178,7 +178,8 @@ Audio metadata, VID header, full catalog family, then optional GL mesh / CLIP pl
 
 ## Out of scope for Preview
 
-- Executing S3SA (no `LoadLibrary`). Wrap/import lives in [spec/s3sa.md](spec/s3sa.md), not Preview.  
+- Executing S3SA (no `LoadLibrary`). Wrap/import lives in [spec/s3sa.md](spec/s3sa.md), not Preview.
+- Third-party GUI plugins / Handlers (permanently unsupported — see CONTRIBUTING / issue #60).  
 - Writing neighbourhood SNAPs (encode rules stay on File → Save).  
 - Pixel-perfect s3pe wrapper parity.  
 - Shipping EA packages as fixtures; use synthetic PNG/DDS/STBL/NMAP only.

@@ -1,30 +1,11 @@
 #include "plugin_host.hpp"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QObject>
 #include <QProcess>
-#include <QStandardPaths>
-
 
 namespace sxpe::gui {
-QStringList plugin_search_dirs() {
-    QStringList dirs;
-    const auto exe = QCoreApplication::applicationDirPath() + "/plugins";
-    dirs << exe;
-    const auto data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (!data.isEmpty()) {
-        dirs << data + "/plugins";
-    }
-    return dirs;
-}
-
-void PluginHost::scan() {
-    // Handlers demotion (#19): do not enumerate or LoadLibrary plugin DLLs until a real
-    // plugin SDK exists. Keep run_user_command* for external hex/text/S3SA viewers.
-    plugins_.clear();
-}
 
 bool PluginHost::run_user_command(const QString& command, const QString& file_path,
                                   QString* error) const {
@@ -50,7 +31,6 @@ bool PluginHost::run_user_command(const QString& command, const QString& file_pa
     }
     return true;
 }
-
 
 bool PluginHost::run_user_command_cleanup(const QString& command, const QString& file_path,
                                           QString* error) const {

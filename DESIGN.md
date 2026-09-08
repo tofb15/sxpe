@@ -26,3 +26,10 @@ CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_
 
 - **v0.6.0 Releases:** Linux CLI+MCP tarball only.
 - **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); shipping on Releases is tracked separately.
+
+## Extensibility (honest)
+
+Third-party GUI plugins / Handlers are **permanently out of scope** (issue #60). SXPE does not
+scan a `plugins/` folder, does not `LoadLibrary` arbitrary DLLs, and will not ship a thin plugin
+SDK. First-party type handling stays compiled into the command bus. Optional external viewers
+are user-configured process commands only (`PluginHost::run_user_command*`).

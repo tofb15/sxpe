@@ -63,7 +63,7 @@ Full Windows / Linux / Wayland notes, packaging, and paste-ready CI jobs: **[doc
 
 Format reference for codecs and agents: **[docs/spec/](docs/spec/README.md)**. Architecture: [DESIGN.md](DESIGN.md).
 
-**Honest limits (M6):** no Sims 4 profile; no full 3D mesh / CLIP playback; no Store/DRM Sims3Pack; neighborhood / world / DBC files are **layout-locked** (safe in-place replace only — see [neighborhood layout](docs/neighborhood-layout.md)); third-party GUI plugins are not supported.
+**Honest limits (M6):** no Sims 4 profile; no full 3D mesh / CLIP playback; no Store/DRM Sims3Pack; neighborhood / world / DBC files are **layout-locked** (safe in-place replace only — see [neighborhood layout](docs/neighborhood-layout.md)); third-party GUI plugins / DLL Handlers are **permanently unsupported** (no plugin SDK, no LoadLibrary of random DLLs — see CONTRIBUTING).
 
 ---
 

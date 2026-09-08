@@ -60,4 +60,10 @@ Untrusted package bytes: use `std::span` and size caps. Do not `memcpy` from the
 
 ## Plugins
 
-Third-party GUI plugins are not supported in this build.
+Third-party GUI plugins and DLL Handlers are **permanently unsupported** (issue #60 / Option B).
+Do **not** add a plugin SDK, sample DLL, `plugins/` scanner, or `LoadLibrary` of arbitrary
+DLLs. Do not resurrect “Handlers / plugins” menu wording.
+
+`Settings → Built-in handlers` lists compiled first-party type tags only (`handler.list`).
+External hex / text / S3SA viewers under **Settings → External programs** are user-configured
+processes (`{path}` substitution), not plugins.
