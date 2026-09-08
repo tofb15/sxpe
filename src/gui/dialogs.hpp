@@ -68,7 +68,7 @@ void show_merge_assistant_dialog(
 /// Welcome + pre-release note (Help → Welcome…, and first launch).
 void show_welcome_dialog(QWidget* parent,
                          const std::function<void()>& open_merge_assistant = {});
-/// One-shot welcome / pre-release note (skip when smoke_mode).
+/// First-launch Welcome (skip when smoke_mode). Help → Welcome… shows it again.
 void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
                                   const std::function<void()>& open_merge_assistant = {});
 /// Query GitHub Releases via `app.checkUpdate`; never downloads. Graceful offline / 404.
