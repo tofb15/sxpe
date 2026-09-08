@@ -828,10 +828,19 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         auto pix = sxpe::resources::decode_dds_rgba(bytes);
         if (!pix) {
             if (inf) {
-                show_preview_body(tr("%1×%2 %3 (no pixel decode)")
+                QString detail = QString::fromStdString(pix.error().message);
+                if (inf->cubemap) {
+                    detail = tr("cubemap refused (2D only)");
+                } else if (inf->volume) {
+                    detail = tr("volume/3D refused (2D only)");
+                } else if (!inf->decode_supported) {
+                    detail = tr("unsupported format (see docs/spec/dds.md)");
+                }
+                show_preview_body(tr("%1×%2 %3 — %4")
                                       .arg(inf->width)
                                       .arg(inf->height)
-                                      .arg(QString::fromStdString(inf->format)));
+                                      .arg(QString::fromStdString(inf->format))
+                                      .arg(detail));
             }
             return;
         }

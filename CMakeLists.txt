@@ -117,6 +117,9 @@ target_compile_definitions(sxpe_commands_test PRIVATE
 add_executable(sxpe_stbl_test tests/stbl_test.cpp)
 target_link_libraries(sxpe_stbl_test PRIVATE sxpe_resources)
 
+add_executable(sxpe_dds_test tests/dds_test.cpp)
+target_link_libraries(sxpe_dds_test PRIVATE sxpe_resources)
+
 add_executable(sxpe_objk_vpxy_test tests/objk_vpxy_test.cpp)
 target_link_libraries(sxpe_objk_vpxy_test PRIVATE sxpe_resources)
 
@@ -179,6 +182,7 @@ add_test(NAME refpack COMMAND sxpe_refpack_test)
 add_test(NAME fnv COMMAND sxpe_fnv_test)
 add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
+add_test(NAME dds COMMAND sxpe_dds_test)
 add_test(NAME objk_vpxy COMMAND sxpe_objk_vpxy_test)
 add_test(NAME refs COMMAND sxpe_refs_test)
 add_test(NAME preview_wave2 COMMAND sxpe_preview_wave2_test)
