@@ -61,5 +61,5 @@ See [s3sa.md](s3sa.md). Do not `resource.add` a raw `.dll` as type `073FAA07`.
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
 | `package.unmerge` | n | y | Recreate sources from SXMM; refuse if missing |
-| `resource.importPackage` | n | y | Merge/import; `dirPolicy` strip / copy-through / rebuild(refused) |
+| `resource.importPackage` | n | y | Merge/import; caps + progress + optional checkpoint; `dirPolicy` strip / copy-through / rebuild(refused) |
 | `package.makeScriptMod` | n | y | Optional later: S3SA + `_XML` `kInstantiator` + NMAP |

@@ -8,6 +8,7 @@
 #include "sxpe/resources/types.hpp"
 #include "sxpe/resources/xml.hpp"
 
+#include <algorithm>
 #include <vector>
 
 #include <QAction>
@@ -31,6 +32,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
@@ -433,13 +435,34 @@ void MainWindow::merge_dropped_packages(const QStringList& paths) {
     for (const auto& p : paths) {
         arr.push_back(p.toStdString());
     }
+    QProgressDialog progress(tr("Merging packages…"), QString(), 0, paths.size(), this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    bus_.set_progress_handler([&](const nlohmann::json& ev) {
+        const int done = ev.value("packagesDone", 0);
+        const int total = ev.value("packagesTotal", paths.size());
+        progress.setMaximum(std::max(1, total));
+        progress.setValue(std::min(done, progress.maximum()));
+        if (ev.contains("path") && ev["path"].is_string()) {
+            progress.setLabelText(
+                tr("Merging %1 (%2 / %3)")
+                    .arg(QString::fromStdString(ev["path"].get<std::string>()))
+                    .arg(done)
+                    .arg(total));
+        }
+        QApplication::processEvents();
+    });
     QApplication::setOverrideCursor(Qt::WaitCursor);
     auto env = bus_.execute("resource.importPackage",
                             {{"sessionId", sid.toStdString()},
                              {"paths", arr},
                              {"force", true},
-                             {"writeMergeManifest", true}});
+                             {"writeMergeManifest", true},
+                             {"reportProgress", true}});
+    bus_.clear_progress_handler();
     QApplication::restoreOverrideCursor();
+    progress.setValue(progress.maximum());
     if (!env.value("ok", false) || env["data"].value("imported", 0) == 0) {
         bus_.execute("package.close", {{"sessionId", sid.toStdString()}});
         warn_if_err(env.value("ok", false)

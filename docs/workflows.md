@@ -5,11 +5,27 @@ Task-oriented recipes. Pair with the [user guide](user-guide.md) or [CLI/MCP](cl
 ## Merge custom content into one package
 
 1. Collect the `.package` files you want to combine (work on **copies**).
-2. GUI: drop all of them onto SXPE (or Resource → Import → From package(s)…).
-3. Save the merged result. SXPE embeds an **SXMM** manifest.
+2. GUI: drop all of them onto SXPE (or Resource → Import → From package(s)…). A progress dialog tracks each source package.
+3. Save the merged result. SXPE embeds an **SXMM** manifest when merging via drop (or when `writeMergeManifest` is set).
 4. To split again later: Tools → **Un-merge package…** (SXPE merges only).
 
-CLI/agents: use import/merge bus commands; un-merge with `package.unmerge` when an SXMM is present.
+CLI/agents: `resource.importPackage` with `paths[]` (or `--progress` on the CLI for stderr JSON progress lines). Un-merge with `package.unmerge` when an SXMM is present.
+
+### Large CC batches (s3pe OOM pain)
+
+Community merges of ~150–250 MiB+ / dozens of packages often OOMed or left giant temps in s3pe. SXPE:
+
+| Guard | Default | Override |
+| --- | --- | --- |
+| `maxPackages` | 500 | lower for cautious batches |
+| `maxTotalBytes` | 2 GiB | sum of **input** file sizes |
+| `maxResources` | 200 000 | refuse mid-job before RAM blow-up |
+
+Clear `cap_exceeded` errors say **split the job** — prefer batches of **~20–40 packages** or **under ~100–150 MiB** of inputs when machines are tight (same advice as old s3pe guides, with hard caps instead of mystery crashes).
+
+**Explicit checkpoint (optional):** pass `checkpointPath` + `checkpointBetweenPackages: true` to save after each successful source. This is **not** autosave — you choose the path. Checkpoint flushes the session to disk (unique `*.sxpe-tmp-*` temps, deleted on failure) so peak RAM stays closer to one package’s overrides. MCP clients can send `_meta.progressToken` to receive `notifications/progress`.
+
+Synthetic stress coverage: many tiny packages under a temp dir (no EA files) — see `tests/commands_test.cpp` large-merge cases.
 
 ## Strip thumbnail resources (THUM)
 

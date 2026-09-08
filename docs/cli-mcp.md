@@ -56,6 +56,8 @@ Errors:
 
 Human views: `--format text` or `--format table`. Agents should keep `--format json` (default).
 
+`--progress` (merge/import): JSON progress events on **stderr**; stdout stays the final envelope.
+
 Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / `cursor`; lists do not include payloads.
 
 **resourceId** object: `{ "type", "group", "instance", "ordinal" }` (numbers; hex strings accepted on CLI where documented).
@@ -70,13 +72,22 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 | `package.unmerge` | Reverse SXPE SXMM merge |
 | `folder.scan` | Read-only tree hygiene |
 | `sims3pack.list` / `extract` | TS3Pack inspect |
-| `resource.list` / `read` / `export` / `importFiles` / `delete` / `setFlags` / `rename` | Resources |
+| `resource.list` / `read` / `export` / `importFiles` / `importPackage` / `delete` / `setFlags` / `rename` | Resources; merge via `importPackage` |
 | `nmap.*` / `stbl.*` / `xml.*` | Structured editors |
 | `s3sa.info` / `exportDll` / `importDll` / `view` | Script assembly wrapper (never LoadLibrary) |
 | `hash.fnv` | FNV helpers |
 | `undo` / `redo` | Session stack |
 
 Full table and flags: [spec/catalog.md](spec/catalog.md). Codec bytes: [spec/](spec/README.md).
+
+## Large merge / import
+
+```text
+sxpe resource importPackage --session s-1 --progress \
+  --paths '["a.package","b.package"]' --force --write-merge-manifest true
+```
+
+Caps: `--max-packages`, `--max-total-bytes`, `--max-resources` (camelCase on the bus). Optional explicit checkpoint: `--checkpoint-path OUT.package --checkpoint-between-packages true`.
 
 ## Examples
 

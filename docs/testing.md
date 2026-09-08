@@ -70,6 +70,10 @@ Still open (follow-ups, not blocking this harness):
 - NMAP name encoding beyond ASCII/UTF-8 without NUL.
 - FNV Unicode rules beyond lowercase ASCII.
 
+## Large-merge stress (synthetic)
+
+`sxpe_commands_test` builds many tiny DBPF packages under `%TEMP%/sxpe-m3` (or `/tmp`) and merges them via `resource.importPackage`. Cases cover: clean multi-package merge (no leftover `*.sxpe-tmp-*`), mid-merge failure leaving no orphan multi-GB temps, `maxPackages` / `maxTotalBytes` refusals, progress events, and explicit `checkpointBetweenPackages`. No EA/CC bytes.
+
 ## CI
 
 GitHub Actions must stay synthetic-only. Do not upload `fixtures/local/` or game installs.

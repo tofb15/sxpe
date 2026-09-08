@@ -175,7 +175,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "How it works:\n";
     std::cout << "  Commands are noun + verb (resource list, package info).\n";
     std::cout << "  --package PATH is one-shot: open, run, save if it writes, close.\n";
-    std::cout << "  Every result is JSON {ok, data|error}. --format text|table is a human view.\n";
+    std::cout << "  Every result is JSON {ok, data|error}. --format text|table is a human view.\n  --progress writes merge/import progress JSON lines to stderr (bus progress).\n";
     std::cout << "  --type/--group/--instance (hex 0x… ok) is an alternative to --id JSON.\n";
     std::cout << "  Destructive commands need --force; --dry-run reports without writing.\n\n";
     std::cout << "One-shot (no session):\n";
@@ -655,6 +655,7 @@ int main(int argc, char** argv) {
     bool force = false;
     bool writable = false;
     bool include_payload = false;
+    bool want_progress = false;
     int limit = 0;
     app.add_option("--format", format, "json | jsonl | text | table");
     app.add_flag("--dry-run", dry);
@@ -674,6 +675,8 @@ int main(int argc, char** argv) {
     app.add_option("--ordinal", ord_s, "Duplicate TGI ordinal (default 0)");
     app.add_flag("--writable", writable);
     app.add_flag("--include-payload", include_payload);
+    app.add_flag("--progress", want_progress,
+                 "Emit merge/import progress JSON lines on stderr");
     app.add_option("--limit", limit);
     std::string cursor;
     app.add_option("--cursor", cursor);
@@ -689,6 +692,11 @@ int main(int argc, char** argv) {
     }
 
     Bus bus;
+    if (want_progress) {
+        bus.set_progress_handler([](const json& ev) {
+            std::cerr << ev.dump() << '\n';
+        });
+    }
     if (want_help || noun.empty() || noun == "help") {
         std::string filter;
         if (noun == "help") {

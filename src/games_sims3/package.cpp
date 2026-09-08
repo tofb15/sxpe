@@ -4,9 +4,11 @@
 #include "sxpe/games/sims3/refpack.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <bit>
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -20,6 +22,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace sxpe::games::sims3 {
@@ -158,6 +162,32 @@ VoidResult replace_file(const std::filesystem::path& dest, const std::filesystem
     }
     return ok();
 #endif
+}
+
+
+struct TempFileGuard {
+    std::filesystem::path path;
+    bool keep{false};
+    ~TempFileGuard() {
+        if (keep || path.empty()) {
+            return;
+        }
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
+
+std::filesystem::path unique_save_tmp(const std::filesystem::path& dest) {
+    const auto stamp =
+        std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#ifdef _WIN32
+    const auto pid = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const auto pid = static_cast<unsigned long>(::getpid());
+#endif
+    auto name = dest.filename().string() + ".sxpe-tmp-" + std::to_string(pid) + "-" +
+                std::to_string(stamp);
+    return dest.parent_path().empty() ? std::filesystem::path(name) : dest.parent_path() / name;
 }
 
 }  // namespace
@@ -634,16 +664,20 @@ Result<std::uint32_t> Package::add_raw(Tgi tgi, std::span<const std::byte> disk,
 
 VoidResult Package::write_file(const std::filesystem::path& dest) const {
     // Keep package-index order. Do not sort by TGI, offset, or name.
-    std::vector<std::byte> payloads;
+    // Stream payloads to disk (no full-package RAM buffer) so large merges stay bounded.
     std::vector<IndexEntry> out_e;
+    std::vector<std::uint32_t> keep;
+    std::uint64_t payload_bytes = 0;
     std::uint32_t off = kHeaderSize;
+    out_e.reserve(entries_.size());
+    keep.reserve(entries_.size());
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
         // TS3 DBPF 2.0 has no on-disk deleted bit (no trash index; CompressedFlags
         // is 0 or 0xFFFF; group high byte is EP/product flags). Save omits the row.
         if (deleted(i)) {
             continue;
         }
-        auto disk = payload_on_disk(i);
+        auto disk = raw(i);
         if (!disk) {
             return std::unexpected(disk.error());
         }
@@ -653,9 +687,10 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
         auto e = entries_[i];
         e.chunk_offset = off;
         e.file_size = static_cast<std::uint32_t>(disk->size());
-        payloads.insert(payloads.end(), disk->begin(), disk->end());
+        payload_bytes += e.file_size;
         off += e.file_size;
         out_e.push_back(e);
+        keep.push_back(i);
     }
     std::vector<std::byte> index;
     wr_u32(index, 0);  // indexType = 0
@@ -675,16 +710,25 @@ VoidResult Package::write_file(const std::filesystem::path& dest) const {
     wr_u32_at(hdr, 0x24, static_cast<std::uint32_t>(out_e.size()));
     wr_u32_at(hdr, 0x2C, static_cast<std::uint32_t>(index.size()));
     wr_u32_at(hdr, 0x3C, 3);
-    wr_u32_at(hdr, 0x40, kHeaderSize + static_cast<std::uint32_t>(payloads.size()));
+    wr_u32_at(hdr, 0x40, kHeaderSize + static_cast<std::uint32_t>(payload_bytes));
 
     std::ofstream f(dest, std::ios::binary | std::ios::trunc);
     if (!f) {
         return std::unexpected(err(ErrorCode::io, "open tmp"));
     }
     f.write(reinterpret_cast<const char*>(hdr.data()), static_cast<std::streamsize>(hdr.size()));
-    if (!payloads.empty()) {
-        f.write(reinterpret_cast<const char*>(payloads.data()),
-                static_cast<std::streamsize>(payloads.size()));
+    for (std::uint32_t i : keep) {
+        auto disk = raw(i);
+        if (!disk) {
+            return std::unexpected(disk.error());
+        }
+        if (!disk->empty()) {
+            f.write(reinterpret_cast<const char*>(disk->data()),
+                    static_cast<std::streamsize>(disk->size()));
+        }
+        if (!f) {
+            return std::unexpected(err(ErrorCode::io, "write tmp"));
+        }
     }
     f.write(reinterpret_cast<const char*>(index.data()), static_cast<std::streamsize>(index.size()));
     f.flush();
@@ -812,17 +856,15 @@ VoidResult Package::save_as(const std::filesystem::path& dest) {
         map_ = std::move(*m);
         return parse_mapped();
     }
-    auto tmp = dest;
-    tmp += ".tmp";
-    if (auto r = write_file(tmp); !r) {
-        std::filesystem::remove(tmp);
+    TempFileGuard guard{unique_save_tmp(dest)};
+    if (auto r = write_file(guard.path); !r) {
         return r;
     }
     map_.close();
-    if (auto r = replace_file(dest, tmp); !r) {
-        std::filesystem::remove(tmp);
+    if (auto r = replace_file(dest, guard.path); !r) {
         return r;
     }
+    guard.keep = true;  // renamed into dest
     path_ = dest;
     writable_ = true;
     auto m = core::MappedFile::open(dest, map_writable(dest, true));
@@ -1003,16 +1045,14 @@ VoidResult Package::save_copy_as(const std::filesystem::path& dest) {
         }
         return ok();
     }
-    auto tmp = dest;
-    tmp += ".tmp";
-    if (auto r = write_file(tmp); !r) {
-        std::filesystem::remove(tmp);
+    TempFileGuard guard{unique_save_tmp(dest)};
+    if (auto r = write_file(guard.path); !r) {
         return r;
     }
-    if (auto r = replace_file(dest, tmp); !r) {
-        std::filesystem::remove(tmp);
+    if (auto r = replace_file(dest, guard.path); !r) {
         return r;
     }
+    guard.keep = true;
     return ok();
 }
 

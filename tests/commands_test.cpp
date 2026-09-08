@@ -1745,6 +1745,191 @@ int main() {
         bus.execute("package.close", json{{"sessionId", nid}});
     }
 
+
+    // Issue #63: large-merge resilience — synthetic many-small packages, caps, progress,
+    // explicit checkpoint, temp hygiene (no EA files).
+    {
+        auto merge_dir = tmp / "large-merge-63";
+        std::filesystem::remove_all(merge_dir);
+        std::filesystem::create_directories(merge_dir);
+
+        auto write_tiny = [&](const std::filesystem::path& path, std::uint64_t inst,
+                              const std::string& payload) {
+            auto created = bus.execute("package.new", json::object());
+            CHECK(created["ok"] == true);
+            const auto sid = created["data"]["sessionId"].get<std::string>();
+            std::vector<std::byte> bytes(payload.size());
+            for (std::size_t i = 0; i < payload.size(); ++i) {
+                bytes[i] = static_cast<std::byte>(payload[i]);
+            }
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", 0x12345678},
+                                         {"group", 0},
+                                         {"instance", inst}}},
+                                   {"payloadB64", b64(bytes)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid},
+                                   {"path", path.string()},
+                                   {"force", true}})["ok"] == true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        };
+
+        constexpr int kMany = 40;
+        json paths = json::array();
+        for (int i = 0; i < kMany; ++i) {
+            auto path = merge_dir / ("tiny-" + std::to_string(i) + ".package");
+            write_tiny(path, static_cast<std::uint64_t>(1000 + i),
+                       "sxpe-synthetic-" + std::to_string(i));
+            paths.push_back(path.string());
+        }
+
+        auto count_sxpe_tmps = [&](const std::filesystem::path& dir) {
+            int n = 0;
+            std::error_code ec;
+            for (auto it = std::filesystem::directory_iterator(dir, ec);
+                 !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+                const auto name = it->path().filename().string();
+                if (name.find(".sxpe-tmp-") != std::string::npos) {
+                    ++n;
+                }
+            }
+            return n;
+        };
+
+        // Caps: refuse before work when too many packages.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto capped = bus.execute("resource.importPackage",
+                                      json{{"sessionId", sid},
+                                           {"paths", paths},
+                                           {"force", true},
+                                           {"maxPackages", 5},
+                                           {"reportProgress", false}});
+            CHECK(capped["ok"] == false);
+            CHECK(capped["error"].value("code", "") == "cap_exceeded");
+            CHECK(capped["error"].value("message", std::string{}).find("split the job") !=
+                  std::string::npos);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Caps: refuse oversized total input bytes.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto capped = bus.execute("resource.importPackage",
+                                      json{{"sessionId", sid},
+                                           {"paths", paths},
+                                           {"force", true},
+                                           {"maxTotalBytes", 1},
+                                           {"reportProgress", false}});
+            CHECK(capped["ok"] == false);
+            CHECK(capped["error"].value("code", "") == "cap_exceeded");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Happy path: many small packages + progress events; no leftover temps.
+        {
+            std::vector<json> seen;
+            bus.set_progress_handler([&](const json& ev) { seen.push_back(ev); });
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", paths},
+                                        {"force", true},
+                                        {"writeMergeManifest", true},
+                                        {"reportProgress", true}});
+            bus.clear_progress_handler();
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("imported", 0) == kMany);
+            CHECK(imp["data"].value("packages", 0) == kMany);
+            CHECK(imp["data"].contains("progress"));
+            CHECK(imp["data"]["progress"].is_array());
+            CHECK(imp["data"]["progress"].size() >= static_cast<std::size_t>(kMany + 2));
+            CHECK(!seen.empty());
+            CHECK(seen.front().value("phase", "") == "start");
+            CHECK(seen.back().value("phase", "") == "done");
+            auto out = (merge_dir / "merged-many.package").string();
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", out}, {"force", true}})["ok"] ==
+                  true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            CHECK(count_sxpe_tmps(merge_dir) == 0);
+        }
+
+        // Explicit checkpoint between packages remaps without mysterious autosave.
+        {
+            auto ck = merge_dir / "checkpoint.package";
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            json first_two = json::array({paths[0], paths[1], paths[2]});
+            auto imp = bus.execute(
+                "resource.importPackage",
+                json{{"sessionId", sid},
+                     {"paths", first_two},
+                     {"force", true},
+                     {"writeMergeManifest", true},
+                     {"checkpointBetweenPackages", true},
+                     {"checkpointPath", ck.string()},
+                     {"reportProgress", true}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("checkpointBetweenPackages", false) == true);
+            CHECK(std::filesystem::exists(ck));
+            bool saw_ck = false;
+            for (const auto& ev : imp["data"]["progress"]) {
+                if (ev.value("phase", "") == "checkpoint" && ev.value("ok", false)) {
+                    saw_ck = true;
+                }
+            }
+            CHECK(saw_ck);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            CHECK(count_sxpe_tmps(merge_dir) == 0);
+        }
+
+        // Mid-merge failure (bad path after good ones) leaves no orphan sxpe temps.
+        {
+            json mixed = json::array();
+            mixed.push_back(paths[0]);
+            mixed.push_back(paths[1]);
+            mixed.push_back((merge_dir / "does-not-exist.package").string());
+            mixed.push_back(paths[2]);
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto ck = merge_dir / "fail-checkpoint.package";
+            auto imp = bus.execute(
+                "resource.importPackage",
+                json{{"sessionId", sid},
+                     {"paths", mixed},
+                     {"force", true},
+                     {"checkpointBetweenPackages", true},
+                     {"checkpointPath", ck.string()},
+                     {"reportProgress", true}});
+            // Partial success still ok envelope when some imported.
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("failed", 0) >= 1);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            CHECK(count_sxpe_tmps(merge_dir) == 0);
+        }
+
+        // checkpointBetweenPackages without path is refused (explicit, not autosave).
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto bad = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({paths[0]})},
+                                        {"force", true},
+                                        {"checkpointBetweenPackages", true}});
+            CHECK(bad["ok"] == false);
+            CHECK(bad["error"].value("message", std::string{}).find("checkpointPath") !=
+                  std::string::npos);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;

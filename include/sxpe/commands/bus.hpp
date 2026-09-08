@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,6 +57,11 @@ public:
     nlohmann::json execute(std::string_view id, const nlohmann::json& args);
     /// Full metadata snapshot for the GUI grid (no payloads, not an MCP tool).
     Result<std::vector<UiRow>> ui_index(std::string_view session_id);
+
+    /// Optional sink for long-running command progress (merge/import). Thread: caller of execute.
+    using ProgressHandler = std::function<void(const nlohmann::json& event)>;
+    void set_progress_handler(ProgressHandler handler);
+    void clear_progress_handler();
 
 private:
     struct Impl;
