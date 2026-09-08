@@ -1,4 +1,4 @@
-# MAINTAINER-ONLY — not end-user documentation.
+# MAINTAINER-ONLY - not end-user documentation.
 # GitHub Actions workflow to attach portable artifacts on version tags (v0.7.0, …).
 # Live copy: .github/workflows/release.yml (same contents).
 # See docs/ci/README.md and docs/building.md.

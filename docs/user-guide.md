@@ -6,10 +6,10 @@ Recipes: [workflows](workflows.md). Scripts/agents: [cli-mcp](cli-mcp.md). Forma
 
 ## Main window
 
-- **Tabs** — one package (session) per tab. Right-click a tab: save, close this / others / left / right, bookmark.
-- **Resource grid** — virtualized list (Type, Group, Instance, Name, size, flags). Filter box; right-click headers to show/hide columns (**View → Columns**).
-- **Inspector** — preview / hex / structured summary (DDS, text, OBJD/CASP/CLIP counts). No full 3D mesh playback.
-- **Status bar** — path, counts, and a **layout lock** badge for `.nhd` / `.world` / `.dbc`.
+- **Tabs** - one package (session) per tab. Right-click a tab: save, close this / others / left / right, bookmark.
+- **Resource grid** - virtualized list (Type, Group, Instance, Name, size, flags). Filter box; right-click headers to show/hide columns (**View → Columns**).
+- **Inspector** - preview / hex / structured summary (DDS, text, OBJD/CASP/CLIP counts). No full 3D mesh playback.
+- **Status bar** - path, counts, and a **layout lock** badge for `.nhd` / `.world` / `.dbc`.
 
 Drop one `.package` to open it. Drop **several** to merge into a new package (SXMM manifest; un-merge reverses **SXPE** merges only).
 
@@ -37,7 +37,7 @@ FNV hash, Compare packages, Find references, Scan folder, Inspect Sims3Pack, Cre
 
 ### Settings
 
-Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, **Built-in handlers** (first-party types only), external programs (hex / text / S3SA viewer — not DLL plugins), Save settings.
+Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, **Built-in handlers** (first-party types only), external programs (hex / text / S3SA viewer - not DLL plugins), Save settings.
 
 ### Help
 
@@ -62,7 +62,7 @@ First launch shows a one-time tip for **Help → Common tasks** and the Merge as
 
 **Tools → Merge packages…** is the Merge assistant (folder or files → count/size preview → merge into a **new untitled** package → optional validate). Progress dialog **Cancel** rolls back. Default: write **SXMM**, strip leftover Sims3Pack manifests (`0x73E93EEB` instance 0).
 
-- Multi-file drop → **Merge into new package** — same bus, no folder preview.
+- Multi-file drop → **Merge into new package** - same bus, no folder preview.
 - **Resource → Import → From package(s)…** copies into the **open** tab (different intent).
 - **As DBC…** is the historical s3pe name for the same import path, not a different format.
 - **Un-merge** recreates sources **only** when SXMM is present.
@@ -87,11 +87,11 @@ Large CC: SXPE refuses oversized jobs (`cap_exceeded`) instead of OOM. Step-by-s
 
 ## Validate, compare, scan, Sims3Pack
 
-- **Validate** — DIR / layout-lock + conflict hotspots. Prefer a clean report before sharing.
-- **Compare** — TGI+ordinal and payload hash.
-- **Find references** — inbound (who points at the selection) or outbound (REFS/OBJK/VPXY/CASP).
-- **Scan folder** — read-only Downloads-style hygiene. Does **not** auto-delete.
-- **Sims3Pack** — list/extract/limited pack; no Store/DRM.
+- **Validate** - DIR / layout-lock + conflict hotspots. Prefer a clean report before sharing.
+- **Compare** - TGI+ordinal and payload hash.
+- **Find references** - inbound (who points at the selection) or outbound (REFS/OBJK/VPXY/CASP).
+- **Scan folder** - read-only Downloads-style hygiene. Does **not** auto-delete.
+- **Sims3Pack** - list/extract/limited pack; no Store/DRM.
 
 ## Check for update
 
@@ -109,7 +109,7 @@ Large CC: SXPE refuses oversized jobs (`cap_exceeded`) instead of OOM. Step-by-s
 Editing a `.package` while The Sims 3 has it open can corrupt the file or crash the game.
 
 - Sharing violation / exclusive lock failure → **close the game or copy the file first** (same text in GUI, CLI, MCP).
-- Paths under `Documents/Electronic Arts/.../Mods` may add `warnings[]` when SXPE cannot take an exclusive lock — work on a copy, then replace after the game is closed.
+- Paths under `Documents/Electronic Arts/.../Mods` may add `warnings[]` when SXPE cannot take an exclusive lock - work on a copy, then replace after the game is closed.
 
 Details: [workflows](workflows.md#edit-packages-the-game-might-have-open).
 
@@ -138,7 +138,7 @@ Full rules: [neighborhood-layout.md](neighborhood-layout.md).
 
 ## External programs
 
-**Settings → External programs** — `{path}` substitution, not plugins ([#60](https://github.com/tofb15/sxpe/issues/60)).
+**Settings → External programs** - `{path}` substitution, not plugins ([#60](https://github.com/tofb15/sxpe/issues/60)).
 
 | Role | Windows | Linux |
 | --- | --- | --- |

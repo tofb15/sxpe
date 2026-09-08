@@ -36,7 +36,7 @@ Read for display; rewrite when renaming resources if we own the NMAP. Do not inv
 | `nmap.get` / `nmap.list` | Raw rows; `duplicates[]` with `effectiveName` (last-wins, same as Name column) |
 | `nmap.set` | One instance; updates last matching row when duplicates exist |
 | `nmap.delete` | Remove all rows for an instance |
-| `nmap.replace` | Replace entire table in **one** write / one undo — batch editor save |
+| `nmap.replace` | Replace entire table in **one** write / one undo - batch editor save |
 
 GUI: **Resource → Editors → Name map…** (enabled when an NMAP is selected or the package has an NMAP). Edit multiple names, search, add/delete rows, save once via `nmap.replace`.
 

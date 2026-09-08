@@ -7,7 +7,7 @@ Codecs: [`docs/spec/`](docs/spec/README.md). This file is architecture for contr
 
 - **License:** GPL-3.0-or-later. Unofficial. Not EA. Not Peter L Jones’s s3pe.
 - **Game:** The Sims 3 DBPF only. Extra games plug in as `GameProfile` later; do not add Sims 4 now.
-- **Command bus:** GUI, CLI (`sxpe`), and MCP (`sxpe_mcp`) share one catalog (`docs/spec/catalog.md`). Envelope `{schemaVersion, ok, data|error}`. Surfaces are thin adapters over the bus — prefer bus-first design for new features.
+- **Command bus:** GUI, CLI (`sxpe`), and MCP (`sxpe_mcp`) share one catalog (`docs/spec/catalog.md`). Envelope `{schemaVersion, ok, data|error}`. Surfaces are thin adapters over the bus - prefer bus-first design for new features.
 - **GUI:** Qt 6 Widgets on **Windows and Linux** when Qt is present (`find_package`). CLI and MCP must not link Qt.
 - **I/O:** mmap the package; copy unchanged compressed blobs; synthetic fixtures in `fixtures/synthetic/`.
 

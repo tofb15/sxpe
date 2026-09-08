@@ -80,7 +80,7 @@ Live `.github/workflows/ci.yml`:
 | `linux-cli` | Linux CLI/MCP (no Qt) on every push/PR |
 | `windows-gui` | Windows GUI + `gui_smoke` on every push/PR |
 
-**Linux GUI CI is not in `ci.yml` yet.** Paste-ready job: [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) (canonical YAML — do not copy it into this page). Promoting it needs a GitHub token with **`workflow` scope**; OAuth apps without that scope cannot push `.github/workflows/*`.
+**Linux GUI CI is not in `ci.yml` yet.** Paste-ready job: [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) (canonical YAML - do not copy it into this page). Promoting it needs a GitHub token with **`workflow` scope**; OAuth apps without that scope cannot push `.github/workflows/*`.
 
 Tag `v*` runs live [`.github/workflows/release.yml`](../.github/workflows/release.yml) (Windows zip + Linux CLI tarball). Maintainer copy: [`docs/ci/release.yml`](ci/release.yml). See [`docs/ci/README.md`](ci/README.md).
 

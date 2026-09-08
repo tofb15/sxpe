@@ -15,7 +15,7 @@ DIR is **absent** from Steam FullBuild0 (102 127 rows), fallback, DeltaBuild_p
 
 ## On disk (when present)
 
-TS3 (64-bit instance) — **20 bytes** per record, little-endian. Writer emits this shape:
+TS3 (64-bit instance) - **20 bytes** per record, little-endian. Writer emits this shape:
 
 ```
 uint32 type
@@ -48,7 +48,7 @@ DIR lists compressed resources so `mem_size` can be cross-checked against the in
 | --- | --- | --- |
 | `strip` | `writeMergeManifest` | Skip source DIR rows |
 | `copy-through` | import without merge manifest | Copy source DIR through (force on duplicate TGI) |
-| `rebuild` | — | **Not yet**; refused with a clear error |
+| `rebuild` | - | **Not yet**; refused with a clear error |
 
 Pass `--dir-policy copy-through` (or `dirPolicy` in JSON) with `--write-merge-manifest` to preserve legacy DIR in an SXPE merge and record that choice in SXMM `notes.dirPolicy`.
 

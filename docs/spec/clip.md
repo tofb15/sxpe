@@ -11,7 +11,7 @@ Related: [hashing.md](hashing.md) (`fnv64_clip`), [preview-wave2.md](preview-wav
 | Animation name | `animName` | NUL C-string via offset from `_S3Clip_` start |
 | Source file | `sourceFile` | NUL C-string; jazz scripts often key off this |
 | Actor name | `actorName` | NUL C-string at main-header `actoroffset`, padded to DWORD with `0x7e` |
-| Track / joint hashes | `trackHashes` | `[{index, hash}, …]` — FNV32 bone (or morph) hashes in the joint-rule table |
+| Track / joint hashes | `trackHashes` | `[{index, hash}, …]` - FNV32 bone (or morph) hashes in the joint-rule table |
 
 `clip.set` rewrites only these. Frame data, event sections, slot tables, duration/frame counts, and playback are **out of scope**.
 
@@ -40,7 +40,7 @@ CLI: `sxpe clip info|set|export-as|export-as-batch` (see [cli-mcp.md](../cli-mcp
 
 ## Track rename helpers
 
-1. **Instance rename:** `clip.exportAs` / `clip.exportAsBatch` — new package instance via age-letter `fnv64_clip`.
+1. **Instance rename:** `clip.exportAs` / `clip.exportAsBatch` - new package instance via age-letter `fnv64_clip`.
 2. **In-clip anim name:** `clip.set` `animName` (and optionally `sourceFile` / `actorName`) so the payload matches the new identity.
 3. **Bone/track hash:** `clip.set` `trackHashes: [{index, hash}]` when a rig bone rename changes the joint-rule hash.
 

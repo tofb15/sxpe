@@ -8,7 +8,7 @@ What SXPE is: [README](../README.md). Recipes: [workflows](workflows.md). GUI: [
 
 | Binary | Role | Qt? |
 | --- | --- | --- |
-| `sxpe` | CLI — `noun verb` | No |
+| `sxpe` | CLI - `noun verb` | No |
 | `sxpe_mcp` | MCP stdio server | No |
 | `sxpe_gui` | Desktop UI | Yes (Widgets) |
 
@@ -115,7 +115,7 @@ MCP: start `sxpe_mcp`, then call tools with the same arguments as bus JSON (see 
 - Synthetic fixtures only in CI (`fixtures/synthetic/`). Do not commit EA/CC bytes.
 - Respect `layoutLocked` on neighborhood / world / DBC paths.
 - Destructive ops need explicit flags (`--force`) where required; prefer dry-run when offered.
-- `s3sa.*` decrypts/wraps PE bytes for export/import/view — never execute package code in-process.
+- `s3sa.*` decrypts/wraps PE bytes for export/import/view - never execute package code in-process.
 
 ## CLIP metadata
 

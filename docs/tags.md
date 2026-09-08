@@ -182,6 +182,6 @@ If Tag is blank, SXPE does not have a four-char name for that type id. The resou
 
 ## See also
 
-- [preview.md](preview.md) — what is worth showing in the inspector, by difficulty
-- [nmap.md](spec/nmap.md), [stbl.md](spec/stbl.md) — on-disk layouts we implement
-- `include/sxpe/resources/types.hpp` — machine-readable tag table
+- [preview.md](preview.md) - what is worth showing in the inspector, by difficulty
+- [nmap.md](spec/nmap.md), [stbl.md](spec/stbl.md) - on-disk layouts we implement
+- `include/sxpe/resources/types.hpp` - machine-readable tag table

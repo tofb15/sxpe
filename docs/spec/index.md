@@ -59,7 +59,7 @@ TS3 DBPF **2.0 has no on-disk deleted bit**. Evidence (2026-09-07, in-place mmap
 - Group high byte is **EP/product flags** (delta packs `p02`…`p20` use 8, 16, … 152 on every row), not a deleted flag. s3pi exposes this as EpFlags and returns only the low 24 bits as `ResourceGroup`.
 - s3pe’s `IsDeleted` is a **RAM flag**; save omits the index row (same as SXPE `write_file`).
 
-SXPE: `resource.setFlags deleted` is a session flag. `package.save` / `saveAs` / `compact` drop those rows. After reopen, `deletedCount` is 0 — the resource is gone, not struck through.
+SXPE: `resource.setFlags deleted` is a session flag. `package.save` / `saveAs` / `compact` drop those rows. After reopen, `deletedCount` is 0 - the resource is gone, not struck through.
 
 ## Caps
 
@@ -69,4 +69,4 @@ SXPE: `resource.setFlags deleted` is a session flag. `package.save` / `saveAs` /
 
 ## Synthetic
 
-`fixtures/synthetic/single-blob.bin` — one uncompressed resource, `indexType = 0`.
+`fixtures/synthetic/single-blob.bin` - one uncompressed resource, `indexType = 0`.
