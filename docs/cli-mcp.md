@@ -15,7 +15,7 @@ What SXPE is: [README](../README.md). Recipes: [workflows](workflows.md). GUI: [
 **Cross-platform:** the same `sxpe` / `sxpe_mcp` binaries and bus commands run on Windows and Linux (Qt-free). Examples on this page use POSIX-style paths; on Windows pass normal Windows paths to `--package` / `--path`.
 
 - **Windows portable zip** ships `sxpe-cli.bat` and `sxpe-mcp.bat` next to the GUI.
-- **Linux CLI tarball** ships `sxpe` / `sxpe_mcp` plus `sxpe-cli.sh` / `sxpe-mcp.sh`. Both are on [v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0). Build: [building.md](building.md).
+- **Linux CLI tarball** ships `sxpe` / `sxpe_mcp` plus `sxpe-cli.sh` / `sxpe-mcp.sh`. Both are on [v0.7.1](https://github.com/tofb15/sxpe/releases/tag/v0.7.1). Build: [building.md](building.md).
 
 ## Bus model
 
