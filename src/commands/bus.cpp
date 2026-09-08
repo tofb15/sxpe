@@ -24,6 +24,7 @@
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/merge_hygiene.hpp"
 #include "sxpe/resources/vpxy.hpp"
 #include "sxpe/resources/refs.hpp"
 
@@ -42,6 +43,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -778,8 +780,9 @@ std::vector<Tool> make_catalog() {
          true, false});
     add({"package.validate", "Validate",
          "Sniff + DIR cross-checks on an open session. Returns ok, issues[], indexCount, dir{}, "
-         "layoutLocked, pathKind, and summary[] lines for CLI --format text / GUI "
-         "(summary names neighborhood / world layout lock when locked).",
+         "conflictHotspots[] (leftover Sims3Pack manifests / duplicate TGIs), layoutLocked, "
+         "pathKind, and summary[] lines for CLI --format text / GUI "
+         "(summary names neighborhood / world layout lock and conflict hotspots).",
          obj_schema({{"sessionId", sess_prop()}}, json::array({"sessionId"})), env_out, true, false,
          true, false});
     add({"package.diff", "Compare packages",
@@ -933,6 +936,10 @@ std::vector<Tool> make_catalog() {
          "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge. "
          "dirPolicy: strip (default with writeMergeManifest), copy-through, or rebuild (not yet; refused). "
          "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages. "
+         "leftoverManifestPolicy: strip (default; auto-drop documented allowlist TGIs such as "
+         "Sims3Pack leftover 0x73E93EEB instance 0), keep, or warn (copy but list). "
+         "duplicateTgiPolicy: force | skip | fail (default force when --force, else fail). "
+         "Reports strippedLeftovers[] and duplicates[] warning lists. "
          "Caps (defaults in core/caps): maxPackages, maxTotalBytes, maxResources — refuse with cap_exceeded "
          "before OOM; split the job. reportProgress (default true) emits bus progress events and returns "
          "progress[] in data. Optional checkpointPath + checkpointBetweenPackages saves after each source "
@@ -944,6 +951,12 @@ std::vector<Tool> make_catalog() {
                      {"dirPolicy",
                       {{"type", "string"},
                        {"description", "strip | copy-through | rebuild (rebuild refused for now)"}}},
+                     {"leftoverManifestPolicy",
+                      {{"type", "string"},
+                       {"description", "strip (default) | keep | warn — documented leftover allowlist"}}},
+                     {"duplicateTgiPolicy",
+                      {{"type", "string"},
+                       {"description", "force | skip | fail (default: force if force=true else fail)"}}},
                      {"maxPackages", {{"type", "integer"}, {"default", 500}}},
                      {"maxTotalBytes", {{"type", "integer"}, {"default", 2147483648}}},
                      {"maxResources", {{"type", "integer"}, {"default", 200000}}},
@@ -967,11 +980,18 @@ std::vector<Tool> make_catalog() {
                     json::array({"path", "outDir"})),
          env_out, false, true, false, true});
     add({"resource.importDbc", "Import DBC",
-         "Treat .dbc/DBPF files as packages and copy resources. Pass path or paths[]. "
-         "Same caps / reportProgress / checkpoint* as resource.importPackage.",
+         "Treat .dbc/DBPF files as packages and copy resources (DBC-equivalent of importPackage). "
+         "Pass path or paths[]. Same leftoverManifestPolicy / duplicateTgiPolicy / caps / "
+         "reportProgress / checkpoint* as resource.importPackage.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                     {"leftoverManifestPolicy",
+                      {{"type", "string"},
+                       {"description", "strip (default) | keep | warn"}}},
+                     {"duplicateTgiPolicy",
+                      {{"type", "string"},
+                       {"description", "force | skip | fail"}}},
                      {"maxPackages", {{"type", "integer"}}},
                      {"maxTotalBytes", {{"type", "integer"}}},
                      {"maxResources", {{"type", "integer"}}},
@@ -2437,20 +2457,41 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         json dir = json::object();
         dir["present"] = false;
+        json conflict_hotspots = json::array();
+        std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint64_t>, std::uint32_t> tgi_counts;
+        bool saw_leftover = false;
+        bool saw_dup = false;
         for (std::uint32_t i = 0; i < s.pkg.count(); ++i) {
-            if (s.pkg.entry(i).tgi.type != sxpe::resources::kDir) {
+            const auto& e = s.pkg.entry(i);
+            const auto key = std::make_tuple(e.tgi.type, e.tgi.group, e.tgi.instance);
+            ++tgi_counts[key];
+            if (sxpe::resources::is_leftover_manifest_tgi(e.tgi.type, e.tgi.group, e.tgi.instance)) {
+                saw_leftover = true;
+                conflict_hotspots.push_back(
+                    {{"kind", "leftover_manifest"},
+                     {"type", e.tgi.type},
+                     {"group", e.tgi.group},
+                     {"instance", e.tgi.instance},
+                     {"ordinal", e.ordinal},
+                     {"reason", std::string(sxpe::resources::leftover_manifest_reason(
+                                    e.tgi.type, e.tgi.instance))}});
+            }
+            if (e.tgi.type != sxpe::resources::kDir) {
+                continue;
+            }
+            if (dir.value("present", false)) {
                 continue;
             }
             dir["present"] = true;
             auto body = s.pkg.uncompressed(i);
             if (!body) {
                 issues.push_back("dir_unreadable");
-                break;
+                continue;
             }
             auto parsed = sxpe::resources::parse_dir(*body);
             if (!parsed) {
                 issues.push_back("dir_corrupt");
-                break;
+                continue;
             }
             dir["records"] = parsed->size();
             dir["recordBytes"] = body->size() % 20 == 0 ? 20 : 16;
@@ -2458,9 +2499,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
             for (const auto& d : *parsed) {
                 bool found = false;
                 for (std::uint32_t j = 0; j < s.pkg.count(); ++j) {
-                    const auto& e = s.pkg.entry(j);
-                    if (e.tgi.type == d.tgi.type && e.tgi.group == d.tgi.group &&
-                        e.tgi.instance == d.tgi.instance && e.mem_size == d.mem_size) {
+                    const auto& ee = s.pkg.entry(j);
+                    if (ee.tgi.type == d.tgi.type && ee.tgi.group == d.tgi.group &&
+                        ee.tgi.instance == d.tgi.instance && ee.mem_size == d.mem_size) {
                         found = true;
                         break;
                     }
@@ -2473,7 +2514,29 @@ json Bus::Impl::exec(std::string_view id, json args) {
             if (missing) {
                 issues.push_back("dir_unmatched");
             }
-            break;
+        }
+        for (const auto& [key, cnt] : tgi_counts) {
+            if (cnt < 2) {
+                continue;
+            }
+            // NMAP concat can leave a single TGI; multi-ordinal elsewhere is a hotspot.
+            const auto [t, g, inst] = key;
+            if (t == kNmap) {
+                continue;
+            }
+            saw_dup = true;
+            conflict_hotspots.push_back({{"kind", "duplicate_tgi"},
+                                         {"type", t},
+                                         {"group", g},
+                                         {"instance", inst},
+                                         {"count", cnt},
+                                         {"reason", "same TGI appears with multiple ordinals"}});
+        }
+        if (saw_leftover) {
+            issues.push_back("leftover_manifest");
+        }
+        if (saw_dup) {
+            issues.push_back("duplicate_tgi");
         }
         const bool valid = issues.empty();
         const bool locked = s.pkg.layout_locked();
@@ -2482,10 +2545,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"issues", issues},
                             {"indexCount", s.pkg.count()},
                             {"dir", dir},
+                            {"conflictHotspots", conflict_hotspots},
                             {"layoutLocked", locked},
                             {"pathKind", kind},
                             {"summary", validate_summary_json(valid, s.pkg.count(), dir, issues,
-                                                              locked, kind)}});
+                                                              locked, kind, conflict_hotspots)}});
     }
     if (cmd == "package.save" || cmd == "package.compact") {
         if (cmd == "package.compact" && neighborhood_file(s.pkg.path())) {
@@ -3011,6 +3075,29 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     "dirPolicy 'rebuild' is not yet implemented; use 'strip' or "
                                     "'copy-through'"));
         }
+        std::string leftover_policy;
+        if (args.contains("leftoverManifestPolicy") && args["leftoverManifestPolicy"].is_string()) {
+            leftover_policy = args["leftoverManifestPolicy"].get<std::string>();
+        } else {
+            leftover_policy = "strip";  // auto-strip documented allowlist (issue #64)
+        }
+        if (leftover_policy != "strip" && leftover_policy != "keep" && leftover_policy != "warn") {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "leftoverManifestPolicy must be strip, keep, or warn"));
+        }
+        std::string dup_policy;
+        if (args.contains("duplicateTgiPolicy") && args["duplicateTgiPolicy"].is_string()) {
+            dup_policy = args["duplicateTgiPolicy"].get<std::string>();
+        } else {
+            dup_policy = force(args) ? "force" : "fail";
+        }
+        if (dup_policy != "force" && dup_policy != "skip" && dup_policy != "fail") {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "duplicateTgiPolicy must be force, skip, or fail"));
+        }
+        json stripped_leftovers = json::array();
+        json duplicate_warnings = json::array();
+        json hygiene_warnings = json::array();
         auto push_progress = [&](json ev) {
             if (!report_progress) {
                 return;
@@ -3099,6 +3186,25 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 if (t.type == sxpe::resources::kDir && dir_policy == "strip") {
                     continue;
                 }
+                if (sxpe::resources::is_leftover_manifest_tgi(t.type, t.group, t.instance)) {
+                    json hit{{"path", path->string()},
+                             {"type", t.type},
+                             {"group", t.group},
+                             {"instance", t.instance},
+                             {"reason", std::string(sxpe::resources::leftover_manifest_reason(
+                                            t.type, t.instance))}};
+                    if (leftover_policy == "strip") {
+                        hit["action"] = "strip";
+                        stripped_leftovers.push_back(hit);
+                        continue;
+                    }
+                    if (leftover_policy == "warn") {
+                        hit["action"] = "warn";
+                        hygiene_warnings.push_back(hit);
+                        // fall through and copy
+                    }
+                    // keep: copy silently
+                }
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
                 if (ex && t.type == kNmap) {
                     auto wr = merge_nmap_from(s.pkg, *ex, *src, i);
@@ -3112,13 +3218,29 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     ++n;
                     continue;
                 }
-                if (ex && !force(args)) {
-                    errors.push_back({{"path", path->string()},
-                                      {"message", "duplicate TGI; pass force"}});
-                    file_ok = false;
-                    break;
-                }
                 if (ex) {
+                    json dup{{"path", path->string()},
+                             {"type", t.type},
+                             {"group", t.group},
+                             {"instance", t.instance},
+                             {"ordinal", src->entry(i).ordinal}};
+                    if (dup_policy == "fail") {
+                        dup["action"] = "fail";
+                        duplicate_warnings.push_back(dup);
+                        errors.push_back({{"path", path->string()},
+                                          {"message",
+                                           "duplicate TGI; pass force or duplicateTgiPolicy=force|skip"}});
+                        file_ok = false;
+                        break;
+                    }
+                    if (dup_policy == "skip") {
+                        dup["action"] = "skip";
+                        duplicate_warnings.push_back(dup);
+                        continue;
+                    }
+                    // force
+                    dup["action"] = "force";
+                    duplicate_warnings.push_back(dup);
                     auto wr = replace_resource_through(s.pkg, *ex, *src, i);
                     if (!wr) {
                         errors.push_back(
@@ -3214,7 +3336,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
                      {"version", 1},
                      {"sources", sources},
                      {"notes",
-                      {{"forceOverwriteOnDuplicateTgi", force(args)},
+                      {{"forceOverwriteOnDuplicateTgi", force(args) || dup_policy == "force"},
+                       {"duplicateTgiPolicy", dup_policy},
+                       {"leftoverManifestPolicy", leftover_policy},
                        {"dirPolicy", dir_policy},
                        {"nmapPolicy", "concat"}}}};
             const auto dumped = man.dump();
@@ -3259,6 +3383,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
                  {"errors", errors},
                  {"mergeManifest", write_man},
                  {"dirPolicy", dir_policy},
+                 {"leftoverManifestPolicy", leftover_policy},
+                 {"duplicateTgiPolicy", dup_policy},
+                 {"strippedLeftovers", stripped_leftovers},
+                 {"duplicates", duplicate_warnings},
+                 {"warnings", hygiene_warnings},
                  {"totalInputBytes", total_bytes},
                  {"maxPackages", max_packages},
                  {"maxTotalBytes", max_total_bytes},

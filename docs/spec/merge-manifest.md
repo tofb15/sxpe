@@ -61,3 +61,34 @@ Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and t
 ## Non-goals
 
 Unmerging packages without SXMM. S4S/TS4 interop. Guessing CAS items.
+
+
+## Leftover manifest allowlist (issue #64)
+
+On `resource.importPackage` / `resource.importDbc`, SXPE can strip or warn on **documented** leftover TGIs that cause community merge conflicts:
+
+| Type | Instance | Group | Reason |
+| --- | --- | --- | --- |
+| `0x73E93EEB` | `0` | any | Sims3Pack leftover package-manifest XML (launcher); classic MATY / Anach pain |
+
+`leftoverManifestPolicy`:
+
+| Value | Behavior |
+| --- | --- |
+| `strip` | **Default.** Skip copying allowlisted leftovers; list them in `strippedLeftovers[]`. |
+| `keep` | Copy as normal resources. |
+| `warn` | Copy, but list in `warnings[]`. |
+
+Allowlist lives in `include/sxpe/resources/merge_hygiene.hpp`. Do not extend it with gameplay `_XML` / ITUN keys.
+
+## Duplicate TGI policy (issue #64)
+
+When a source TGI already exists in the destination (non-NMAP; NMAP still concatenates):
+
+| `duplicateTgiPolicy` | Behavior |
+| --- | --- |
+| `force` | Overwrite destination blob (default when `force=true`) |
+| `skip` | Leave destination; list in `duplicates[]` with `action=skip` |
+| `fail` | Stop that source package; list in `duplicates[]` / `errors[]` (default when `force=false`) |
+
+If `duplicateTgiPolicy` is omitted, `force` argument selects force vs fail (backward compatible). Response always includes `duplicates[]` for force/skip/fail hits.

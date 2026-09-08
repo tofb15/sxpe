@@ -5,11 +5,23 @@ Task-oriented recipes. Pair with the [user guide](user-guide.md) or [CLI/MCP](cl
 ## Merge custom content into one package
 
 1. Collect the `.package` files you want to combine (work on **copies**).
-2. GUI: drop all of them onto SXPE (or Resource → Import → From package(s)…). A progress dialog tracks each source package.
-3. Save the merged result. SXPE embeds an **SXMM** manifest when merging via drop (or when `writeMergeManifest` is set).
-4. To split again later: Tools → **Un-merge package…** (SXPE merges only).
+2. GUI — pick **one** clear path:
+   - **Tools → Merge packages…** (or drop several files → **Merge into new package**) — new untitled package + **SXMM** manifest. Prefer this for “combine CC into one file”.
+   - **Resource → Import → From package(s) into this package…** — copy into the **open** tab (no SXMM unless you pass `writeMergeManifest` via CLI/MCP).
+   - **Resource → Import → As DBC into this package…** — **DBC-equivalent** of the same bus command (`resource.importDbc`); same copy-through / caps / leftover strip / duplicate policy as `importPackage`. Historical s3pe name; not a different format.
+3. Save the merged result. Drop-merge / Tools → Merge write **SXMM** so un-merge can reverse SXPE merges only.
+4. Tools → **Validate** — summary lists **conflict hotspots** (leftover Sims3Pack manifests `0x73E93EEB:0`, duplicate TGIs).
+5. To split again later: Tools → **Un-merge package…** (SXPE merges only).
 
-CLI/agents: `resource.importPackage` with `paths[]` (or `--progress` on the CLI for stderr JSON progress lines). Un-merge with `package.unmerge` when an SXMM is present.
+CLI/agents:
+
+```text
+sxpe resource importPackage --session s-1 --progress \
+  --paths '["a.package","b.package"]' --force --write-merge-manifest true \
+  --leftover-manifest-policy strip --duplicate-tgi-policy force
+```
+
+Un-merge with `package.unmerge` when an SXMM is present. See [merge-manifest.md](spec/merge-manifest.md) for leftover allowlist + duplicate policy.
 
 ### Large CC batches (s3pe OOM pain)
 
@@ -47,7 +59,7 @@ CLI: `resource.list` to find rows, then `resource.delete` with the resourceId. A
 ## Validate before you share
 
 1. Tools → **Validate** (or `package.validate`).
-2. Read `summary[]` / dialog lines for DIR policy, layout lock, and structural issues.
+2. Read `summary[]` / dialog lines for DIR policy, layout lock, **conflict hotspots**, and structural issues.
 3. Fix, re-validate, save.
 4. Optional: Tools → **Compare packages…** against the previous good version.
 

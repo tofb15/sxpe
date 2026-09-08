@@ -5,6 +5,7 @@
 #include "sxpe/resources/nmap.hpp"
 #include "sxpe/resources/stbl.hpp"
 #include "sxpe/resources/types.hpp"
+#include "sxpe/resources/merge_hygiene.hpp"
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/core/caps.hpp"
 
@@ -1926,6 +1927,237 @@ int main() {
             CHECK(bad["ok"] == false);
             CHECK(bad["error"].value("message", std::string{}).find("checkpointPath") !=
                   std::string::npos);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+    }
+
+
+    // Issue #64: merge conflict hygiene — leftover Sims3Pack manifests + duplicate TGI policy.
+    {
+        auto hyg = tmp / "hygiene-64";
+        std::filesystem::remove_all(hyg);
+        std::filesystem::create_directories(hyg);
+
+        const auto leftover_type = static_cast<int>(sxpe::resources::kSims3PackLeftoverManifest);
+        CHECK(sxpe::resources::is_leftover_manifest_tgi(
+            sxpe::resources::kSims3PackLeftoverManifest, 0, 0));
+        CHECK(!sxpe::resources::is_leftover_manifest_tgi(
+            sxpe::resources::kSims3PackLeftoverManifest, 0, 1));
+
+        auto mk_pkg = [&](const std::string& name, int type, int instance,
+                          bool with_leftover) -> std::string {
+            auto sess = bus.execute("package.new", json::object());
+            CHECK(sess["ok"] == true);
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId",
+                                    json{{"type", type}, {"group", 0}, {"instance", instance}}},
+                                   {"payloadB64", b64(*raw)}})["ok"] == true);
+            if (with_leftover) {
+                CHECK(bus.execute(
+                          "resource.add",
+                          json{{"sessionId", sid},
+                               {"resourceId",
+                                json{{"type", leftover_type}, {"group", 0}, {"instance", 0}}},
+                               {"payloadB64", b64(*raw)}})["ok"] == true);
+            }
+            auto path = (hyg / name).string();
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", path}, {"force", true}})["ok"] ==
+                  true);
+            bus.execute("package.close", json{{"sessionId", sid}});
+            return path;
+        };
+
+        const auto pa = mk_pkg("left-a.package", 101, 101, true);
+        const auto pb = mk_pkg("left-b.package", 102, 102, true);
+
+        // Default strip: leftovers gone; validate clean for leftover_manifest.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa, pb})},
+                                        {"force", true},
+                                        {"writeMergeManifest", true}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("leftoverManifestPolicy", "") == "strip");
+            CHECK(imp["data"]["strippedLeftovers"].is_array());
+            CHECK(imp["data"]["strippedLeftovers"].size() == 2);
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 50}});
+            CHECK(list["ok"] == true);
+            int leftovers = 0;
+            int content = 0;
+            for (const auto& it : list["data"]["items"]) {
+                if (it["type"] == leftover_type && it["instance"] == 0) {
+                    ++leftovers;
+                }
+                if (it["type"] == 101 || it["type"] == 102) {
+                    ++content;
+                }
+            }
+            CHECK(leftovers == 0);
+            CHECK(content == 2);
+            auto val = bus.execute("package.validate", json{{"sessionId", sid}});
+            CHECK(val["ok"] == true);
+            CHECK(val["data"].value("ok", false) == true);
+            bool saw_leftover_issue = false;
+            for (const auto& iss : val["data"]["issues"]) {
+                if (iss == "leftover_manifest") {
+                    saw_leftover_issue = true;
+                }
+            }
+            CHECK(!saw_leftover_issue);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // keep: leftovers present; validate flags hotspot.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa})},
+                                        {"force", true},
+                                        {"leftoverManifestPolicy", "keep"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"]["strippedLeftovers"].empty());
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 50}});
+            int leftovers = 0;
+            for (const auto& it : list["data"]["items"]) {
+                if (it["type"] == leftover_type && it["instance"] == 0) {
+                    ++leftovers;
+                }
+            }
+            CHECK(leftovers == 1);
+            auto val = bus.execute("package.validate", json{{"sessionId", sid}});
+            CHECK(val["ok"] == true);
+            CHECK(val["data"].value("ok", false) == false);
+            bool saw = false;
+            for (const auto& iss : val["data"]["issues"]) {
+                if (iss == "leftover_manifest") {
+                    saw = true;
+                }
+            }
+            CHECK(saw);
+            CHECK(val["data"]["conflictHotspots"].is_array());
+            CHECK(val["data"]["conflictHotspots"].size() >= 1);
+            bool summary_hot = false;
+            for (const auto& line : val["data"]["summary"]) {
+                if (line.is_string() &&
+                    line.get<std::string>().find("Conflict hotspots") != std::string::npos) {
+                    summary_hot = true;
+                }
+            }
+            CHECK(summary_hot);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // warn: copied + listed in warnings.
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa})},
+                                        {"force", true},
+                                        {"leftoverManifestPolicy", "warn"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"]["warnings"].is_array());
+            CHECK(imp["data"]["warnings"].size() == 1);
+            auto list = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 50}});
+            int leftovers = 0;
+            for (const auto& it : list["data"]["items"]) {
+                if (it["type"] == leftover_type && it["instance"] == 0) {
+                    ++leftovers;
+                }
+            }
+            CHECK(leftovers == 1);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // Duplicate TGI policy: two sources share type/group/instance.
+        const auto d1 = mk_pkg("dup-a.package", 201, 201, false);
+        const auto d2 = mk_pkg("dup-b.package", 201, 201, false);
+
+        // fail (default without force)
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.importPackage",
+                              json{{"sessionId", sid},
+                                   {"paths", json::array({d1})},
+                                   {"force", true},
+                                   {"leftoverManifestPolicy", "strip"}})["ok"] == true);
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({d2})},
+                                        {"force", false},
+                                        {"duplicateTgiPolicy", "fail"}});
+            CHECK(imp["ok"] == false || imp["data"].value("failed", 0) >= 1 ||
+                  imp["data"].value("imported", 0) == 0);
+            // When first package already filled dest, second with fail should error.
+            if (imp["ok"] == true) {
+                CHECK(imp["data"].value("failed", 0) >= 1);
+            }
+            CHECK(imp.contains("data") ? imp["data"].value("duplicateTgiPolicy", "") == "fail" ||
+                                             !imp["ok"]
+                                       : !imp["ok"]);
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // skip: dest kept, duplicate listed
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.importPackage",
+                              json{{"sessionId", sid},
+                                   {"paths", json::array({d1})},
+                                   {"force", true}})["ok"] == true);
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({d2})},
+                                        {"duplicateTgiPolicy", "skip"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("duplicateTgiPolicy", "") == "skip");
+            CHECK(imp["data"]["duplicates"].is_array());
+            CHECK(imp["data"]["duplicates"].size() >= 1);
+            CHECK(imp["data"]["duplicates"][0].value("action", "") == "skip");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // force: overwrite + listed
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            CHECK(bus.execute("resource.importPackage",
+                              json{{"sessionId", sid},
+                                   {"paths", json::array({d1})},
+                                   {"force", true}})["ok"] == true);
+            auto imp = bus.execute("resource.importPackage",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({d2})},
+                                        {"duplicateTgiPolicy", "force"}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("duplicateTgiPolicy", "") == "force");
+            CHECK(imp["data"]["duplicates"].size() >= 1);
+            CHECK(imp["data"]["duplicates"][0].value("action", "") == "force");
+            bus.execute("package.close", json{{"sessionId", sid}});
+        }
+
+        // importDbc shares leftover strip (DBC-equivalent parity)
+        {
+            auto sess = bus.execute("package.new", json::object());
+            const auto sid = sess["data"]["sessionId"].get<std::string>();
+            auto imp = bus.execute("resource.importDbc",
+                                   json{{"sessionId", sid},
+                                        {"paths", json::array({pa})},
+                                        {"force", true}});
+            CHECK(imp["ok"] == true);
+            CHECK(imp["data"].value("leftoverManifestPolicy", "") == "strip");
+            CHECK(imp["data"]["strippedLeftovers"].size() == 1);
             bus.execute("package.close", json{{"sessionId", sid}});
         }
     }

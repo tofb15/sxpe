@@ -35,11 +35,11 @@ Column visibility for the resource list.
 
 ### Resource
 
-Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy resource key; Import (file / package / DBC); Export; Editors (STBL, Name map, XML, S3SA, CLIP, DDS, SNAP, VID); open in hex/text editor; Delete.
+Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy resource key; Import (file / into-this-package / DBC-equivalent); Export; Editors (STBL, Name map, XML, S3SA, CLIP, DDS, SNAP, VID); open in hex/text editor; Delete.
 
 ### Tools
 
-FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect Sims3Pack**, **Un-merge package**, byte Search, **Validate**, Compact / save.
+FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect Sims3Pack**, **Merge packages…**, **Un-merge package**, byte Search, **Validate**, Compact / save.
 
 ### Settings
 
@@ -68,11 +68,12 @@ Consent: SXPE never auto-installs or silently fetches zip assets. You choose whe
 
 ## Merge and un-merge
 
-1. Drop multiple `.package` files (or import from package) to combine resources. A **progress dialog** shows per-package status.
-2. SXPE stores an **SXMM** merge manifest in the result (drop-merge).
-3. **Tools → Un-merge package…** recreates source packages **only** when that manifest is present and valid. Merges from other tools are not reversible this way.
+1. **Tools → Merge packages…** (or drop several files → **Merge into new package**) combines resources into a **new untitled** package. A **progress dialog** shows per-package status. SXPE writes an **SXMM** manifest and **strips** known leftover Sims3Pack manifests (`0x73E93EEB` instance 0) by default.
+2. **Resource → Import → From package(s) into this package…** copies into the **open** tab (different intent). **As DBC into this package…** is the historical s3pe DBC-equivalent path — same bus merge/import, not a different file format.
+3. **Tools → Un-merge package…** recreates source packages **only** when an SXMM manifest is present and valid. Merges from other tools are not reversible this way.
+4. **Tools → Validate** summary highlights **conflict hotspots** (leftover manifests / duplicate TGIs).
 
-Large CC sets: prefer modest batches; SXPE refuses oversized jobs with a clear `cap_exceeded` message instead of OOM. See [workflows.md](workflows.md#large-cc-batches-s3pe-oom-pain). CLI/MCP share the same bus command (`resource.importPackage`) including progress events.
+Large CC sets: prefer modest batches; SXPE refuses oversized jobs with a clear `cap_exceeded` message instead of OOM. See [workflows.md](workflows.md#large-cc-batches-s3pe-oom-pain). CLI/MCP share the same bus command (`resource.importPackage`) including leftover / duplicate policies and progress events.
 
 See [spec/merge-manifest.md](spec/merge-manifest.md).
 
@@ -89,7 +90,7 @@ See [spec/merge-manifest.md](spec/merge-manifest.md).
 
 ## Validate, compare, scan, Sims3Pack
 
-- **Validate** — Tools → Validate. Report includes DIR / layout-lock notes. Prefer fixing issues before sharing a mod.
+- **Validate** — Tools → Validate. Report includes DIR / layout-lock notes and **conflict hotspots** (leftover manifests / duplicate TGIs). Prefer fixing issues before sharing a mod.
 - **Compare** — Tools → Compare packages…. Diff by TGI+ordinal and payload hash.
 - **Find references** — Tools → Find references…. Search for TGI references inside the open package.
 - **Scan folder** — Tools → Scan folder…. Read-only hygiene over a Downloads-style tree (empty / corrupt / wrong-game / duplicate TGI sample). Does **not** auto-delete.
