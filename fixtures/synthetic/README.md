@@ -8,5 +8,6 @@ Generated, tiny, for decoder tests. Not game content.
 | `single-blob.bin` | One uncompressed payload `Hello SXPE\n` |
 | `refpack-hello.bin` | RefPack `10 FB` + stop + `Hi` |
 | `minimal.sims3pack` | TS3Pack + XML + one embedded synthetic DBPF |
+| `github-latest.json` | Fake GitHub `/releases/latest` body for `app.checkUpdate` tests |
 
 Regenerate: `python fixtures/synthetic/make_synthetic.py`

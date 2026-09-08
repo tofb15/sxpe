@@ -85,7 +85,7 @@ Preferred approach: a **documented tarball** via `scripts/package-linux.sh` (not
 
 Honest limits of the Linux tarball:
 
-- **Does not vendor Qt shared libraries.** A tarball that includes `sxpe_gui` still needs Qt 6.5+ Widgets+Network (distro or official kit) on the machine that runs it.
+- **Does not vendor Qt shared libraries.** A tarball that includes `sxpe_gui` still needs Qt 6.5+ Widgets (distro or official kit) on the machine that runs it.
 - Launchers in the archive: `sxpe-cli.sh`, `sxpe-mcp.sh`, and `SXPE.sh` when GUI is included.
 - Smoke the packager locally: `./scripts/test-package-linux.sh` (skips cleanly if `build/sxpe` is missing).
 

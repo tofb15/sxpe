@@ -52,20 +52,27 @@ Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, **Built-in
 
 ## Check for update
 
-**Help → Check for update…** calls:
+**Help → Check for update…** (GUI) and `sxpe app checkUpdate` (CLI / MCP `app_checkUpdate`) share one bus command. Both call:
 
 `https://api.github.com/repos/tofb15/sxpe/releases/latest`
 
-and compares the release `tag_name` to the running `SXPE` version (from CMake `PROJECT_VERSION`).
+and compare the release `tag_name` to the running `SXPE` version (from CMake `PROJECT_VERSION`).
 
 | Result | Meaning |
 | --- | --- |
 | Up to date | Your version matches the latest release tag |
 | Newer available | Opens a link to that release; **nothing is downloaded automatically** |
-| No releases yet | GitHub returned 404 / empty — page link still offered |
+| Not found (404) | No public latest release (repo may be **private**, or none published). Set `SXPE_GITHUB_TOKEN` / `GITHUB_TOKEN`, or use `gh auth token`. Page link still offered. |
 | Network error | Offline, firewall, or API failure — try again later |
 
 Consent: SXPE never auto-installs or silently fetches zip assets. You choose whether to open the browser and download.
+
+CLI:
+
+```text
+sxpe app checkUpdate
+sxpe app checkUpdate --format text
+```
 
 ## Merge and un-merge
 

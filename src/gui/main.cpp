@@ -1,11 +1,26 @@
 #include "main_window.hpp"
+#include "dialogs.hpp"
 
 #include "sxpe/version.hpp"
 
 #include <QApplication>
 #include <QCoreApplication>
 #include <QPalette>
+#include <QString>
 #include <QStyleHints>
+
+#include <cstring>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <cstdio>
+#endif
 
 namespace {
 
@@ -34,6 +49,26 @@ void apply_theme(QApplication& app) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    bool check_update = false;
+    QString latest_json_path;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--check-update") == 0) {
+            check_update = true;
+        } else if (std::strcmp(argv[i], "--latest-json-path") == 0 && i + 1 < argc) {
+            latest_json_path = QString::fromLocal8Bit(argv[++i]);
+        }
+    }
+    if (check_update) {
+#ifdef _WIN32
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+            FILE* fp = nullptr;
+            freopen_s(&fp, "CONOUT$", "w", stdout);
+            freopen_s(&fp, "CONOUT$", "w", stderr);
+        }
+#endif
+        return sxpe::gui::run_check_update_headless(latest_json_path);
+    }
+
     QApplication app(argc, argv);
     app.setApplicationName("SXPE");
     app.setOrganizationName("SXPE");

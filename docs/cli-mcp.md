@@ -10,7 +10,7 @@ GUI, CLI, and MCP share one **command bus**. Prefer this page plus [docs/spec/ca
 | --- | --- | --- |
 | `sxpe` | CLI — `noun verb` | No |
 | `sxpe_mcp` | MCP stdio server | No |
-| `sxpe_gui` | Desktop UI | Yes (Widgets + Network) |
+| `sxpe_gui` | Desktop UI | Yes (Widgets) |
 
 **Cross-platform:** the same `sxpe` / `sxpe_mcp` binaries and bus commands run on Windows and Linux (Qt-free). Examples on this page use POSIX-style paths; on Windows pass normal Windows paths to `--package` / `--path`.
 
@@ -82,6 +82,7 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 | `resource.findRefs` / `resource.listRefs` | Inbound / outbound TGI references |
 | `s3sa.info` / `exportDll` / `importDll` / `view` | Script assembly wrapper (never LoadLibrary) |
 | `hash.fnv` | FNV helpers |
+| `app.checkUpdate` | Compare this build to GitHub Releases; never downloads |
 | `undo` / `redo` | Session stack |
 
 Full table and flags: [spec/catalog.md](spec/catalog.md). Codec bytes: [spec/](spec/README.md).

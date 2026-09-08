@@ -38,7 +38,7 @@ In the GUI (either OS), **Help → Check for update** queries GitHub’s Release
 
 ## Quick start (builders)
 
-**Prerequisites:** CMake 3.28+, a C++23 compiler. GUI needs Qt 6.5+ Widgets (and Network for update check). Without Qt, CLI and MCP still build.
+**Prerequisites:** CMake 3.28+, a C++23 compiler. GUI needs Qt 6.5+ Widgets. Without Qt, CLI and MCP still build.
 
 ```text
 cmake --preset default

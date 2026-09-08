@@ -48,8 +48,12 @@ target_include_directories(sxpe_games INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/inc
 add_library(sxpe_core
     src/core/mapped_file.cpp
     src/core/file_lock.cpp
+    src/core/update_check.cpp
 )
 target_link_libraries(sxpe_core PUBLIC sxpe_games)
+if(WIN32)
+    target_link_libraries(sxpe_core PUBLIC winhttp)
+endif()
 
 add_library(sxpe_games_sims3
     src/games_sims3/sims3_game_profile.cpp
@@ -81,7 +85,7 @@ target_link_libraries(sxpe_resources PUBLIC sxpe_games_sims3)
 add_library(sxpe_commands
     src/commands/bus.cpp
 )
-target_include_directories(sxpe_commands PUBLIC "${SXPE_VENDOR}")
+target_include_directories(sxpe_commands PUBLIC "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_commands PUBLIC sxpe_resources)
 
 add_executable(sxpe src/cli/main.cpp)
@@ -107,6 +111,9 @@ target_compile_definitions(sxpe_refpack_test PRIVATE
 
 add_executable(sxpe_fnv_test tests/fnv_test.cpp)
 target_link_libraries(sxpe_fnv_test PRIVATE sxpe_games_sims3)
+
+add_executable(sxpe_update_check_test tests/update_check_test.cpp)
+target_link_libraries(sxpe_update_check_test PRIVATE sxpe_core)
 
 add_executable(sxpe_commands_test tests/commands_test.cpp)
 target_link_libraries(sxpe_commands_test PRIVATE sxpe_commands)
@@ -144,7 +151,7 @@ set(_sxpe_qt_hint "${CMAKE_CURRENT_SOURCE_DIR}/../qt/6.8.2/msvc2022_64")
 if(EXISTS "${_sxpe_qt_hint}/lib/cmake/Qt6/Qt6Config.cmake")
     list(PREPEND CMAKE_PREFIX_PATH "${_sxpe_qt_hint}")
 endif()
-find_package(Qt6 6.5 COMPONENTS Widgets Network QUIET)
+find_package(Qt6 6.5 COMPONENTS Widgets QUIET)
 if(Qt6_FOUND)
     qt_standard_project_setup()
     add_executable(sxpe_gui WIN32
@@ -161,7 +168,7 @@ if(Qt6_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/gui"
         "${SXPE_VENDOR}"
         "${SXPE_GENERATED_INCLUDE_DIR}")
-    target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets Qt6::Network sxpe_commands)
+    target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
     set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
     find_program(SXPE_WINDEPLOYQT windeployqt HINTS "${_qt_prefix}/bin")
@@ -180,6 +187,7 @@ add_test(NAME game_profile_registry COMMAND sxpe_tests)
 add_test(NAME dbpf_io COMMAND sxpe_dbpf_io_test)
 add_test(NAME refpack COMMAND sxpe_refpack_test)
 add_test(NAME fnv COMMAND sxpe_fnv_test)
+add_test(NAME update_check COMMAND sxpe_update_check_test)
 add_test(NAME commands COMMAND sxpe_commands_test)
 add_test(NAME stbl COMMAND sxpe_stbl_test)
 add_test(NAME dds COMMAND sxpe_dds_test)
@@ -191,6 +199,16 @@ add_test(NAME dir COMMAND sxpe_dir_test)
 add_test(NAME sims3pack COMMAND sxpe_sims3pack_test)
 add_test(NAME cli_manifest COMMAND sxpe manifest --format json)
 add_test(NAME cli_hash COMMAND sxpe hash fnv --text a --width 32 --format json)
+add_test(NAME cli_check_update_fixture COMMAND sxpe app checkUpdate
+    --current-version 0.7.0
+    --latest-json-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/github-latest.json"
+    --format json)
+set_tests_properties(cli_check_update_fixture PROPERTIES PASS_REGULAR_EXPRESSION "upToDate")
+add_test(NAME cli_check_update_newer COMMAND sxpe app checkUpdate
+    --current-version 0.6.0
+    --latest-json-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/github-latest.json"
+    --format json)
+set_tests_properties(cli_check_update_newer PROPERTIES PASS_REGULAR_EXPRESSION "newerAvailable")
 add_test(NAME cli_list COMMAND sxpe resource list --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin" --format json --limit 10)
 add_test(NAME cli_info COMMAND sxpe package info --package
@@ -251,6 +269,11 @@ if(TARGET sxpe_gui)
         string(APPEND _gui_smoke_env ";QT_PLUGIN_PATH=${_qt_plugins}")
     endif()
     set_tests_properties(gui_smoke PROPERTIES
+        ENVIRONMENT "${_gui_smoke_env}"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_prefix}/bin")
+    add_test(NAME gui_check_update COMMAND sxpe_gui --check-update
+        --latest-json-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/github-latest.json")
+    set_tests_properties(gui_check_update PROPERTIES
         ENVIRONMENT "${_gui_smoke_env}"
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_prefix}/bin")
 endif()
