@@ -340,6 +340,50 @@ int main() {
         CHECK(plain.has_value() && as_text(*plain) == "compress me please!!");
     }
 
+
+    // Issue #65: open stays O(index) even when a row claims huge mem_size.
+    {
+        auto oversized = tmp / "oversize-mem.bin";
+        const std::uint32_t huge_mem = sxpe::core::caps::kMaxResourceBytes + 64;
+        std::vector<std::byte> file(96 + 4 + 32, std::byte{0});
+        file[0] = std::byte{'D'};
+        file[1] = std::byte{'B'};
+        file[2] = std::byte{'P'};
+        file[3] = std::byte{'F'};
+        auto poke = [](std::vector<std::byte>& o, std::size_t off, std::uint32_t v) {
+            std::memcpy(o.data() + off, &v, 4);
+        };
+        poke(file, 4, 2);
+        poke(file, 0x24, 1);
+        poke(file, 0x2C, 36);
+        poke(file, 0x3C, 3);
+        poke(file, 0x40, 96);
+        poke(file, 96, 0);
+        poke(file, 100, 7);
+        poke(file, 104, 0);
+        poke(file, 108, 0);
+        poke(file, 112, 1);
+        poke(file, 116, 96);
+        poke(file, 120, 0x80000000u);
+        poke(file, 124, huge_mem);
+        poke(file, 128, 0);
+        write_bytes(oversized, file);
+        auto pkg = Package::open(oversized, false);
+        CHECK(pkg.has_value());
+        if (pkg) {
+            CHECK(pkg->count() == 1);
+            CHECK(pkg->entry(0).mem_size == huge_mem);
+            auto u = pkg->uncompressed(0);
+            CHECK(!u);
+            if (!u) {
+                CHECK(u.error().code == ErrorCode::cap_exceeded);
+            }
+            auto peek = pkg->peek(0, 16);
+            // Uncompressed flag 0 + empty disk → empty peek OK (no full decode).
+            CHECK(peek.has_value());
+        }
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;

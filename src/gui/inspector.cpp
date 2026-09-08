@@ -368,8 +368,9 @@ void Inspector::load_visible() {
         return;
     }
     if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
-        const auto msg = tr("Resource is %1 MB — live preview skipped.")
-                             .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1);
+        const auto msg = tr("Resource is %1 MB — live preview refused (hard cap %2 MB).")
+                             .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1)
+                             .arg(sxpe::core::caps::kMaxLivePreviewBytes / (1024.0 * 1024.0), 0, 'f', 0);
         if (pane == 0) {
             load_preview(rid);
             return;
@@ -445,8 +446,9 @@ void Inspector::load_preview(const nlohmann::json& rid) {
     preview_card_->setText(identity_card());
 
     if (pending_mem_ > sxpe::core::caps::kMaxLivePreviewBytes) {
-        show_preview_body(tr("Resource is %1 MB — live preview skipped.")
-                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1));
+        show_preview_body(tr("Resource is %1 MB — live preview refused (hard cap %2 MB).")
+                              .arg(pending_mem_ / (1024.0 * 1024.0), 0, 'f', 1)
+                              .arg(sxpe::core::caps::kMaxLivePreviewBytes / (1024.0 * 1024.0), 0, 'f', 0));
         return;
     }
 

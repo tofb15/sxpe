@@ -17,7 +17,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
 | `package.new` | n | n | TS3 empty package |
-| `package.open` | y | n | sniff; refuse unknown |
+| `package.open` | y | n | mmap+index; `forceWritable`; auto RO ≥256 MiB |
 | `package.close` | n | n | |
 | `package.save` | n | y | unmap then ReplaceFile |
 | `package.saveAs` | n | y | |
