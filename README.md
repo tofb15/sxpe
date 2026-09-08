@@ -15,13 +15,15 @@
 
 ## Quick start (non-technical)
 
-1. Download the latest Windows portable zip from **[GitHub Releases](https://github.com/tofb15/sxpe/releases)**.
-2. Unzip it somewhere writable (keep the DLL and `platforms` / plugin folders next to the executables).
-3. Double-click **`SXPE.bat`** (or run `sxpe_gui.exe`).
+**What is on [GitHub Releases](https://github.com/tofb15/sxpe/releases) today (v0.6.0):** a **Linux CLI + MCP** tarball (`sxpe-0.6.0-linux-x64-cli.tar.gz`). There is **no** Windows portable zip on that release yet.
 
-Optional: `sxpe-cli.bat` and `sxpe-mcp.bat` are in the same folder for command-line and agent use.
+| You want | Do this |
+| --- | --- |
+| Linux CLI / MCP | Download the tarball from [Releases](https://github.com/tofb15/sxpe/releases/tag/v0.6.0), extract, run `sxpe` / `sxpe_mcp` |
+| Windows GUI / CLI / MCP | Build and package locally: `build.bat`, then `package.bat` (or `scripts/package.ps1`). Details: [docs/building.md](docs/building.md). Trackers: [#54](https://github.com/tofb15/sxpe/issues/54) (ship zip on Releases), [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity) |
+| Linux GUI | Build from source with Qt 6 Widgets present ([docs/building.md](docs/building.md)) |
 
-If no release asset is published yet, build from source (below) or wait for a tagged release. In the GUI, **Help → Check for update** queries GitHub’s Releases API and never downloads anything without your consent.
+In the GUI, **Help → Check for update** queries GitHub’s Releases API and never downloads anything without your consent.
 
 ---
 
@@ -41,7 +43,7 @@ Windows (MSVC Visual Studio 2022/2026):
 build.bat
 ```
 
-Then double-click `SXPE.bat` to run from `build/`. Portable zip (GUI + CLI + MCP + Qt plugins + MSVC runtime):
+Then double-click `SXPE.bat` to run from `build/`. Portable zip (GUI + CLI + MCP + Qt plugins + MSVC runtime) for local use or manual upload:
 
 ```text
 package.bat
@@ -93,7 +95,7 @@ Short recipes; step-by-step: **[docs/workflows.md](docs/workflows.md)**.
 | [docs/building.md](docs/building.md) | Build, package, CI |
 | [docs/testing.md](docs/testing.md) | Optional local FullBuild/CC round-trip |
 | [docs/spec/](docs/spec/README.md) | Format / command catalog |
-| [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md) | M6 release notes draft |
+| [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md) | M6 release notes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | DCO, scope, hygiene |
 
 Do not commit game packages, custom content, or other copyrighted binaries.
@@ -108,7 +110,11 @@ Current project version is **0.6.0** (`CMakeLists.txt` `PROJECT_VERSION` / `vcpk
 - **Help → Check for update** via GitHub Releases API (no auto-download)
 - Docs overhaul for humans and agents
 
-Tracker: [#33](https://github.com/tofb15/sxpe/issues/33). Release notes draft: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
+**Published asset:** Linux CLI+MCP tarball on [v0.6.0](https://github.com/tofb15/sxpe/releases/tag/v0.6.0). Windows portable zip is built locally (`package.bat`) until [#54](https://github.com/tofb15/sxpe/issues/54) ships it on Releases.
+
+Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
+
+**Open roadmap (not closed M6 tracker):** [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (this docs wave), [#54](https://github.com/tofb15/sxpe/issues/54) (Windows zip on Releases), [#62](https://github.com/tofb15/sxpe/issues/62) (M7), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
 
 ---
 

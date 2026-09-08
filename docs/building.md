@@ -118,7 +118,9 @@ All of the above were run successfully while implementing #31 (26/26 ctest, incl
 
 ## Releases / packaging
 
-Windows portable zip (GUI + CLI + MCP, Qt plugins, MSVC runtime):
+**Published on v0.6.0:** Linux CLI+MCP tarball only. Windows portable zip is **not** on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)).
+
+Windows portable zip for local use (GUI + CLI + MCP, Qt plugins, MSVC runtime):
 
 ```text
 package.bat
@@ -126,9 +128,9 @@ package.bat
 
 Same as `scripts/package.ps1`. Output: `dist/sxpe/` and `dist/sxpe-<version>-windows-x64.zip`. Use `-SkipBuild` to package the current `build/` tree. The zip includes `SXPE.bat`, `sxpe-cli.bat`, and `sxpe-mcp.bat`.
 
-### GitHub Actions release workflow
+### GitHub Actions release workflow (maintainer-only)
 
 Preferred path: `.github/workflows/release.yml` (runs on `v*` tags, builds the portable zip via `package.ps1`).
 
-If the pushing token lacks the GitHub `workflow` scope, OAuth cannot update files under `.github/workflows/`. In that case a paste-ready copy lives at [`docs/ci/release.yml`](ci/release.yml) — add it in the GitHub UI or with a token that has `workflow` scope. Tagging and attaching the zip asset is a separate coordinator step after merge.
+If the pushing token lacks the GitHub `workflow` scope, OAuth cannot update files under `.github/workflows/`. In that case a paste-ready **maintainer-only** copy lives at [`docs/ci/release.yml`](ci/release.yml) (see [`docs/ci/README.md`](ci/README.md)) — add it in the GitHub UI or with a token that has `workflow` scope. Tagging and attaching the zip asset is a separate coordinator step.
 

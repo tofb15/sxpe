@@ -1,14 +1,14 @@
 # SXPE user guide (GUI)
 
-For non-builders who downloaded a portable zip, or builders running `sxpe_gui`.
+For builders running `sxpe_gui`, or anyone who packaged a local Windows zip. v0.6.0 Releases ship a **Linux CLI+MCP** tarball only — not a Windows portable zip yet.
 
 **Related:** [workflows](workflows.md) · [building](building.md) · [CLI/MCP](cli-mcp.md) · [format specs](spec/README.md)
 
 ## Install / run
 
-1. Prefer a **[GitHub Release](https://github.com/tofb15/sxpe/releases)** portable zip when available.
-2. Unzip; keep folder layout intact.
-3. Run **`SXPE.bat`** (Windows) or `sxpe_gui` from a build tree.
+1. **Linux CLI/MCP (published):** download `sxpe-*-linux-x64-cli.tar.gz` from **[Releases](https://github.com/tofb15/sxpe/releases)** (v0.6.0+).
+2. **Windows GUI:** there is no portable zip on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)). Build with `build.bat`, then `package.bat` / `scripts/package.ps1` ([building.md](building.md)). Unzip the local `dist/` zip; keep folder layout intact; run **`SXPE.bat`**.
+3. **From a build tree:** run `sxpe_gui` (Windows or Linux when Qt is present).
 
 Drop one `.package` on the window to open it. Drop **several** to **merge** them into a new package (SXPE writes an `SXMM` manifest so un-merge can reverse SXPE merges only).
 
