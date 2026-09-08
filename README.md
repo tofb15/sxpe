@@ -1,150 +1,141 @@
 # SXPE
 
-**SXPE** is an unofficial *The Sims 3* DBPF package editor. It opens, inspects, and edits `.package` (and related `.world` / `.dbc` / `.nhd`) files used by the game.
+**SXPE** is an unofficial editor for *The Sims 3* package files. It opens, inspects, and edits `.package` files (and related `.world` / `.dbc` / `.nhd`) so the game can still load them.
 
-**Who it is for**
-
-- Modders who want a modern **Windows or Linux** GUI for everyday package work
-- Script and agent authors who prefer a Qt-free JSON CLI (`sxpe`) or MCP stdio server (`sxpe_mcp`)
-
-**Not** affiliated with Electronic Arts. **Not** Peter L Jones’s s3pe. The Sims 3 is a trademark of Electronic Arts. [GPL-3.0-or-later](LICENSE).
+It is a **new C++23 program**, not a fork of Peter L Jones’s s3pe / sims3tools, and not Electronic Arts software. GPL-3.0-or-later. The Sims 3 is a trademark of Electronic Arts.
 
 [![CI](https://github.com/tofb15/sxpe/actions/workflows/ci.yml/badge.svg)](https://github.com/tofb15/sxpe/actions/workflows/ci.yml)
 
+Current release: **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**.
+
 ---
 
-## Quick start — Windows
+## What SXPE is
+
+Three surfaces, **one command bus** (same operations, same JSON envelopes):
+
+| Surface | Binary | Who it is for |
+| --- | --- | --- |
+| Desktop GUI | `sxpe_gui` | Everyday mod work on **Windows and Linux** |
+| CLI | `sxpe` | Scripts and terminals (Qt-free) |
+| MCP | `sxpe_mcp` | Agents over stdio (Qt-free) |
+
+Typical work: open a package, browse resources by TGI and name, edit STBL / NMAP / XML / catalog / CAS / CLIP metadata, merge or un-merge packages, validate, compare, scan a Downloads folder, inspect Sims3Packs, import/export S3SA DLLs (never loaded in-process).
+
+## Why it exists
+
+s3pe is a 2010s Windows-only WinForms .NET editor. It is still useful, but it is a poor fit for 2026:
+
+- Windows GUI only — no first-class Linux app
+- No JSON CLI or agent protocol
+- Large custom-content merges often ran out of memory or left huge temps
+- Optional “Handlers” loaded arbitrary DLLs into the process
+
+SXPE reimplements the **daily-driver featureset** on a modern stack (C++23, mmap I/O, virtualized lists, Qt 6 Widgets when present) so humans and agents share the same tools, and so large jobs **fail with a clear cap** instead of a mystery crash.
+
+## SXPE vs s3pe
+
+SXPE is **not** “s3pe 2.0” and does **not** contain s3pe/s3pi source. Familiar jobs have equivalents; the [user guide](docs/user-guide.md#if-you-used-s3pe-before) maps menus.
+
+| | s3pe | SXPE |
+| --- | --- | --- |
+| Code | C# / WinForms | New C++23 (not a paste-fork) |
+| GUI | Windows | Windows **and** Linux |
+| Automation | Limited | JSON CLI + MCP, same bus as the GUI |
+| Large merges | Often OOM | Caps, progress, cancel + rollback |
+| Un-merge | No | SXPE merges only, via **SXMM** manifest |
+| Plugins | DLL Handlers | **Permanently unsupported** (no `LoadLibrary` of random DLLs) |
+| Neighborhood files | Easy to compact-corrupt | **Layout-locked** `.nhd` / `.world` / `.dbc` (in-place replace only) |
+
+**Prefer SXPE** when you want Linux, scripts/agents, safer merges, or an editor that refuses dangerous neighborhood rebuilds. **s3pe** may still match a workflow that depends on a third-party Handler DLL — SXPE will not load those.
+
+## Vision
+
+Stay the editor you reach for on Sims 3 packages: game-loadable output, honest limits, and one catalog for GUI, CLI, and agents. Extra *Sims*-family games can plug in later as `GameProfile`s; **this version does not implement The Sims 4**. SXPE will not become a plugin host.
+
+## Honest limits
+
+- Sims 3 DBPF only. Unknown / other-game files are refused.
+- No full 3D mesh or CLIP playback (inspector shows summaries and images, not a viewport).
+- No Store/DRM Sims3Pack unpacking.
+- `.nhd` / `.world` / `.dbc` are layout-locked — see [neighborhood layout](docs/neighborhood-layout.md).
+- Third-party GUI plugins / DLL Handlers will not return ([#60](https://github.com/tofb15/sxpe/issues/60)).
+- Help → Check for update **never downloads** a zip; it only compares versions. On a **private** GitHub repo the public API returns 404 unless you set a token — see the [user guide](docs/user-guide.md#check-for-update).
+
+Keep backups. Compact/save rewrites packages; test in a copy first.
+
+---
+
+## Get SXPE
+
+You do **not** need to compile if a Release asset matches your OS.
 
 | You want | Do this |
 | --- | --- |
-| GUI + CLI + MCP (portable) | Download `sxpe-0.7.0-windows-x64.zip` from **[GitHub Releases](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip somewhere writable (keep DLLs and `platforms` / plugin folders next to the executables). Double-click **`SXPE.bat`**. |
-| From a build tree | `build.bat`, then `SXPE.bat` or run `build\sxpe_gui.exe`. Local zip: `package.bat` → `dist/sxpe-0.7.0-windows-x64.zip`. Details: [docs/building.md](docs/building.md). |
+| **Windows GUI + CLI + MCP** | Download `sxpe-0.7.0-windows-x64.zip` from **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip somewhere writable. Keep DLLs and `platforms/` next to the exes. Double-click **`SXPE.bat`**. Same folder: `sxpe-cli.bat`, `sxpe-mcp.bat`. |
+| **Linux CLI + MCP** | Download `sxpe-0.7.0-linux-x64-cli.tar.gz` from the same Release, extract, run `./sxpe` / `./sxpe_mcp`. |
+| **Linux GUI** | Build with Qt 6.5+ Widgets ([building.md](docs/building.md)). A tarball from `scripts/package-linux.sh` can include `sxpe_gui` but **does not vendor Qt** — the machine that runs it still needs Qt. |
 
-Optional: `sxpe-cli.bat` and `sxpe-mcp.bat` are in the same portable folder. **Help → Check for update** queries GitHub’s Releases API and never downloads anything without your consent.
+Drop one `.package` on the GUI to open it. Drop several to merge (SXPE writes an SXMM manifest so **un-merge works only for SXPE merges**).
 
-## Quick start — Linux
+## First steps
 
-| You want | Do this |
+1. Open a **copy** of a package (never the file the game currently has open).
+2. Merge a folder of CC: **Tools → Merge packages…** — [workflows](docs/workflows.md#merge-custom-content-into-one-package).
+3. **Tools → Validate** before you share.
+
+More recipes: [docs/workflows.md](docs/workflows.md). GUI reference: [docs/user-guide.md](docs/user-guide.md).
+
+---
+
+## Documentation
+
+Index: **[docs/README.md](docs/README.md)**.
+
+| Doc | Read it when |
 | --- | --- |
-| CLI / MCP (published) | Download `sxpe-*-linux-x64-cli.tar.gz` from [Releases](https://github.com/tofb15/sxpe/releases) when the Linux job on the `v0.7.0` tag has attached it (otherwise build locally below), extract, run `./sxpe` / `./sxpe_mcp` |
-| CLI / MCP (local package) | Build, then `./scripts/package-linux.sh --no-gui` → `dist/sxpe-*-linux-x64-cli.tar.gz` |
-| GUI | Build from source with Qt 6 Widgets present, then run `./build/sxpe_gui` (or `./scripts/package-linux.sh` to include GUI in a tarball — Qt libs are **not** vendored). Details: [docs/building.md](docs/building.md) |
-
-Linux Qt GUI is a **supported** target (same menus/workflows as Windows). Third-party plugins remain permanently unsupported ([#60](https://github.com/tofb15/sxpe/issues/60)).
-
-In the GUI (either OS), **Help → Check for update** queries GitHub’s Releases API and never downloads anything without your consent.
-
----
-
-## Quick start (builders)
-
-**Prerequisites:** CMake 3.28+, a C++23 compiler. GUI needs Qt 6.5+ Widgets. Without Qt, CLI and MCP still build.
-
-```text
-cmake --preset default
-cmake --build --preset default
-ctest --preset default --output-on-failure
-```
-
-Windows (MSVC Visual Studio 2022/2026):
-
-```text
-build.bat
-package.bat
-```
-
-Linux packaging (CLI+MCP, optionally GUI when Qt was present):
-
-```text
-./scripts/package-linux.sh
-```
-
-Full Windows / Linux / Wayland notes, packaging, and paste-ready CI jobs: **[docs/building.md](docs/building.md)**.
-
----
-
-## Features
-
-| Surface | What it does | Docs |
-| --- | --- | --- |
-| **GUI** (`sxpe_gui`) | Open/save packages, virtualized resource grid, STBL / NMAP / XML editors, merge & un-merge, validate, compare, folder scan, Sims3Pack inspect, S3SA DLL import/export/view | [User guide](docs/user-guide.md) |
-| **CLI** (`sxpe`) | `noun verb` commands, JSON envelopes by default | [CLI & MCP](docs/cli-mcp.md) |
-| **MCP** (`sxpe_mcp`) | Same command bus over stdio for agents | [CLI & MCP](docs/cli-mcp.md) |
-
-Format reference for codecs and agents: **[docs/spec/](docs/spec/README.md)**. Architecture: [DESIGN.md](DESIGN.md).
-
-**Honest limits (M6):** no Sims 4 profile; no full 3D mesh / CLIP playback; no Store/DRM Sims3Pack; neighborhood / world / DBC files are **layout-locked** (safe in-place replace only — see [neighborhood layout](docs/neighborhood-layout.md)); third-party GUI plugins / DLL Handlers are **permanently unsupported** (no plugin SDK, no LoadLibrary of random DLLs — see CONTRIBUTING).
-
----
-
-## Common mod workflows
-
-Short recipes; step-by-step: **[docs/workflows.md](docs/workflows.md)**.
-
-| Task | GUI | CLI sketch |
-| --- | --- | --- |
-| Open a package | File → Open | `sxpe resource list --package file.package` |
-| Remove THUM / junk thumbs | Select resources → Delete (or filter + delete) | Delete by TGI after `resource list` |
-| Merge packages | **Tools → Merge packages…** (Merge assistant: folder → preview → merge) or drop several files | Same bus steps as assistant (`resource.importPackage` + SXMM) |
-| Un-merge | Tools → Un-merge package… (needs SXPE `SXMM` manifest) | `package.unmerge` |
-| Import / export S3SA DLL | Resource → Editors → Import DLL / Export S3SA / View S3SA | `s3sa.importDll` / `s3sa.exportDll` / `s3sa.view` |
-| Validate before share | Tools → Validate | `sxpe package validate --package …` |
-| Compare two packages | Tools → Compare packages… | `package.diff` |
-| Folder hygiene scan | Tools → Scan folder… | `sxpe folder scan --path Downloads` |
-| Inspect Sims3Pack | File → Open Sims3Pack… / Tools → Inspect Sims3Pack… | `sxpe sims3pack list --path mod.sims3pack` |
-
----
-
-## If you used s3pe before
-
-SXPE is a separate project (not a fork of s3pe). Familiar jobs map roughly like this:
-
-| You did in s3pe | In SXPE |
-| --- | --- |
-| Open / Save / Save As | **File** menu (same idea) |
-| Drop several packages to combine | **Tools → Merge packages…** (Merge assistant) or drop files → **Merge into new package** |
-| Resource → Import → as DBC / from package | **Resource → Import → As DBC…** / **From package(s) into this package…** |
-| Helpers (STBL, NMAP, …) | **Resource → Editors** |
-| Auto Preview pane | **Inspector** (honest limits: no full 3D / CLIP playback) |
-| External hex/text programs | **Settings → External programs** (`{path}`; Linux and Windows examples in [building.md](docs/building.md#platform-limits-honesty)) |
-| “Just merge my Downloads folder” folklore | Prefer the Merge assistant preview + caps; see [workflows.md](docs/workflows.md) |
-
-Un-merge only works for packages SXPE itself merged (**SXMM** manifest). Mega-packs from other tools are not reversible that way.
-
-## Documentation map
-
-| Doc | Audience |
-| --- | --- |
-| [docs/user-guide.md](docs/user-guide.md) | Humans — menus, editors, update check, layout lock |
-| [docs/cli-mcp.md](docs/cli-mcp.md) | Agents — bus, envelopes, examples |
-| [docs/workflows.md](docs/workflows.md) | Task-oriented recipes |
-| [docs/building.md](docs/building.md) | Build, package, CI (Windows + Linux) |
-| [docs/testing.md](docs/testing.md) | Optional local FullBuild/CC round-trip |
-| [docs/spec/](docs/spec/README.md) | Format / command catalog |
-| [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md) | M7 / community release notes |
-| [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md) | M6 release notes |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | DCO, scope, hygiene |
+| [User guide](docs/user-guide.md) | Using the GUI (menus, editors, shortcuts) |
+| [Workflows](docs/workflows.md) | A specific mod task (merge, S3SA, scan, …) |
+| [CLI & MCP](docs/cli-mcp.md) | Scripting or agents |
+| [Building](docs/building.md) | Compiling, packaging, CI |
+| [Format specs](docs/spec/README.md) | Codecs and the command catalog |
+| [DESIGN.md](DESIGN.md) | Architecture |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | DCO, scope, what not to commit |
 
 Do not commit game packages, custom content, or other copyrighted binaries.
 
 ---
 
-## Version & changelog (0.7.0)
+## Build from source
 
-Current project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` / `vcpkg.json`). Highlights for this cut (M7 / community work on `dev` since 0.6.0):
+Only if you are compiling. Releases already contain binaries.
 
-- Large-merge resilience, conflict hygiene, huge-package perf, long-op cancel, merge onboarding, file-lock detect
-- Broader DDS; OBJD/CASP editors; REFS editor; Sims3Pack pack; RCOL tooling; CLIP metadata
-- Plugin permanent non-support (#60); Linux packaging/docs parity (#52)
+These three CMake lines are **sequential steps**, not three ways to do the same thing:
 
-**Assets:** [v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0) ships `sxpe-0.7.0-windows-x64.zip` (portable GUI + CLI + MCP). Linux CLI+MCP tarball is attached when the tag workflow’s Linux job succeeds (`scripts/package-linux.sh --no-gui`). Local rebuild: `package.bat` (Windows) / `scripts/package-linux.sh` (Linux).
+1. **Configure** (once, or after `CMakeLists.txt` / dependency changes) — generates the build tree.
+2. **Build** — compiles.
+3. **Test** — optional. You can run `sxpe` / `sxpe_gui` without it.
 
-Release notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md) (prior: [v0.6.0](docs/releases/v0.6.0.md)). Template for future tags: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
+**Windows (Visual Studio 2022/2026):** run `build.bat`. It finds MSVC, Ninja, and Qt if the kit is at `../qt/6.8.2/msvc2022_64`, then configure + build + test. `package.bat` writes a portable zip. Do not start with the CMake preset until `cl.exe` and Ninja are on `PATH` (Developer Command Prompt).
 
-Closed after recent work: [#54](https://github.com/tofb15/sxpe/issues/54) (Windows portable zip on Releases), [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#60](https://github.com/tofb15/sxpe/issues/60) (plugins permanently out of scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7 tracker), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
+**Linux** (CMake 3.28+, Ninja, C++23 compiler):
+
+```text
+cmake --preset default                 # 1. configure → build/
+cmake --build --preset default         # 2. compile
+ctest --preset default --output-on-failure   # 3. optional tests
+```
+
+GUI needs Qt 6.5+ Widgets. Without Qt, CLI and MCP still build. Wayland, packaging, CI: **[docs/building.md](docs/building.md)**.
 
 ---
 
-## Licence / disclaimer
+## Version
 
-SXPE is **GPL-3.0-or-later**. It is an unofficial fan project. Electronic Arts owns The Sims 3. SXPE ships no EA game files. Use at your own risk; keep backups of packages you care about.
+Project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` and `vcpkg.json`). Notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md). Template for the next tag: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
+
+---
+
+## Licence
+
+[GPL-3.0-or-later](LICENSE). Unofficial fan project. Electronic Arts owns The Sims 3. SXPE ships no EA game files. Use at your own risk; keep backups of packages you care about.

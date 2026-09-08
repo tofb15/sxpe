@@ -1,8 +1,8 @@
 # SXPE CLI and MCP (agents)
 
-GUI, CLI, and MCP share one **command bus**. Prefer this page plus [docs/spec/catalog.md](spec/catalog.md) over scraping the GUI.
+GUI, CLI, and MCP share one **command bus**. Prefer this page plus [spec/catalog.md](spec/catalog.md) over scraping the GUI.
 
-**Related:** [workflows](workflows.md) · [user guide](user-guide.md) · [DESIGN.md](../DESIGN.md)
+What SXPE is: [README](../README.md). Recipes: [workflows](workflows.md). GUI: [user-guide](user-guide.md). Architecture: [DESIGN.md](../DESIGN.md).
 
 ## Binaries
 
@@ -14,8 +14,8 @@ GUI, CLI, and MCP share one **command bus**. Prefer this page plus [docs/spec/ca
 
 **Cross-platform:** the same `sxpe` / `sxpe_mcp` binaries and bus commands run on Windows and Linux (Qt-free). Examples on this page use POSIX-style paths; on Windows pass normal Windows paths to `--package` / `--path`.
 
-- **Windows portable:** `package.bat` / `scripts/package.ps1` ships `sxpe-cli.bat` and `sxpe-mcp.bat` next to the GUI.
-- **Linux tarball:** `scripts/package-linux.sh` ships `sxpe` / `sxpe_mcp` plus `sxpe-cli.sh` / `sxpe-mcp.sh`. v0.6.0 Releases publish the Linux CLI+MCP tarball.
+- **Windows portable zip** ships `sxpe-cli.bat` and `sxpe-mcp.bat` next to the GUI.
+- **Linux CLI tarball** ships `sxpe` / `sxpe_mcp` plus `sxpe-cli.sh` / `sxpe-mcp.sh`. Both are on [v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0). Build: [building.md](building.md).
 
 ## Bus model
 
@@ -87,34 +87,17 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 
 Full table and flags: [spec/catalog.md](spec/catalog.md). Codec bytes: [spec/](spec/README.md).
 
-## Merge assistant equivalent
+## Merge (bus)
 
-GUI **Tools → Merge packages…** is a thin wizard over these bus steps (same for MCP `package_new` / `resource_importPackage` / `package_validate` / `package_saveAs`):
+Full recipe: [workflows.md](workflows.md#merge-custom-content-into-one-package) (same steps as **Tools → Merge packages…**).
 
-1. `package.new` → `sessionId`
-2. `resource.importPackage` with `paths`, `force=true`, `writeMergeManifest=true`, `leftoverManifestPolicy=strip`, `duplicateTgiPolicy=force`, `reportProgress=true` (CLI: `--progress`)
-3. Optional `package.validate` on that session (GUI checkbox **Validate after merge**)
-4. `package.saveAs` when the human/agent wants a file on disk
-
-```text
-sxpe package new
-sxpe resource importPackage --session s-1 --progress \
-  --paths '["a.package","b.package"]' --force --write-merge-manifest true \
-  --leftover-manifest-policy strip --duplicate-tgi-policy force
-sxpe package validate --session s-1
-sxpe package saveAs --session s-1 --path merged.package --force
-```
-
-## Large merge / import
-
-Caps: `--max-packages`, `--max-total-bytes`, `--max-resources` (camelCase on the bus). Optional explicit checkpoint: `--checkpoint-path OUT.package --checkpoint-between-packages true`.
-
-Hygiene (#64): `leftoverManifestPolicy` defaults to `strip` (allowlisted Sims3Pack leftover `0x73E93EEB` instance 0). `duplicateTgiPolicy` is `force` | `skip` | `fail` (defaults from `--force`). Response lists `strippedLeftovers[]` and `duplicates[]`. `resource.importDbc` is the DBC-equivalent of the same import path. `package.validate` returns `conflictHotspots[]` in the summary. Cancel: GUI **Cancel** / CLI **Ctrl+C** (same as the assistant progress dialog).
+Flags: `--max-packages`, `--max-total-bytes`, `--max-resources`; optional `--checkpoint-path` / `--checkpoint-between-packages`. `leftoverManifestPolicy` defaults to `strip` (Sims3Pack leftover `0x73E93EEB` instance 0). `duplicateTgiPolicy` is `force` | `skip` | `fail`. `resource.importDbc` is the DBC-equivalent of the same import. Cancel: GUI **Cancel** / CLI **Ctrl+C**.
 
 ## Examples
 
 ```text
 sxpe --version
+sxpe app checkUpdate --format text
 sxpe resource list --package path/to/file.package --format json --limit 50
 sxpe package info --package path/to/file.package
 sxpe resource rename --package path/to/file.package \
@@ -134,7 +117,7 @@ MCP: start `sxpe_mcp`, then call tools with the same arguments as bus JSON (see 
 - Destructive ops need explicit flags (`--force`) where required; prefer dry-run when offered.
 - `s3sa.*` decrypts/wraps PE bytes for export/import/view — never execute package code in-process.
 
-## CLIP metadata (#61)
+## CLIP metadata
 
 - `sxpe clip info` -- full summary (no playback).
 - `sxpe clip set --anim-name ... --source-file ... --actor-name ...` -- safe fields only ([clip.md](spec/clip.md)).

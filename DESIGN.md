@@ -1,8 +1,7 @@
 # SXPE design
 
-SXPE is a C++23 reimplementation of a Sims 3 package editor. Specs that codecs follow
-live in [`docs/spec/`](docs/spec/README.md). This file is the in-repo architecture note
-for **0.7.0+**; it is not the workspace-only planning tree.
+SXPE is a C++23 reimplementation of a Sims 3 package editor. Product story: [README](README.md).
+Codecs: [`docs/spec/`](docs/spec/README.md). This file is architecture for contributors.
 
 ## Shape
 
@@ -22,11 +21,9 @@ Do not copy s3pe/s3pi source. Formats come from `docs/spec` and the public URLs 
 
 CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_verb`). List tools paginate (`limit`/`cursor`). No TTY assumptions. See command descriptions on `manifest`.
 
-## Packaging (honest)
+## Packaging
 
-- **Current project version:** 0.7.0. Published GitHub Release **v0.7.0** includes the Windows portable zip.
-- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); also on GitHub Releases (`sxpe-<ver>-windows-x64.zip`).
-- **Linux tarball:** local via `scripts/package-linux.sh` (CLI+MCP; optionally includes `sxpe_gui` when Qt was present — does **not** vendor Qt libs). Tag workflow attaches the CLI+MCP tarball.
+Version lives in `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). How to compile and zip: [docs/building.md](docs/building.md). What we ship: [GitHub Releases](https://github.com/tofb15/sxpe/releases). Product story: [README](README.md).
 
 ## Extensibility (honest)
 

@@ -1,6 +1,6 @@
 # SXPE workflows
 
-Task-oriented recipes. Pair with the [user guide](user-guide.md) or [CLI/MCP](cli-mcp.md).
+Task recipes. What SXPE is / how to install: [README](../README.md). GUI reference: [user-guide](user-guide.md). Flags: [CLI/MCP](cli-mcp.md).
 
 ## Merge custom content into one package
 
@@ -32,7 +32,7 @@ sxpe package validate --session s-1
 sxpe package saveAs --session s-1 --path merged.package --force
 ```
 
-Un-merge with `package.unmerge` when an SXMM is present. See [merge-manifest.md](spec/merge-manifest.md) for leftover allowlist + duplicate policy. Flag reference: [cli-mcp.md](cli-mcp.md#merge-assistant-equivalent).
+Un-merge with `package.unmerge` when an SXMM is present. See [merge-manifest.md](spec/merge-manifest.md) for leftover allowlist + duplicate policy. Flags: [cli-mcp.md](cli-mcp.md#merge-bus).
 
 ### Large CC batches (s3pe OOM pain)
 
@@ -109,6 +109,4 @@ Community guides (and the Sims Wiki) warn that editing a `.package` while The Si
 
 ## Check for a new SXPE build
 
-1. Help → **Check for update…**, or `sxpe app checkUpdate`, or open [Releases](https://github.com/tofb15/sxpe/releases).
-2. If newer: open the release page and install the asset that matches your platform (v0.7.0 publishes `sxpe-0.7.0-windows-x64.zip`; Linux CLI+MCP tarball when the tag workflow attaches it; local packaging is `package.bat` / `scripts/package-linux.sh`). Keep backups of your work files.
-3. SXPE never auto-downloads updates.
+Help → **Check for update…**, or `sxpe app checkUpdate`, or open [Releases](https://github.com/tofb15/sxpe/releases). SXPE never downloads a zip for you. Results and private-repo 404: [user-guide](user-guide.md#check-for-update).

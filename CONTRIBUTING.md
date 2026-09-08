@@ -29,8 +29,8 @@ Do not commit:
 ## Tests
 
 CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and a Windows job with Qt that runs
-`gui_smoke`. A paste-ready **Linux GUI** job lives in `docs/building.md` / `docs/ci/linux-gui.yml`;
-promoting it into `.github/workflows/ci.yml` needs a token with `workflow` scope (see [docs/building.md](docs/building.md#ci)).
+`gui_smoke`. Paste-ready Linux GUI job: [`docs/ci/linux-gui.yml`](docs/ci/linux-gui.yml)
+(needs `workflow` scope to promote — [building.md](docs/building.md#ci)).
 Synthetic fixtures only. Optional local FullBuild/CC round-trip: `docs/testing.md` and
 `scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
 
@@ -40,7 +40,21 @@ packaging (`package.ps1`) is optional; Linux packaging is `scripts/package-linux
 
 ## Docs
 
-User-facing docs live under `docs/` (`user-guide.md`, `cli-mcp.md`, `workflows.md`, `building.md`). Format specs stay in `docs/spec/`. Keep README quick starts accurate when menus or packaging change.
+Landing page: [README.md](README.md) (what/why/vision, then download and a short build pointer). Map: [docs/README.md](docs/README.md).
+
+Do **not** copy install steps, limit lists, or merge recipes into extra files. Canonical homes:
+
+| Topic | File |
+| --- | --- |
+| What / why / vs s3pe / download | `README.md` |
+| GUI manual | `docs/user-guide.md` |
+| Task recipes | `docs/workflows.md` |
+| CLI / MCP | `docs/cli-mcp.md` |
+| Build / package / CI | `docs/building.md` |
+| Command table | `docs/spec/catalog.md` |
+| Codecs | `docs/spec/*.md` |
+
+Format specs stay in `docs/spec/`. When menus or packaging change, update the **one** home plus any README sentence that would become false.
 
 ## Commands
 
