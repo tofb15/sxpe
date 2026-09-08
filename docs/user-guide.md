@@ -43,7 +43,7 @@ FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect 
 
 ### Settings
 
-Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, built-in handlers, external programs (hex / text / **S3SA viewer**), Save settings.
+Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, **Built-in handlers** (first-party types only; plugins permanently unsupported), external programs (hex / text / **S3SA viewer** — not DLL plugins), Save settings.
 
 ### Help
 
@@ -149,5 +149,5 @@ Details: [neighborhood-layout.md](neighborhood-layout.md).
 ## Limits to remember
 
 - Sims 3 only (v1). Unknown formats are refused.
-- No third-party GUI plugin loading in this build.
+- Third-party GUI plugins / DLL Handlers are **permanently unsupported** (no plugin SDK, no surprise DLL execution). **Settings → Built-in handlers** lists first-party types only.
 - Keep backups. Compact/save rewrites packages; test in a copy first.
