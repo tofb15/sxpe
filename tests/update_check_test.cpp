@@ -64,6 +64,15 @@ int main() {
 
         std::vector<Info> only_drafts{{"v9.9.9", "", true, false}};
         CHECK(pick_newest_published_release(only_drafts).tag_name.empty());
+
+        // Version compare, not GitHub list order: older stable first, newer Beta later.
+        std::vector<Info> older_first{
+            {"v0.6.0", "https://example/tag/v0.6.0", false, false},
+            {"v0.7.0", "https://example/tag/v0.7.0", false, true},
+        };
+        auto by_version = pick_newest_published_release(older_first);
+        CHECK(by_version.tag_name == "v0.7.0");
+        CHECK(by_version.prerelease == true);
     }
 
     CHECK(github_token_from_env().find('\n') == std::string::npos);

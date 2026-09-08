@@ -1416,16 +1416,19 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId", "nodeId"})),
          env_out, false, true, false, false});
     add({"app.checkUpdate", "Check for update",
-         "Compare this build to GitHub Releases. Tries /releases/latest first; on 404 falls "
-         "back to listing recent releases and picks the newest non-draft (including "
-         "prereleases / Beta). Never downloads zip/tarball assets. Uses SXPE_GITHUB_TOKEN, "
+         "Compare this build to GitHub Releases. Fetches /releases/latest, then the releases "
+         "list, and prefers the newest non-draft tag by version (including prereleases / Beta) "
+         "when that is newer than /latest (GitHub /latest ignores prereleases). On /latest 404, "
+         "uses the list alone. Never downloads zip/tarball assets. Uses SXPE_GITHUB_TOKEN, "
          "GITHUB_TOKEN, GH_TOKEN, or `gh auth token` for private repos. Example: {}. "
-         "Optional currentVersion / token / latestJson / latestJsonPath (tests; JSON object "
-         "or releases array).",
+         "Optional currentVersion / token / latestJson / latestJsonPath / releasesJson / "
+         "releasesJsonPath (tests; latest object and/or releases array).",
          obj_schema({{"currentVersion", {{"type", "string"}}},
                      {"token", {{"type", "string"}}},
                      {"latestJson", {{"type", "string"}}},
-                     {"latestJsonPath", {{"type", "string"}}}},
+                     {"latestJsonPath", {{"type", "string"}}},
+                     {"releasesJson", {{"type", "string"}}},
+                     {"releasesJsonPath", {{"type", "string"}}}},
                     json::array()),
          env_out, true, false, true, true});
     add({"hash.fnv", "FNV-1",
@@ -2818,25 +2821,67 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             return std::nullopt;
         };
+        auto load_json_arg = [&](const char* str_key, const char* path_key,
+                                 std::string& out_body) -> std::optional<json> {
+            if (args.contains(str_key) && args[str_key].is_string() &&
+                !args[str_key].get<std::string>().empty()) {
+                out_body = args[str_key].get<std::string>();
+                return std::nullopt;  // ok, body set
+            }
+            if (args.contains(path_key) && args[path_key].is_string() &&
+                !args[path_key].get<std::string>().empty()) {
+                auto path = check_path(args[path_key].get<std::string>());
+                if (!path) {
+                    return json{{"__err", true}, {"envelope", envelope_err(path.error())}};
+                }
+                auto bytes = read_file(*path);
+                if (!bytes) {
+                    return json{{"__err", true},
+                                {"envelope",
+                                 envelope_err(bytes.error(), bytes.error().code == ErrorCode::io,
+                                              "none")}};
+                }
+                out_body.assign(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+                return std::nullopt;
+            }
+            return json{{"__missing", true}};
+        };
 
-        std::string body;
+        std::string latest_body;
+        std::string releases_body;
         int http_status = 0;
-        if (args.contains("latestJson") && args["latestJson"].is_string() &&
-            !args["latestJson"].get<std::string>().empty()) {
-            body = args["latestJson"].get<std::string>();
-            http_status = 200;
-        } else if (args.contains("latestJsonPath") && args["latestJsonPath"].is_string() &&
-                   !args["latestJsonPath"].get<std::string>().empty()) {
-            auto path = check_path(args["latestJsonPath"].get<std::string>());
-            if (!path) {
-                return envelope_err(path.error());
+        bool have_latest = false;
+        bool have_releases = false;
+        const bool synthetic_latest = (args.contains("latestJson") && args["latestJson"].is_string() &&
+                                       !args["latestJson"].get<std::string>().empty()) ||
+                                      (args.contains("latestJsonPath") &&
+                                       args["latestJsonPath"].is_string() &&
+                                       !args["latestJsonPath"].get<std::string>().empty());
+        const bool synthetic_releases =
+            (args.contains("releasesJson") && args["releasesJson"].is_string() &&
+             !args["releasesJson"].get<std::string>().empty()) ||
+            (args.contains("releasesJsonPath") && args["releasesJsonPath"].is_string() &&
+             !args["releasesJsonPath"].get<std::string>().empty());
+
+        if (synthetic_latest || synthetic_releases) {
+            if (synthetic_latest) {
+                auto loaded = load_json_arg("latestJson", "latestJsonPath", latest_body);
+                if (loaded && loaded->contains("__err")) {
+                    return (*loaded)["envelope"];
+                }
+                have_latest = true;
+                http_status = 200;
             }
-            auto bytes = read_file(*path);
-            if (!bytes) {
-                return envelope_err(bytes.error(), bytes.error().code == ErrorCode::io, "none");
+            if (synthetic_releases) {
+                auto loaded = load_json_arg("releasesJson", "releasesJsonPath", releases_body);
+                if (loaded && loaded->contains("__err")) {
+                    return (*loaded)["envelope"];
+                }
+                have_releases = true;
+                if (!have_latest) {
+                    http_status = 200;
+                }
             }
-            body.assign(reinterpret_cast<const char*>(bytes->data()), bytes->size());
-            http_status = 200;
         } else {
             std::string token;
             if (args.contains("token") && args["token"].is_string()) {
@@ -2851,30 +2896,47 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 return envelope_err(err(ErrorCode::io, http.error), true, "none");
             }
             http_status = http.status;
-            body = std::move(http.body);
-            if (http_status == 404) {
-                // /releases/latest excludes prereleases; Beta-only tags 404 here.
-                auto listed = sxpe::core::https_get(sxpe::core::kGithubReleasesListUrl, ua, token,
-                                                    15000);
+            latest_body = std::move(http.body);
+
+            auto fetch_releases_list = [&]() -> std::optional<json> {
+                auto listed =
+                    sxpe::core::https_get(sxpe::core::kGithubReleasesListUrl, ua, token, 15000);
                 if (!listed.error.empty() && listed.status == 0) {
-                    return envelope_err(err(ErrorCode::io, listed.error), true, "none");
+                    return json{{"__err", true},
+                                {"envelope",
+                                 envelope_err(err(ErrorCode::io, listed.error), true, "none")}};
                 }
                 if (listed.status >= 200 && listed.status < 300) {
-                    http_status = listed.status;
-                    body = std::move(listed.body);
-                } else if (listed.status == 404) {
+                    releases_body = std::move(listed.body);
+                    have_releases = true;
+                    return std::nullopt;
+                }
+                if (listed.status == 404) {
+                    return json{{"__not_found", true}, {"status", 404}};
+                }
+                std::string msg = "GitHub Releases list failed (HTTP " +
+                                  std::to_string(listed.status) + ")";
+                if (!listed.error.empty()) {
+                    msg += ": " + listed.error;
+                }
+                const bool retryable =
+                    listed.status == 0 || listed.status == 429 || listed.status >= 500;
+                return json{{"__err", true},
+                            {"envelope",
+                             envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none")}};
+            };
+
+            if (http_status == 404) {
+                // /releases/latest excludes prereleases; Beta-only tags 404 here.
+                auto listed = fetch_releases_list();
+                if (listed && listed->contains("__err")) {
+                    return (*listed)["envelope"];
+                }
+                if (listed && listed->contains("__not_found")) {
                     auto r = sxpe::core::update_not_found(current, 404);
                     return envelope_ok(to_json(std::move(r)));
-                } else {
-                    std::string msg = "GitHub Releases list failed (HTTP " +
-                                      std::to_string(listed.status) + ")";
-                    if (!listed.error.empty()) {
-                        msg += ": " + listed.error;
-                    }
-                    const bool retryable =
-                        listed.status == 0 || listed.status == 429 || listed.status >= 500;
-                    return envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none");
                 }
+                http_status = 200;
             } else if (http_status < 200 || http_status >= 300) {
                 std::string msg = "GitHub Releases request failed (HTTP " +
                                   std::to_string(http_status) + ")";
@@ -2883,24 +2945,84 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 }
                 const bool retryable = http_status == 0 || http_status == 429 || http_status >= 500;
                 return envelope_err(err(ErrorCode::io, std::move(msg)), retryable, "none");
+            } else {
+                have_latest = true;
+                // /latest ignores prereleases; also list so a newer Beta wins over an older
+                // stable "latest" (e.g. v0.7.0 prerelease while /latest is still v0.6.0).
+                auto listed = fetch_releases_list();
+                if (listed && listed->contains("__err")) {
+                    // List failed after a good /latest: keep /latest rather than failing hard.
+                    have_releases = false;
+                }
             }
         }
 
-        json doc;
-        try {
-            doc = json::parse(body);
-        } catch (const json::exception& e) {
-            return envelope_err(err(ErrorCode::invalid_argument,
-                                    std::string("GitHub returned non-JSON: ") + e.what()));
-        }
-        auto release_obj = pick_release_object(doc);
-        if (!release_obj) {
-            if (doc.is_array()) {
-                auto r = sxpe::core::update_not_found(current, http_status ? http_status : 404);
-                return envelope_ok(to_json(std::move(r)));
+        auto parse_body = [&](const std::string& body) -> std::optional<json> {
+            try {
+                return json::parse(body);
+            } catch (const json::exception& e) {
+                return std::nullopt;
             }
-            return envelope_err(
-                err(ErrorCode::invalid_argument, "GitHub returned a non-object JSON body"));
+        };
+
+        std::optional<json> latest_doc;
+        std::optional<json> releases_doc;
+        if (have_latest) {
+            latest_doc = parse_body(latest_body);
+            if (!latest_doc) {
+                return envelope_err(err(ErrorCode::invalid_argument,
+                                        "GitHub returned non-JSON for /releases/latest"));
+            }
+        }
+        if (have_releases) {
+            releases_doc = parse_body(releases_body);
+            if (!releases_doc) {
+                return envelope_err(err(ErrorCode::invalid_argument,
+                                        "GitHub returned non-JSON for /releases list"));
+            }
+        }
+
+        // Single synthetic injection may be an object (/latest) or a releases array.
+        if (have_latest && !have_releases && latest_doc && latest_doc->is_array()) {
+            releases_doc = latest_doc;
+            have_releases = true;
+            have_latest = false;
+            latest_doc.reset();
+        }
+
+        std::optional<json> release_obj;
+        if (have_latest && latest_doc) {
+            release_obj = pick_release_object(*latest_doc);
+            if (!release_obj && !latest_doc->is_array()) {
+                return envelope_err(
+                    err(ErrorCode::invalid_argument, "GitHub returned a non-object JSON body"));
+            }
+        }
+        if (have_releases && releases_doc) {
+            auto listed_obj = pick_release_object(*releases_doc);
+            if (!listed_obj) {
+                if (!release_obj) {
+                    auto r = sxpe::core::update_not_found(current, http_status ? http_status : 404);
+                    return envelope_ok(to_json(std::move(r)));
+                }
+            } else if (!release_obj) {
+                release_obj = listed_obj;
+            } else {
+                const auto latest_tag = release_obj->value("tag_name", std::string{});
+                const auto listed_tag = listed_obj->value("tag_name", std::string{});
+                // Prefer list winner when newer than /latest, or same tag (keep list metadata).
+                if (listed_tag.empty()) {
+                    // keep latest
+                } else if (latest_tag.empty() ||
+                           sxpe::core::compare_versions(listed_tag, latest_tag) >= 0) {
+                    release_obj = listed_obj;
+                }
+            }
+        }
+
+        if (!release_obj) {
+            auto r = sxpe::core::update_not_found(current, http_status ? http_status : 404);
+            return envelope_ok(to_json(std::move(r)));
         }
         const auto tag = release_obj->value("tag_name", std::string{});
         const auto html = release_obj->value("html_url", std::string{});
