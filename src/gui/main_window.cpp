@@ -229,6 +229,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
     act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
     act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
+    act(tools, tr("Create Sims3&Pack…"), {}, [this] { create_sims3pack(); });
     act(tools, tr("&Merge packages…"), {}, [this] { open_merge_assistant(); });
     act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Search…"), QKeySequence::Find, [this] {
@@ -404,6 +405,10 @@ void MainWindow::scan_folder() {
                                  tr("Could not open \"%1\" in SXPE.").arg(path));
         }
     });
+}
+
+void MainWindow::create_sims3pack() {
+    show_create_sims3pack_dialog(this, bus_);
 }
 
 void MainWindow::inspect_sims3pack() {

@@ -39,7 +39,7 @@ Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy 
 
 ### Tools
 
-FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect Sims3Pack**, **Merge packages…** (Merge assistant), **Un-merge package**, byte Search, **Validate**, Compact / save.
+FNV hash, **Compare packages**, **Find references**, **Scan folder**, **Inspect Sims3Pack**, **Create Sims3Pack…** (limited packer), **Merge packages…** (Merge assistant), **Un-merge package**, byte Search, **Validate**, Compact / save.
 
 ### Settings
 

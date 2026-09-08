@@ -13,7 +13,11 @@ namespace sxpe::commands {
 /// clients that print `data.summary` from sims3pack.info / list / extract.
 inline std::vector<std::string> format_sims3pack_summary(const nlohmann::json& data) {
     std::vector<std::string> summary;
-    summary.push_back("Sims3Pack (read-only TS3Pack inspect; no Store download / DRM)");
+    if (data.value("authored", false)) {
+        summary.push_back("Sims3Pack (limited TS3Pack authoring; no Store upload / DRM)");
+    } else {
+        summary.push_back("Sims3Pack (read-only TS3Pack inspect; no Store download / DRM)");
+    }
     if (data.contains("path")) {
         summary.push_back("Path: " + data.value("path", std::string{}));
     }
@@ -86,6 +90,9 @@ inline std::vector<std::string> format_sims3pack_summary(const nlohmann::json& d
     }
     if (data.contains("writtenPath")) {
         summary.push_back("Wrote: " + data.value("writtenPath", std::string{}));
+    }
+    if (data.contains("sourceDir") && !data.value("sourceDir", std::string{}).empty()) {
+        summary.push_back("SourceDir: " + data.value("sourceDir", std::string{}));
     }
     return summary;
 }

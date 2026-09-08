@@ -72,7 +72,7 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 | `package.diff` | Compare two packages |
 | `package.unmerge` | Reverse SXPE SXMM merge |
 | `folder.scan` | Read-only tree hygiene |
-| `sims3pack.list` / `extract` | TS3Pack inspect |
+| `sims3pack.list` / `extract` / `pack` | TS3Pack inspect + limited pack |
 | `resource.list` / `read` / `export` / `importFiles` / `importPackage` / `delete` / `setFlags` / `rename` | Resources; merge via `importPackage` |
 | `nmap.*` / `stbl.*` / `xml.*` / `objd.*` / `casp.*` / `refs.*` | Structured editors |
 | `resource.findRefs` / `resource.listRefs` | Inbound / outbound TGI references |
@@ -117,6 +117,7 @@ sxpe resource rename --package path/to/file.package \
 sxpe folder scan --path path/to/Downloads --format json
 sxpe sims3pack list --path mod.sims3pack
 sxpe sims3pack extract --path mod.sims3pack --out-dir out --index 0 --force
+sxpe sims3pack pack --source-dir pkgs --path out.sims3pack --display-name MyMod --force
 ```
 
 MCP: start `sxpe_mcp`, then call tools with the same arguments as bus JSON (see MCP `tools/list` / `manifest`).

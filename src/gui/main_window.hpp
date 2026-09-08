@@ -40,6 +40,7 @@ private:
     void find_refs();
     void scan_folder();
     void inspect_sims3pack();
+    void create_sims3pack();
     void open_dialog();
     void open_readonly_dialog();
     bool save(bool as_copy, bool save_as);
