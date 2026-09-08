@@ -24,9 +24,9 @@ CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_
 
 ## Packaging (honest)
 
-- **Current project version:** 0.7.0. Latest *published* GitHub Release may still be **v0.6.0** (Linux CLI+MCP tarball only) until `v0.7.0` is tagged and assets uploaded.
-- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); shipping on the v0.7.0 Release is tracked by (#54).
-- **Linux tarball:** local via `scripts/package-linux.sh` (CLI+MCP; optionally includes `sxpe_gui` when Qt was present — does **not** vendor Qt libs).
+- **Current project version:** 0.7.0. Published GitHub Release **v0.7.0** includes the Windows portable zip.
+- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); also on GitHub Releases (`sxpe-<ver>-windows-x64.zip`).
+- **Linux tarball:** local via `scripts/package-linux.sh` (CLI+MCP; optionally includes `sxpe_gui` when Qt was present — does **not** vendor Qt libs). Tag workflow attaches the CLI+MCP tarball.
 
 ## Extensibility (honest)
 

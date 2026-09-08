@@ -17,16 +17,16 @@
 
 | You want | Do this |
 | --- | --- |
-| GUI + CLI + MCP (portable) | Build and package locally: `build.bat`, then `package.bat` (or `scripts/package.ps1`). Unzip `dist/sxpe-*-windows-x64.zip` and run `SXPE.bat`. Details: [docs/building.md](docs/building.md). Shipping the zip on GitHub Releases: [#54](https://github.com/tofb15/sxpe/issues/54) |
-| From a build tree | `build.bat`, then `SXPE.bat` or run `build\sxpe_gui.exe` |
+| GUI + CLI + MCP (portable) | Download `sxpe-0.7.0-windows-x64.zip` from **[GitHub Releases](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip somewhere writable (keep DLLs and `platforms` / plugin folders next to the executables). Double-click **`SXPE.bat`**. |
+| From a build tree | `build.bat`, then `SXPE.bat` or run `build\sxpe_gui.exe`. Local zip: `package.bat` → `dist/sxpe-0.7.0-windows-x64.zip`. Details: [docs/building.md](docs/building.md). |
 
-**Project version is 0.7.0.** The latest *published* GitHub Release may still be the **v0.6.0** Linux tarball until a `v0.7.0` tag is published — and there is still **no** Windows portable zip on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)); use the local package path above.
+Optional: `sxpe-cli.bat` and `sxpe-mcp.bat` are in the same portable folder. **Help → Check for update** queries GitHub’s Releases API and never downloads anything without your consent.
 
 ## Quick start — Linux
 
 | You want | Do this |
 | --- | --- |
-| CLI / MCP (published) | Download `sxpe-*-linux-x64-cli.tar.gz` from [Releases](https://github.com/tofb15/sxpe/releases) (latest published may still be [v0.6.0](https://github.com/tofb15/sxpe/releases/tag/v0.6.0) until `v0.7.0` ships), extract, run `./sxpe` / `./sxpe_mcp` |
+| CLI / MCP (published) | Download `sxpe-*-linux-x64-cli.tar.gz` from [Releases](https://github.com/tofb15/sxpe/releases) when the Linux job on the `v0.7.0` tag has attached it (otherwise build locally below), extract, run `./sxpe` / `./sxpe_mcp` |
 | CLI / MCP (local package) | Build, then `./scripts/package-linux.sh --no-gui` → `dist/sxpe-*-linux-x64-cli.tar.gz` |
 | GUI | Build from source with Qt 6 Widgets present, then run `./build/sxpe_gui` (or `./scripts/package-linux.sh` to include GUI in a tarball — Qt libs are **not** vendored). Details: [docs/building.md](docs/building.md) |
 
@@ -137,11 +137,11 @@ Current project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` / `vcpk
 - Broader DDS; OBJD/CASP editors; REFS editor; Sims3Pack pack; RCOL tooling; CLIP metadata
 - Plugin permanent non-support (#60); Linux packaging/docs parity (#52)
 
-**Assets:** Project version is 0.7.0; a tagged GitHub Release for 0.7.0 is not necessarily published yet — latest published asset may still be the Linux CLI+MCP tarball on [v0.6.0](https://github.com/tofb15/sxpe/releases/tag/v0.6.0). Windows portable zip is built locally (`package.bat`) until [#54](https://github.com/tofb15/sxpe/issues/54) ships it on the v0.7.0 Release. Local Linux packaging: `scripts/package-linux.sh`.
+**Assets:** [v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0) ships `sxpe-0.7.0-windows-x64.zip` (portable GUI + CLI + MCP). Linux CLI+MCP tarball is attached when the tag workflow’s Linux job succeeds (`scripts/package-linux.sh --no-gui`). Local rebuild: `package.bat` (Windows) / `scripts/package-linux.sh` (Linux).
 
 Release notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md) (prior: [v0.6.0](docs/releases/v0.6.0.md)). Template for future tags: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
 
-**Still open:** [#54](https://github.com/tofb15/sxpe/issues/54) (Windows portable zip on Releases for v0.7.0 / `workflow`-scope CI). Closed after recent work: [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#60](https://github.com/tofb15/sxpe/issues/60) (plugins permanently out of scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7 tracker), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
+Closed after recent work: [#54](https://github.com/tofb15/sxpe/issues/54) (Windows portable zip on Releases), [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#60](https://github.com/tofb15/sxpe/issues/60) (plugins permanently out of scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7 tracker), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
 
 ---
 

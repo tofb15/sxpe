@@ -71,9 +71,21 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+function Resolve-StagedExeDir([string]$Dir) {
+    foreach ($sub in @("", "RelWithDebInfo", "Release")) {
+        $d = if ($sub) { Join-Path $Dir $sub } else { $Dir }
+        $ok = $true
+        foreach ($n in @("sxpe.exe", "sxpe_mcp.exe", "sxpe_gui.exe")) {
+            if (-not (Test-Path (Join-Path $d $n))) { $ok = $false; break }
+        }
+        if ($ok) { return $d }
+    }
+    return $Dir
+}
+$ExeDir = Resolve-StagedExeDir $BuildDir
 $need = @("sxpe.exe", "sxpe_mcp.exe", "sxpe_gui.exe")
 foreach ($n in $need) {
-    $p = Join-Path $BuildDir $n
+    $p = Join-Path $ExeDir $n
     if (-not (Test-Path $p)) { throw "Missing $p. Build first or omit -SkipBuild." }
 }
 
@@ -106,9 +118,9 @@ Clear-OutDir $OutDir
 New-Item -ItemType Directory -Path $OutDir | Out-Null
 
 foreach ($n in $need) {
-    Copy-Item (Join-Path $BuildDir $n) (Join-Path $OutDir $n) -Force
+    Copy-Item (Join-Path $ExeDir $n) (Join-Path $OutDir $n) -Force
     if ($IncludePdb) {
-        $pdb = [IO.Path]::ChangeExtension((Join-Path $BuildDir $n), ".pdb")
+        $pdb = [IO.Path]::ChangeExtension((Join-Path $ExeDir $n), ".pdb")
         if (Test-Path $pdb) { Copy-Item $pdb $OutDir -Force }
     }
 }
