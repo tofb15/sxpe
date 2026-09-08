@@ -106,7 +106,7 @@ Live `.github/workflows/ci.yml` currently runs:
 | `linux-cli` | Linux CLI/MCP (no Qt) on every push/PR |
 | `windows-gui` | Windows GUI + `gui_smoke` on every push/PR |
 
-**Linux GUI CI is not live in-tree yet.** Promoting the paste-ready `linux-gui` job into `.github/workflows/ci.yml` requires a token with the GitHub **`workflow` scope**. OAuth apps without that scope **cannot** push updates under `.github/workflows/*` (same residual blocker as shipping `release.yml` — see [#54](https://github.com/tofb15/sxpe/issues/54)).
+**Linux GUI CI is not live in-tree yet.** Promoting the paste-ready `linux-gui` job into `.github/workflows/ci.yml` requires a token with the GitHub **`workflow` scope**. OAuth apps without that scope **cannot** push updates under `.github/workflows/*`. Live `release.yml` is already in-tree; remaining paste-ready job is `linux-gui.yml` (see below).
 
 ### Linux GUI smoke job (paste-ready)
 
@@ -169,7 +169,7 @@ QT_QPA_PLATFORM=offscreen ./build/sxpe_gui --smoke fixtures/synthetic/single-blo
 
 ## Releases / packaging
 
-**Current project version:** 0.7.0. **Published on v0.6.0** (latest published Release until `v0.7.0` ships): Linux CLI+MCP tarball only. Windows portable zip is **not** on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54) — retargeted to ship on the v0.7.0 Release).
+**Current project version:** 0.7.0. **Published on [v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0):** Windows portable zip (`sxpe-0.7.0-windows-x64.zip`). Linux CLI+MCP tarball is produced by the tag workflow’s Linux job (`scripts/package-linux.sh --no-gui`).
 
 | Platform | Local packaging | Typical artifact name |
 | --- | --- | --- |
@@ -182,9 +182,9 @@ Release notes should list **both** platform artifacts (template: [`docs/releases
 
 Preferred path: `.github/workflows/release.yml` (runs on `v*` tags).
 
-If the pushing token lacks the GitHub `workflow` scope, OAuth cannot update files under `.github/workflows/`. In that case paste-ready **maintainer-only** copies live under [`docs/ci/`](ci/README.md):
+If the pushing token lacks the GitHub `workflow` scope, OAuth cannot update files under `.github/workflows/`. Paste-ready **maintainer-only** copies live under [`docs/ci/`](ci/README.md):
 
-- [`docs/ci/release.yml`](ci/release.yml) — Windows portable zip on `v*` tags
-- [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) — Linux GUI smoke job for `ci.yml`
+- [`docs/ci/release.yml`](ci/release.yml) — synced copy of live `.github/workflows/release.yml`
+- [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) — Linux GUI smoke job for `ci.yml` (not live yet)
 
-Tagging and attaching assets is a separate coordinator step. Optional future: extend release automation to also run `scripts/package-linux.sh` and upload the Linux tarball alongside the Windows zip.
+Tag `v*` runs `.github/workflows/release.yml` (Windows zip + Linux CLI tarball).
