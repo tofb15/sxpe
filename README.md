@@ -50,7 +50,7 @@ Use **SXPE** if you want something snappier, Linux, or safer big merges. Stick w
 
 ## Where the project is headed
 
-The aim is a Sims 3 package editor you actually want to use every day: files the game can load, clear limits, and the same features in the window and in scripts. Other *Sims* games might come later; **this version is Sims 3 only**. What ships will follow feedback - nothing here is frozen forever.
+The aim is a Sims 3 package editor you actually want to use every day if you are a Sims 3 modder. This app is for the modding community: files the game can load, clear limits, and the same features in the window and in scripts. Other *Sims* games might come later; **this version is Sims 3 only**. What ships will follow feedback - nothing here is frozen forever.
 
 ## What this version does not do yet
 
