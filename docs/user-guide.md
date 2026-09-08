@@ -48,7 +48,7 @@ Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, **Built-in
 
 ### Help
 
-Contents, **Welcome…** (same tip as first launch), Common tasks… (opens [workflows](workflows.md)), **Check for update…**, **Feedback…** (opens [GitHub Issues](https://github.com/tofb15/sxpe/issues)), **About** (version, git branch/commit, compile time; fork builds say so and link [the original repo](https://github.com/tofb15/sxpe)), Warranty, Licence.
+**Contents** (pick a topic), **Welcome…** (same tip as first launch), **Common tasks…** (pick a job; Full recipes opens [workflows](workflows.md)), **Check for update…**, **Feedback…** (GitHub Issues, with a short notice), **About** (version, git branch/commit, compile time; fork builds say so and link [the original repo](https://github.com/tofb15/sxpe)), **Warranty**, **Licence**.
 
 ## If you used s3pe before
 

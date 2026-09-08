@@ -65,6 +65,9 @@ void show_contents_dialog(QWidget* parent);
 void show_about_dialog(QWidget* parent);
 /// Help → Common tasks: plain-language recipes + link to docs/workflows.md.
 void show_common_tasks_dialog(QWidget* parent);
+void show_feedback_dialog(QWidget* parent);
+void show_warranty_dialog(QWidget* parent);
+void show_licence_dialog(QWidget* parent);
 /// Tools → Merge packages…: folder/files → preview count/size → merge (bus) → optional validate.
 /// Calls on_merge(paths, validate_after) when the user confirms; does not run the bus itself.
 void show_merge_assistant_dialog(

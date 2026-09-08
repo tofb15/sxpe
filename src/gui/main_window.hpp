@@ -103,8 +103,6 @@ private:
     void sync_tools_actions();
     [[nodiscard]] bool current_layout_locked();
     void open_external(bool hex);
-    void show_licence();
-    void show_warranty();
     void rebuild_columns_menu();
     void apply_columns_all();
     QString current_package_path();
