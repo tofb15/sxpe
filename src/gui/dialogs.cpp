@@ -9,6 +9,8 @@
 #include <QApplication>
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QRadioButton>
+#include <QRegularExpression>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
@@ -827,6 +829,124 @@ bool show_casp_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
     return dlg.exec() == QDialog::Accepted;
 }
 
+bool show_refs_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                      std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                      std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("refs.get", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This resource is not a REFS table, or it failed to parse."));
+        return false;
+    }
+    const auto& d = got["data"];
+    if (d.value("partial", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This REFS resource only partially parsed; editing is refused."));
+        return false;
+    }
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Reference table (REFS)"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* info = new QLabel(
+        QObject::tr("Version %1 · aux %2%3")
+            .arg(d.value("version", 0))
+            .arg(d.value("auxIsDword", false) ? QObject::tr("DWORD") : QObject::tr("WORD"))
+            .arg(d.value("hasThingy", false)
+                     ? QObject::tr(" · thingy %1").arg(d.value("thingy", 0))
+                     : QString()));
+    info->setWordWrap(true);
+    lay->addWidget(info);
+    auto* entries = new QPlainTextEdit;
+    entries->setPlaceholderText(
+        QObject::tr("One TGI per line: type group instance [aux] (hex or decimal)"));
+    QStringList entry_lines;
+    if (d.contains("entries") && d["entries"].is_array()) {
+        for (const auto& row : d["entries"]) {
+            entry_lines << QString("0x%1 0x%2 0x%3 %4")
+                               .arg(row.value("type", 0u), 8, 16, QLatin1Char('0'))
+                               .arg(row.value("group", 0u), 8, 16, QLatin1Char('0'))
+                               .arg(row.value("instance", 0ull), 16, 16, QLatin1Char('0'))
+                               .arg(row.value("aux", 0u));
+        }
+    }
+    entries->setPlainText(entry_lines.join(QLatin1Char('\n')));
+    lay->addWidget(new QLabel(QObject::tr("Entries (TGI + aux)")));
+    lay->addWidget(entries, 1);
+    auto* indices = new QPlainTextEdit;
+    indices->setMaximumHeight(100);
+    indices->setPlaceholderText(QObject::tr("WORD indices, one per line or space-separated"));
+    QStringList idx_lines;
+    if (d.contains("indices") && d["indices"].is_array()) {
+        for (const auto& v : d["indices"]) {
+            idx_lines << QString::number(v.get<std::uint64_t>());
+        }
+    }
+    indices->setPlainText(idx_lines.join(QLatin1Char('\n')));
+    lay->addWidget(new QLabel(QObject::tr("Indices")));
+    lay->addWidget(indices);
+    auto* note = new QLabel(
+        QObject::tr("Preserves version / thingy / aux width. Layout: docs/spec/refs.md"));
+    note->setWordWrap(true);
+    lay->addWidget(note);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        nlohmann::json entry_arr = nlohmann::json::array();
+        const auto lines = entries->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const auto& line : lines) {
+            const auto parts = line.simplified().split(QLatin1Char(' '));
+            if (parts.size() < 3) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                     QObject::tr("Each entry needs type group instance [aux]."));
+                return;
+            }
+            bool ok1 = false, ok2 = false, ok3 = false, ok4 = true;
+            const auto ty = parts[0].toULongLong(&ok1, 0);
+            const auto gr = parts[1].toULongLong(&ok2, 0);
+            const auto in = parts[2].toULongLong(&ok3, 0);
+            quint64 aux = 0;
+            if (parts.size() >= 4) {
+                aux = parts[3].toULongLong(&ok4, 0);
+            }
+            if (!ok1 || !ok2 || !ok3 || !ok4) {
+                QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Invalid entry number."));
+                return;
+            }
+            entry_arr.push_back({{"type", ty}, {"group", gr}, {"instance", in}, {"aux", aux}});
+        }
+        nlohmann::json idx_arr = nlohmann::json::array();
+        const auto idx_text = indices->toPlainText().simplified();
+        if (!idx_text.isEmpty()) {
+            for (const auto& tok : idx_text.split(QRegularExpression(QStringLiteral("[\\s,]+")),
+                                                  Qt::SkipEmptyParts)) {
+                bool ok = false;
+                const auto v = tok.toULongLong(&ok, 0);
+                if (!ok || v > 0xFFFFull) {
+                    QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                         QObject::tr("Invalid index (need 0–65535)."));
+                    return;
+                }
+                idx_arr.push_back(v);
+            }
+        }
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"resourceId", rid},
+                            {"entries", entry_arr},
+                            {"indices", idx_arr}};
+        auto env = bus.execute("refs.set", args);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(640, 520);
+    return dlg.exec() == QDialog::Accepted;
+}
+
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal) {
@@ -1557,6 +1677,15 @@ void show_find_refs_dialog(
     summary->setMaximumHeight(100);
     lay->addWidget(summary);
 
+    auto* mode_row = new QHBoxLayout;
+    auto* mode_inbound = new QRadioButton(QObject::tr("Inbound (who points here)"));
+    auto* mode_outbound = new QRadioButton(QObject::tr("Outbound (what this points at)"));
+    mode_inbound->setChecked(true);
+    mode_row->addWidget(mode_inbound);
+    mode_row->addWidget(mode_outbound);
+    mode_row->addStretch(1);
+    lay->addLayout(mode_row);
+
     auto* byte_scan = new QCheckBox(QObject::tr("Also byte-scan payloads (slow, capped)"));
     lay->addWidget(byte_scan);
 
@@ -1572,7 +1701,7 @@ void show_find_refs_dialog(
     lay->addWidget(table, 1);
 
     auto* hint = new QLabel(
-        QObject::tr("Double-click a row (or Jump) to select that source resource. Scans REFS and "
+        QObject::tr("Double-click a row (or Jump) to select that resource. Inbound scans REFS and "
                     "OBJK/VPXY TGI lists; optional byte-scan covers other payloads."));
     hint->setWordWrap(true);
     lay->addWidget(hint);
@@ -1601,7 +1730,8 @@ void show_find_refs_dialog(
             }
         }
         summary->setPlainText(lines.join(QLatin1Char('\n')));
-        const auto hits = data.value("hits", nlohmann::json::array());
+        const auto hits = data.contains("hits") ? data.value("hits", nlohmann::json::array())
+                                                 : data.value("refs", nlohmann::json::array());
         if (!hits.is_array()) {
             return;
         }
@@ -1637,9 +1767,14 @@ void show_find_refs_dialog(
                               {"group", group},
                               {"instance", instance},
                               {"ordinal", ordinal}}},
-                            {"limit", 200},
-                            {"byteScan", byte_scan->isChecked()}};
-        auto env = bus.execute("resource.findRefs", args);
+                            {"limit", 200}};
+        nlohmann::json env;
+        if (mode_outbound->isChecked()) {
+            env = bus.execute("resource.listRefs", args);
+        } else {
+            args["byteScan"] = byte_scan->isChecked();
+            env = bus.execute("resource.findRefs", args);
+        }
         fill(env);
     };
 
@@ -1665,6 +1800,17 @@ void show_find_refs_dialog(
     auto* jump_btn = box->addButton(QObject::tr("Jump"), QDialogButtonBox::ActionRole);
     box->addButton(QDialogButtonBox::Close);
     lay->addWidget(box);
+    auto sync_mode = [&] {
+        byte_scan->setEnabled(mode_inbound->isChecked());
+    };
+    QObject::connect(mode_inbound, &QRadioButton::toggled, &dlg, [&](bool) { sync_mode(); run_find(); });
+    QObject::connect(mode_outbound, &QRadioButton::toggled, &dlg, [&](bool on) {
+        if (on) {
+            sync_mode();
+            run_find();
+        }
+    });
+    sync_mode();
     QObject::connect(find, &QPushButton::clicked, &dlg, run_find);
     QObject::connect(jump_btn, &QPushButton::clicked, &dlg, jump);
     QObject::connect(table, &QTableWidget::cellDoubleClicked, &dlg, [jump](int, int) { jump(); });

@@ -2901,6 +2901,107 @@ int main() {
         CHECK(undoc["data"]["clothingType"] == 5);
     }
 
+    // Issue #57: refs.get / refs.set — dryRun, undo, round-trip; listRefs outbound.
+    {
+        auto wu16 = [](std::vector<std::byte>& o, std::uint16_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 2);
+        };
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        auto wtgi = [&](std::vector<std::byte>& o, std::uint32_t type, std::uint32_t group,
+                        std::uint64_t inst) {
+            wu32(o, type);
+            wu32(o, group);
+            wu64(o, inst);
+        };
+        std::vector<std::byte> refs_bytes;
+        wu16(refs_bytes, 1);
+        wu32(refs_bytes, 1);
+        wtgi(refs_bytes, 0x0333406Cu, 0, 0x42);
+        wu16(refs_bytes, 5);
+        wu32(refs_bytes, 1);
+        wu16(refs_bytes, 0);
+
+        auto sid_env = bus.execute("package.new", json::object());
+        CHECK(sid_env["ok"] == true);
+        const auto sid57 = sid_env["data"]["sessionId"].get<std::string>();
+        json rrid{{"type", sxpe::resources::kRefs}, {"group", 0}, {"instance", 57}, {"ordinal", 0}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid57},
+                               {"resourceId", rrid},
+                               {"payloadB64", b64(refs_bytes)}})["ok"] == true);
+
+        bool saw_refs_set = false, saw_list = false;
+        auto man57 = bus.execute("manifest", json::object());
+        for (const auto& tool : man57["data"]["tools"]) {
+            if (tool["name"] == "refs.set") {
+                saw_refs_set = true;
+                CHECK(tool["annotations"]["readOnlyHint"] == false);
+                CHECK(tool["mcpName"] == "refs_set");
+            }
+            if (tool["name"] == "resource.listRefs") {
+                saw_list = true;
+                CHECK(tool["mcpName"] == "resource_listRefs");
+            }
+        }
+        CHECK(saw_refs_set);
+        CHECK(saw_list);
+
+        auto got = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(got["ok"] == true);
+        CHECK(got["data"]["entryCount"] == 1);
+        CHECK(got["data"]["entries"][0]["instance"] == 0x42);
+
+        auto dry = bus.execute("refs.set",
+                               json{{"sessionId", sid57},
+                                    {"resourceId", rrid},
+                                    {"entries",
+                                     json::array({{{"type", 0x00B2D882u},
+                                                   {"group", 1},
+                                                   {"instance", 99},
+                                                   {"aux", 7}}})},
+                                    {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"]["dryRun"] == true);
+        auto still = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(still["data"]["entries"][0]["instance"] == 0x42);
+
+        CHECK(bus.execute("refs.set",
+                          json{{"sessionId", sid57},
+                               {"resourceId", rrid},
+                               {"entries",
+                                json::array({{{"type", 0x00B2D882u},
+                                              {"group", 1},
+                                              {"instance", 99},
+                                              {"aux", 7}}})},
+                               {"indices", json::array({3})}})["ok"] == true);
+        auto after = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(after["ok"] == true);
+        CHECK(after["data"]["entries"][0]["type"] == 0x00B2D882u);
+        CHECK(after["data"]["entries"][0]["instance"] == 99);
+        CHECK(after["data"]["entries"][0]["aux"] == 7);
+        CHECK(after["data"]["indices"][0] == 3);
+
+        CHECK(bus.execute("undo", json{{"sessionId", sid57}})["ok"] == true);
+        auto und = bus.execute("refs.get", json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(und["data"]["entries"][0]["instance"] == 0x42);
+
+        auto outb = bus.execute("resource.listRefs",
+                                json{{"sessionId", sid57}, {"resourceId", rrid}});
+        CHECK(outb["ok"] == true);
+        CHECK(outb["data"]["kind"] == "REFS");
+        CHECK(outb["data"]["count"] == 1);
+        CHECK(outb["data"]["refs"][0]["instance"] == 0x42);
+    }
+
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;

@@ -634,6 +634,45 @@ void Inspector::load_preview(const nlohmann::json& rid) {
         }
     }
 
+    if (pending_type_ == sxpe::resources::kRefs) {
+        auto info = bus_.execute("refs.get", {{"sessionId", sid}, {"resourceId", rid}});
+        if (info.value("ok", false)) {
+            const auto& d = info["data"];
+            QStringList lines;
+            lines << tr("REFS version %1").arg(d.value("version", 0));
+            lines << tr("Entries %1 · indices %2")
+                         .arg(d.value("entryCount", 0))
+                         .arg(d.contains("indices") && d["indices"].is_array()
+                                  ? static_cast<int>(d["indices"].size())
+                                  : 0);
+            lines << tr("Aux width: %1")
+                         .arg(d.value("auxIsDword", false) ? tr("DWORD") : tr("WORD"));
+            if (d.value("hasThingy", false)) {
+                lines << tr("Thingy %1").arg(d.value("thingy", 0));
+            }
+            if (d.contains("entries") && d["entries"].is_array()) {
+                const int show = std::min<int>(8, static_cast<int>(d["entries"].size()));
+                for (int i = 0; i < show; ++i) {
+                    const auto& row = d["entries"][i];
+                    lines << tr("  [%1] %2 %3 %4 aux=%5")
+                                 .arg(i)
+                                 .arg(QString::fromStdString(row.value("typeHex", "")))
+                                 .arg(QString::fromStdString(row.value("groupHex", "")))
+                                 .arg(QString::fromStdString(row.value("instanceHex", "")))
+                                 .arg(row.value("aux", 0u));
+                }
+                if (static_cast<int>(d["entries"].size()) > show) {
+                    lines << tr("  …");
+                }
+            }
+            if (d.value("partial", false)) {
+                lines << tr("(partial parse)");
+            }
+            show_preview_body(lines.join(QLatin1Char('\n')));
+            return;
+        }
+    }
+
     if (pending_type_ == sxpe::resources::kClip) {
         auto info = bus_.execute("clip.info", {{"sessionId", sid}, {"resourceId", rid}});
         if (info.value("ok", false)) {

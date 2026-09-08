@@ -89,7 +89,7 @@ No pixels. A few decoded fields beat hex.
 | catalog (`CFEN` `CSTR` `CWAL` `CRAL` `CFIR` `CTPT` `CFND` `CWST` `CRST` `CRMT` `CWAT` `CCFP` `CPRX` `CTTL`) | see `types.hpp` | Same catalog common header as OBJD | M | P2 |
 | `TONE` | `0354796A` skin, `03555BA8` hair | Colour / related TGIs | M | P2 |
 | `CINF` `HINF` `OBCI` | colour info | RGB / labels | M | P2 |
-| `REFS` | `05ED1226` | Referenced TGI list | M | P2 |
+| `REFS` | `05ED1226` | Referenced TGI list (`refs.get`) | M | **done** |
 | `DETL` | `03D86EA4` | Lot/world summary | M | P2 |
 
 ---

@@ -206,6 +206,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("&XML…"), {}, [this] { open_xml(); });
     act(editors, tr("&Catalog object…"), {}, [this] { open_objd(); });
     act(editors, tr("CAS &part…"), {}, [this] { open_casp(); });
+    act(editors, tr("&Reference table…"), {}, [this] { open_refs(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&View S3SA…"), {}, [this] { view_s3sa(); });
@@ -1385,6 +1386,17 @@ void MainWindow::open_casp() {
     }
 }
 
+void MainWindow::open_refs() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_refs_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::import_s3sa() {
     auto* t = current_tab();
     if (!t) {
@@ -1750,8 +1762,10 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* xml = editors->addAction(tr("&XML…"), this, [this] { open_xml(); });
     auto* objd = editors->addAction(tr("&Catalog object…"), this, [this] { open_objd(); });
     auto* casp = editors->addAction(tr("CAS &part…"), this, [this] { open_casp(); });
+    auto* refs = editors->addAction(tr("&Reference table…"), this, [this] { open_refs(); });
     objd->setEnabled(false);
     casp->setEnabled(false);
+    refs->setEnabled(false);
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
     auto* s3sa_view = editors->addAction(tr("&View S3SA…"), this, [this] { view_s3sa(); });
@@ -1774,6 +1788,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         stbl->setEnabled(r->type == sxpe::resources::kStbl);
         objd->setEnabled(r->type == sxpe::resources::kObjd);
         casp->setEnabled(r->type == sxpe::resources::kCasp);
+        refs->setEnabled(r->type == sxpe::resources::kRefs);
         bool xml_ok = r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun;
         if (!xml_ok) {
             // Match bus xml.get: enable when a short peek looks like XML.
