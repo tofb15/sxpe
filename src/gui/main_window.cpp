@@ -17,6 +17,7 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QDesktopServices>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -41,6 +42,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace sxpe::gui {
@@ -294,6 +296,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
     act(help, tr("Common &tasks…"), {}, [this] { show_common_tasks_dialog(this); });
     act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this, bus_); });
+    act(help, tr("&Feedback…"), {}, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/tofb15/sxpe/issues")));
+    });
     help->addSeparator();
     act(help, tr("&About SXPE"), {}, [this] {
         QMessageBox::about(
