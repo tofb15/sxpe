@@ -1,14 +1,15 @@
 # SXPE user guide (GUI)
 
-For builders running `sxpe_gui`, or anyone who packaged a local Windows zip. v0.6.0 Releases ship a **Linux CLI+MCP** tarball only — not a Windows portable zip yet.
+For builders running `sxpe_gui` on **Windows or Linux**, or anyone who packaged a local portable folder. v0.6.0 Releases ship a **Linux CLI+MCP** tarball only — not a Windows portable zip yet. GUI menus/workflows are the same on both OSes; OS-specific notes appear only where needed below.
 
 **Related:** [workflows](workflows.md) · [building](building.md) · [CLI/MCP](cli-mcp.md) · [format specs](spec/README.md)
 
 ## Install / run
 
-1. **Linux CLI/MCP (published):** download `sxpe-*-linux-x64-cli.tar.gz` from **[Releases](https://github.com/tofb15/sxpe/releases)** (v0.6.0+).
+1. **Linux CLI/MCP (published):** download `sxpe-*-linux-x64-cli.tar.gz` from **[Releases](https://github.com/tofb15/sxpe/releases)** (v0.6.0+), or build locally with `./scripts/package-linux.sh --no-gui`.
 2. **Windows GUI:** there is no portable zip on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)). Build with `build.bat`, then `package.bat` / `scripts/package.ps1` ([building.md](building.md)). Unzip the local `dist/` zip; keep folder layout intact; run **`SXPE.bat`**.
-3. **From a build tree:** run `sxpe_gui` (Windows or Linux when Qt is present).
+3. **Linux GUI:** build with Qt 6 present ([building.md](building.md)), run `./build/sxpe_gui`, or `./scripts/package-linux.sh` (includes GUI in the tarball; **does not** vendor Qt libs — install Qt on the machine that runs it).
+4. **From a build tree (either OS):** run `sxpe_gui` when Qt was found at configure time.
 
 Drop one `.package` on the window to open it. Drop **several** to **merge** them into a new package (SXPE writes an `SXMM` manifest so un-merge can reverse SXPE merges only).
 
@@ -146,8 +147,18 @@ Details: [neighborhood-layout.md](neighborhood-layout.md).
 | Search | Ctrl+F |
 | Select all | Ctrl+A |
 
+## External programs (OS examples)
+
+**Settings → External programs** configures hex / text / S3SA viewers. Commands use `{path}` substitution (not plugins; plugins are permanently unsupported — #60).
+
+| Role | Windows example | Linux example |
+| --- | --- | --- |
+| Hex | `C:\Tools\hex.exe {path}` | `ghex {path}` or `okteta {path}` |
+| Text | `notepad {path}` | `xdg-open {path}` or `nano {path}` |
+| S3SA | `ilspy {path}` / `dnSpy {path}` | `ilspycmd {path}` (or any PE/.NET viewer you install) |
+
 ## Limits to remember
 
 - Sims 3 only (v1). Unknown formats are refused.
-- Third-party GUI plugins / DLL Handlers are **permanently unsupported** (no plugin SDK, no surprise DLL execution). **Settings → Built-in handlers** lists first-party types only.
+- Third-party GUI plugins / DLL Handlers are **permanently unsupported** on **all** platforms (no plugin SDK, no surprise DLL execution). **Settings → Built-in handlers** lists first-party types only.
 - Keep backups. Compact/save rewrites packages; test in a copy first.

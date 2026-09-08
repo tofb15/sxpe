@@ -29,9 +29,14 @@ Do not commit:
 ## Tests
 
 CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and a Windows job with Qt that runs
-`gui_smoke`. Linux Qt GUI steps and a paste-ready CI job live in `docs/building.md`. Synthetic fixtures
-only. Optional local FullBuild/CC round-trip: `docs/testing.md` and `scripts/roundtrip.ps1`. Game/CC
-bytes stay in `fixtures/local/` (gitignored) or the install tree.
+`gui_smoke`. A paste-ready **Linux GUI** job lives in `docs/building.md` / `docs/ci/linux-gui.yml`;
+promoting it into `.github/workflows/ci.yml` needs a token with `workflow` scope (see #52 / #54).
+Synthetic fixtures only. Optional local FullBuild/CC round-trip: `docs/testing.md` and
+`scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
+
+**Linux contributors are not required to use Windows** for CLI/MCP work: configure/build/test with
+CMake presets on Linux. GUI work needs Qt 6.5+ on the OS you use (Windows *or* Linux). Windows-only
+packaging (`package.ps1`) is optional; Linux packaging is `scripts/package-linux.sh`.
 
 ## Docs
 

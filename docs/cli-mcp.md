@@ -12,7 +12,10 @@ GUI, CLI, and MCP share one **command bus**. Prefer this page plus [docs/spec/ca
 | `sxpe_mcp` | MCP stdio server | No |
 | `sxpe_gui` | Desktop UI | Yes (Widgets + Network) |
 
-A local Windows portable zip (`package.bat`) ships `sxpe-cli.bat` and `sxpe-mcp.bat` next to the GUI. v0.6.0 Releases publish a Linux CLI+MCP tarball instead.
+**Cross-platform:** the same `sxpe` / `sxpe_mcp` binaries and bus commands run on Windows and Linux (Qt-free). Examples on this page use POSIX-style paths; on Windows pass normal Windows paths to `--package` / `--path`.
+
+- **Windows portable:** `package.bat` / `scripts/package.ps1` ships `sxpe-cli.bat` and `sxpe-mcp.bat` next to the GUI.
+- **Linux tarball:** `scripts/package-linux.sh` ships `sxpe` / `sxpe_mcp` plus `sxpe-cli.sh` / `sxpe-mcp.sh`. v0.6.0 Releases publish the Linux CLI+MCP tarball.
 
 ## Bus model
 

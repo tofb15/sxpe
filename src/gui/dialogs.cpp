@@ -1418,9 +1418,15 @@ void show_external_programs_dialog(QWidget* parent) {
     auto* hex = new QLineEdit(s.value("ext/hex").toString());
     auto* text = new QLineEdit(s.value("ext/text").toString());
     auto* s3sa = new QLineEdit(s.value("ext/s3sa").toString());
+#if defined(Q_OS_WIN)
     hex->setPlaceholderText(QObject::tr("e.g. C:\\Tools\\hex.exe {path}"));
     text->setPlaceholderText(QObject::tr("e.g. notepad {path}"));
     s3sa->setPlaceholderText(QObject::tr("e.g. ilspy {path}   or   dnSpy {path}"));
+#else
+    hex->setPlaceholderText(QObject::tr("e.g. ghex {path}   or   okteta {path}"));
+    text->setPlaceholderText(QObject::tr("e.g. xdg-open {path}   or   nano {path}"));
+    s3sa->setPlaceholderText(QObject::tr("e.g. ilspycmd {path}"));
+#endif
     form->addRow(QObject::tr("Hex editor"), hex);
     form->addRow(QObject::tr("Text editor"), text);
     form->addRow(QObject::tr("S3SA viewer"), s3sa);
