@@ -23,7 +23,7 @@ CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_
 
 ## Packaging
 
-Version lives in `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). How to compile and zip: [docs/building.md](docs/building.md). What we ship: [GitHub Releases](https://github.com/tofb15/sxpe/releases). Product story: [README](README.md).
+Version lives in `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). When to bump: [docs/versioning.md](docs/versioning.md). How to compile and zip: [docs/building.md](docs/building.md). What we ship: [GitHub Releases](https://github.com/tofb15/sxpe/releases). Product story: [README](README.md).
 
 ## Extensibility (honest)
 
