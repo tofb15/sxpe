@@ -30,7 +30,7 @@ Do not commit:
 
 CI (`.github/workflows/ci.yml`) builds CLI/MCP on Linux without Qt and a Windows job with Qt that runs
 `gui_smoke`. A paste-ready **Linux GUI** job lives in `docs/building.md` / `docs/ci/linux-gui.yml`;
-promoting it into `.github/workflows/ci.yml` needs a token with `workflow` scope (see #52 / #54).
+promoting it into `.github/workflows/ci.yml` needs a token with `workflow` scope (see #54).
 Synthetic fixtures only. Optional local FullBuild/CC round-trip: `docs/testing.md` and
 `scripts/roundtrip.ps1`. Game/CC bytes stay in `fixtures/local/` (gitignored) or the install tree.
 
