@@ -1,0 +1,20 @@
+[
+  {
+    "tag_name": "v0.7.0",
+    "html_url": "https://github.com/tofb15/sxpe/releases/tag/v0.7.0",
+    "name": "SXPE 0.7.0 Beta",
+    "draft": false,
+    "prerelease": true,
+    "assets": [
+      { "name": "sxpe-0.7.0-windows-x64.zip" }
+    ]
+  },
+  {
+    "tag_name": "v0.6.0",
+    "html_url": "https://github.com/tofb15/sxpe/releases/tag/v0.6.0",
+    "name": "SXPE 0.6.0",
+    "draft": false,
+    "prerelease": false,
+    "assets": []
+  }
+]

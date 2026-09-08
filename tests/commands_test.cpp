@@ -102,6 +102,26 @@ int main() {
     CHECK(upd_new["data"]["status"] == "newerAvailable");
     CHECK(upd_new["data"]["downloads"] == false);
 
+    auto upd_pre = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.6.0"},
+             {"latestJsonPath",
+              (std::filesystem::path(SXPE_SYNTHETIC_DIR) / "github-releases-prerelease.json")
+                  .string()}});
+    CHECK(upd_pre["ok"] == true);
+    CHECK(upd_pre["data"]["status"] == "newerAvailable");
+    CHECK(upd_pre["data"]["tagName"] == "v0.7.0");
+    CHECK(upd_pre["data"]["downloads"] == false);
+
+    auto upd_drafts = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.7.0"},
+             {"latestJsonPath",
+              (std::filesystem::path(SXPE_SYNTHETIC_DIR) / "github-releases-draft-only.json")
+                  .string()}});
+    CHECK(upd_drafts["ok"] == true);
+    CHECK(upd_drafts["data"]["status"] == "notFound");
+
     auto np = bus.execute("package.new", json::object());
     CHECK(np["ok"] == true);
     const auto sid = np["data"]["sessionId"].get<std::string>();

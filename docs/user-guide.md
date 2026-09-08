@@ -97,11 +97,13 @@ Large CC: SXPE refuses oversized jobs (`cap_exceeded`) instead of OOM. Step-by-s
 
 **Help → Check for update…**, CLI `sxpe app checkUpdate`, and MCP `app_checkUpdate` share `app.checkUpdate`. They GET `https://api.github.com/repos/tofb15/sxpe/releases/latest` and compare `tag_name` to this build. **Nothing is downloaded.**
 
+If `/releases/latest` returns **404** (common when the newest tag is only a GitHub **pre-release** / Beta, because GitHub excludes prereleases from “latest”), SXPE falls back to listing recent releases and picks the newest **non-draft** tag, **including prereleases**.
+
 | Result | Meaning |
 | --- | --- |
-| Up to date | Running version matches the latest tag |
+| Up to date | Running version matches the newest published tag (stable or Beta) |
 | Newer available | Link to that release; you choose whether to install |
-| Not found (404) | No public latest release (repo may be **private**). Set `SXPE_GITHUB_TOKEN` / `GITHUB_TOKEN`, or use `gh auth token`. |
+| Not found | No visible non-draft release (repo may be **private**, or none published yet). Set `SXPE_GITHUB_TOKEN` / `GITHUB_TOKEN`, or use `gh auth token`. |
 | Network error | Offline, firewall, or API failure |
 
 ## Game / file locks
@@ -146,6 +148,6 @@ Full rules: [neighborhood-layout.md](neighborhood-layout.md).
 | Text | `notepad {path}` | `xdg-open {path}` / `nano {path}` |
 | S3SA | `ilspy {path}` / `dnSpy {path}` | `ilspycmd {path}` |
 
-## Limits
+## Known limits
 
-Same list as the [README](../README.md#honest-limits): Sims 3 only; no full 3D/CLIP play; no Store/DRM Sims3Pack; layout-locked neighborhood files; no third-party plugins. Keep backups.
+Same list as the [README](../README.md#what-this-version-does-not-do-yet) (**Known limits** today): Sims 3 only; no full 3D/CLIP play; no Store/DRM Sims3Pack; layout-locked neighborhood files; no third-party plugins. Keep backups.

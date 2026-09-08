@@ -4,7 +4,7 @@
 
 It is a **new program**, fully reimplemented from scratch in C++23. It is **inspired by** Peter L Jones’s s3pe, but it is **not a fork** of that code. Not Electronic Arts software. [GPL-3.0-or-later](LICENSE). The Sims 3 is a trademark of Electronic Arts.
 
-This is an **early version**. Things may still be unfinished or buggy; that is expected while the project is in development. Features can be added, changed, or removed as people actually use the app. **Bug reports, feature requests, and general feedback** are welcome on the [GitHub Issues](https://github.com/tofb15/sxpe/issues) tab.
+This is a **public Beta** — not 1.0, and not a full s3pe replacement. Things may still be unfinished or buggy; that is expected. Features can be added, changed, or removed as people actually use the app. **Bug reports, feature requests, and general feedback** are welcome on the [GitHub Issues](https://github.com/tofb15/sxpe/issues) tab.
 
 [![CI](https://github.com/tofb15/sxpe/actions/workflows/ci.yml/badge.svg)](https://github.com/tofb15/sxpe/actions/workflows/ci.yml)
 

@@ -8,8 +8,11 @@ namespace sxpe::core {
 
 inline constexpr char kGithubLatestUrl[] =
     "https://api.github.com/repos/tofb15/sxpe/releases/latest";
+inline constexpr char kGithubReleasesListUrl[] =
+    "https://api.github.com/repos/tofb15/sxpe/releases?per_page=10";
 inline constexpr char kGithubApiHost[] = "api.github.com";
 inline constexpr char kGithubLatestPath[] = "/repos/tofb15/sxpe/releases/latest";
+inline constexpr char kGithubReleasesListPath[] = "/repos/tofb15/sxpe/releases?per_page=10";
 inline constexpr char kGithubReleasesPage[] = "https://github.com/tofb15/sxpe/releases";
 
 /// Strip a leading `v`/`V`, then `+` build metadata and `-` pre-release suffix.
@@ -54,6 +57,19 @@ struct UpdateCheck {
     int http_status{0};
     bool downloads{false};
 };
+
+
+struct GithubReleaseInfo {
+    std::string tag_name;
+    std::string html_url;
+    bool draft{false};
+    bool prerelease{false};
+};
+
+/// GitHub `/releases` lists newest first. Skip drafts; allow prereleases (Beta).
+/// Returns empty `tag_name` when none qualify.
+[[nodiscard]] GithubReleaseInfo pick_newest_published_release(
+    const std::vector<GithubReleaseInfo>& releases);
 
 [[nodiscard]] const char* update_status_id(UpdateStatus s);
 

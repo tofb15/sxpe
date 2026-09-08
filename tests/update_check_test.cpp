@@ -2,6 +2,7 @@
 #include "sxpe/core/update_check.hpp"
 
 #include <string>
+#include <vector>
 
 int main() {
     using namespace sxpe::core;
@@ -41,7 +42,29 @@ int main() {
     CHECK(nf.status == UpdateStatus::not_found);
     CHECK(nf.http_status == 404);
     CHECK(nf.downloads == false);
-    CHECK(nf.message.find("404") != std::string::npos);
+    CHECK(nf.message.find("non-draft") != std::string::npos || nf.message.find("Release") != std::string::npos);
+
+
+    {
+        using Info = GithubReleaseInfo;
+        std::vector<Info> list{
+            {"v0.7.0", "https://example/tag/v0.7.0", false, true},
+            {"v0.6.0", "https://example/tag/v0.6.0", false, false},
+        };
+        auto picked = pick_newest_published_release(list);
+        CHECK(picked.tag_name == "v0.7.0");
+        CHECK(picked.prerelease == true);
+
+        std::vector<Info> drafts_first{
+            {"v9.9.9", "https://example/tag/v9.9.9", true, false},
+            {"v0.7.0", "https://example/tag/v0.7.0", false, true},
+        };
+        auto skip_draft = pick_newest_published_release(drafts_first);
+        CHECK(skip_draft.tag_name == "v0.7.0");
+
+        std::vector<Info> only_drafts{{"v9.9.9", "", true, false}};
+        CHECK(pick_newest_published_release(only_drafts).tag_name.empty());
+    }
 
     CHECK(github_token_from_env().find('\n') == std::string::npos);
 
