@@ -88,7 +88,7 @@ Short recipes; step-by-step: **[docs/workflows.md](docs/workflows.md)**.
 | Merge packages | **Tools → Merge packages…** (Merge assistant: folder → preview → merge) or drop several files | Same bus steps as assistant (`resource.importPackage` + SXMM) |
 | Un-merge | Tools → Un-merge package… (needs SXPE `SXMM` manifest) | `package.unmerge` |
 | Import / export S3SA DLL | Resource → Editors → Import DLL / Export S3SA / View S3SA | `s3sa.importDll` / `s3sa.exportDll` / `s3sa.view` |
-| Validate before share | Tools → Validate | `sxpe package validate --package …` (via bus id) |
+| Validate before share | Tools → Validate | `sxpe package validate --package …` |
 | Compare two packages | Tools → Compare packages… | `package.diff` |
 | Folder hygiene scan | Tools → Scan folder… | `sxpe folder scan --path Downloads` |
 | Inspect Sims3Pack | File → Open Sims3Pack… / Tools → Inspect Sims3Pack… | `sxpe sims3pack list --path mod.sims3pack` |
@@ -140,7 +140,7 @@ Current project version is **0.6.0** (`CMakeLists.txt` `PROJECT_VERSION` / `vcpk
 
 Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md). Template for future tags: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
 
-**Open roadmap:** [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#54](https://github.com/tofb15/sxpe/issues/54) (Windows zip on Releases / workflow scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
+**Still open:** [#54](https://github.com/tofb15/sxpe/issues/54) (Windows portable zip on Releases / `workflow`-scope CI). Closed after recent work: [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#60](https://github.com/tofb15/sxpe/issues/60) (plugins permanently out of scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7 tracker), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
 
 ---
 

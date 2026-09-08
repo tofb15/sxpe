@@ -1,4 +1,4 @@
-# Command catalog (M1 sketch)
+# Command catalog
 
 Source of truth for GUI, CLI, and MCP. Architecture: [DESIGN.md](../../DESIGN.md).
 
@@ -12,7 +12,7 @@ CLI: `sxpe <noun> <verb>` · MCP: `noun_verb` · ids: dotted `noun.verb`.
 
 Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retryable", "side_effects" } }`
 
-## P0 tools (implement with schemas in M3+)
+## Commands
 
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
@@ -24,6 +24,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `package.info` | y | n | Includes `layoutLocked`, `pathKind` (nhd/world/dbc/package) |
 | `package.validate` | y | n | Returns `layoutLocked`, `pathKind`, `conflictHotspots[]`, `summary[]` (layout lock + conflict hotspots) |
 | `package.diff` | y | n | Compare two packages by TGI+ordinal; SHA-256 of uncompressed payload; `summary[]` |
+| `package.unmerge` | n | y | Recreate sources from SXMM; refuse if missing |
 | `folder.scan` | y | n | Read-only recursive `*.package` hygiene; empty/corrupt/wrong-game + duplicate TGI sample; `summary[]` |
 | `sims3pack.info` / `sims3pack.list` / `sims3pack.extract` / `sims3pack.pack` | y / y / y* / n | n | TS3Pack inspect + limited pack (`openWorld`); no Store/DRM |
 | `resource.list` | y | n | `limit` default 100, `cursor` |
@@ -31,6 +32,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `resource.findRefs` | y | n | Inbound TGI refs (REFS/OBJK/VPXY/CASP + optional byteScan) |
 | `resource.export` | y | n | write path; openWorld |
 | `resource.importFiles` | n | y | `--force` / dryRun |
+| `resource.importPackage` | n | y | Merge/import; caps + progress + checkpoint + cancel/rollback; `dirPolicy`; `leftoverManifestPolicy` strip/keep/warn; `duplicateTgiPolicy` force/skip/fail |
 | `resource.delete` | n | y | |
 | `resource.setFlags` | n | y | `deleted` is session-only; save omits the row |
 | `stbl.get` / `stbl.set` | | | |
@@ -58,12 +60,10 @@ GUI-only (no MCP): `preview.float`, `ui.selectAll`, `ui.palette`.
 
 List never includes payloads. `resourceId`: `{ "type", "group", "instance", "ordinal" }`.
 
-## Later
+## Later / optional
 
 See [s3sa.md](s3sa.md). Do not `resource.add` a raw `.dll` as type `073FAA07`.
 
 | id | readOnly | destructive | notes |
 | --- | --- | --- | --- |
-| `package.unmerge` | n | y | Recreate sources from SXMM; refuse if missing |
-| `resource.importPackage` | n | y | Merge/import; caps + progress + checkpoint + cancel/rollback; `dirPolicy`; `leftoverManifestPolicy` strip/keep/warn; `duplicateTgiPolicy` force/skip/fail |
 | `package.makeScriptMod` | n | y | Optional later: S3SA + `_XML` `kInstantiator` + NMAP |

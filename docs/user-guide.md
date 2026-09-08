@@ -36,7 +36,7 @@ Column visibility for the resource list.
 
 ### Resource
 
-Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy resource key; Import (file / into-this-package / DBC-equivalent); Export; Editors (STBL, Name map, XML, Catalog object, CAS part, REFS, S3SA, CLIP metadata/export, DDS, SNAP, VID); open in hex/text editor; Delete.
+Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy resource key; Import (file / into-this-package / DBC-equivalent); Export; Editors (STBL, Name map, XML, Catalog object, CAS part, REFS, Replace RCOL chunk, S3SA, CLIP metadata/export, DDS, SNAP, VID); open in hex/text editor; Delete.
 
 ### Tools
 
@@ -102,6 +102,7 @@ First launch shows a one-time tip pointing at **Help → Common tasks** and the 
 | OBJD | Resource → Editors → Catalog object | Name/desc GUIDs, price, thumb IID |
 | CASP | Resource → Editors → CAS part | Clothing type, age/gender, TGI refs |
 | REFS | Resource → Editors → Reference table | TGI+aux entries and WORD indices |
+| RCOL | Resource → Editors → Replace RCOL chunk… | Safe single-chunk replace (MODL/MLOD/GEOM/MATD); see [rcol.md](spec/rcol.md) |
 | S3SA | Export / Import DLL / View | Never `LoadLibrary`s game code; View uses your configured external program |
 | CLIP | Metadata… / Export as new name… | Safe fields + exportAs / batch CLI; no playback |
 | DDS / SNAP / VID | Replace / export | Image / video payload helpers |

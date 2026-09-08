@@ -151,7 +151,7 @@ $readme = @"
 SXPE $ver (Windows x64)
 =======================
 
-This folder is standalone. Keep the DLLs and plugin subfolders next to the exes.
+This folder is standalone. Keep the DLLs and Qt plugin subfolders (platforms/, etc.) next to the exes.
 
   SXPE.bat         Windows GUI (double-click; working directory is this folder)
   sxpe-cli.bat     CLI (double-click for help, or pass arguments)
@@ -182,6 +182,11 @@ Rename a door (NMAP name), one-shot:
   sxpe-cli.bat resource rename --package door.package --type 0x0333406C --group 0 --instance 0x1 --name NRaas.NoCD --force
 
   sxpe-cli.bat package info --package path\to\file.package --format json
+
+Platform limits:
+  - Third-party GUI plugins / DLL Handlers are permanently unsupported (#60).
+  - External programs use {path} substitution (Settings → External programs).
+  - Windows portable zip on GitHub Releases is tracked by #54; this local package is the supported path today.
 
 License: GPL-3.0-or-later (LICENSE and NOTICE).
 Unofficial The Sims 3 package editor. Not affiliated with Electronic Arts.
