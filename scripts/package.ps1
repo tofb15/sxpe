@@ -1,16 +1,22 @@
-# Stage a shareable Windows x64 folder: GUI + CLI + MCP, Qt plugins, MSVC CRT.
+# Stage a shareable Windows x64 folder: GUI + CLI + MCP, Qt plugins, MSVC CRT
+# (default), or CLI + MCP only with -NoGui / -CliOnly (no Qt / no sxpe_gui).
 # Does not copy EA packages, PDBs (unless -IncludePdb), or test binaries.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts/package.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -SkipBuild
+#   powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -SkipBuild -NoGui
 #
-# Output: dist/sxpe/  and  dist/sxpe-<version>-windows-x64.zip
+# Output:
+#   dist/sxpe/  and  dist/sxpe-<version>-windows-x64.zip       (default / GUI)
+#   dist/sxpe/  and  dist/sxpe-<version>-windows-x64-cli.zip   (-NoGui)
 param(
     [string]$BuildDir = "",
     [string]$OutDir = "",
     [switch]$SkipBuild,
     [switch]$NoZip,
-    [switch]$IncludePdb
+    [switch]$IncludePdb,
+    [Alias("CliOnly")]
+    [switch]$NoGui
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,28 +77,32 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-function Resolve-StagedExeDir([string]$Dir) {
+function Resolve-StagedExeDir([string]$Dir, [string[]]$Required) {
     foreach ($sub in @("", "RelWithDebInfo", "Release")) {
         $d = if ($sub) { Join-Path $Dir $sub } else { $Dir }
         $ok = $true
-        foreach ($n in @("sxpe.exe", "sxpe_mcp.exe", "sxpe_gui.exe")) {
+        foreach ($n in $Required) {
             if (-not (Test-Path (Join-Path $d $n))) { $ok = $false; break }
         }
         if ($ok) { return $d }
     }
     return $Dir
 }
-$ExeDir = Resolve-StagedExeDir $BuildDir
-$need = @("sxpe.exe", "sxpe_mcp.exe", "sxpe_gui.exe")
+$need = if ($NoGui) { @("sxpe.exe", "sxpe_mcp.exe") } else { @("sxpe.exe", "sxpe_mcp.exe", "sxpe_gui.exe") }
+$ExeDir = Resolve-StagedExeDir $BuildDir $need
 foreach ($n in $need) {
     $p = Join-Path $ExeDir $n
     if (-not (Test-Path $p)) { throw "Missing $p. Build first or omit -SkipBuild." }
 }
 
-$qt = Find-QtPrefix
-$windeployqt = if ($qt) { Join-Path $qt "bin\windeployqt.exe" } else { $null }
-if (-not $windeployqt -or -not (Test-Path $windeployqt)) {
-    throw "windeployqt.exe not found. Point CMAKE_PREFIX_PATH at Qt, or keep Qt at ../qt/6.8.2/msvc2022_64."
+$qt = $null
+$windeployqt = $null
+if (-not $NoGui) {
+    $qt = Find-QtPrefix
+    $windeployqt = if ($qt) { Join-Path $qt "bin\windeployqt.exe" } else { $null }
+    if (-not $windeployqt -or -not (Test-Path $windeployqt)) {
+        throw "windeployqt.exe not found. Point CMAKE_PREFIX_PATH at Qt, or keep Qt at ../qt/6.8.2/msvc2022_64."
+    }
 }
 
 function Clear-OutDir([string]$Path) {
@@ -128,38 +138,97 @@ foreach ($n in $need) {
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $OutDir "LICENSE") -Force
 Copy-Item (Join-Path $Root "NOTICE") (Join-Path $OutDir "NOTICE") -Force
 $launchers = Join-Path $PSScriptRoot "portable"
-if (-not (Test-Path (Join-Path $launchers "SXPE.bat"))) {
-    throw "Missing $launchers\SXPE.bat"
+if ($NoGui) {
+    foreach ($bat in @("sxpe-cli.bat", "sxpe-mcp.bat")) {
+        $bp = Join-Path $launchers $bat
+        if (-not (Test-Path $bp)) { throw "Missing $bp" }
+        Copy-Item $bp $OutDir -Force
+    }
+} else {
+    if (-not (Test-Path (Join-Path $launchers "SXPE.bat"))) {
+        throw "Missing $launchers\SXPE.bat"
+    }
+    Copy-Item (Join-Path $launchers "*.bat") $OutDir -Force
 }
-Copy-Item (Join-Path $launchers "*.bat") $OutDir -Force
 
-$vs = Find-VsPath
-$vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
-$gui = Join-Path $OutDir "sxpe_gui.exe"
-$wdCmd = 'call "' + $vcvars + '" && "' + $windeployqt + '" --release --compiler-runtime --no-translations --no-opengl-sw "' + $gui + '"'
-cmd.exe /c $wdCmd
-if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)." }
+$vs = $null
+try {
+    $vs = Find-VsPath
+} catch {
+    if (-not $NoGui) { throw }
+    Write-Warning $_.Exception.Message
+}
 
-Copy-VcRuntime $OutDir $vs
+if (-not $NoGui) {
+    $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+    $gui = Join-Path $OutDir "sxpe_gui.exe"
+    $wdCmd = 'call "' + $vcvars + '" && "' + $windeployqt + '" --release --compiler-runtime --no-translations --no-opengl-sw "' + $gui + '"'
+    cmd.exe /c $wdCmd
+    if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)." }
+}
+
+if ($vs) {
+    Copy-VcRuntime $OutDir $vs
+}
 # CRT DLLs sit next to the exes; the redist installer is not needed in a portable folder.
 $redistExe = Join-Path $OutDir "vc_redist.x64.exe"
 if (Test-Path $redistExe) { Remove-Item $redistExe -Force }
 
 # RelWithDebInfo is a release binary; drop *d.dll debug companions if both exist.
-Get-ChildItem $OutDir -Recurse -Filter "*.dll" | ForEach-Object {
+Get-ChildItem $OutDir -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
     if ($_.BaseName -match 'd$') {
         $rel = Join-Path $_.DirectoryName ($_.BaseName.Substring(0, $_.BaseName.Length - 1) + $_.Extension)
         if (Test-Path $rel) { Remove-Item $_.FullName -Force }
     }
 }
 
-$platforms = Join-Path $OutDir "platforms\qwindows.dll"
-if (-not (Test-Path $platforms)) {
-    throw "Packaging did not produce platforms\qwindows.dll (Qt platform plugin)."
+if (-not $NoGui) {
+    $platforms = Join-Path $OutDir "platforms\qwindows.dll"
+    if (-not (Test-Path $platforms)) {
+        throw "Packaging did not produce platforms\qwindows.dll (Qt platform plugin)."
+    }
 }
 
 $ver = Read-SxpeVersion
-$readme = @"
+if ($NoGui) {
+    $readme = @"
+SXPE $ver (Windows x64 CLI)
+===========================
+
+This folder is CLI + MCP only (no GUI, no Qt). Keep any CRT DLLs next to the exes.
+
+  sxpe-cli.bat     CLI (double-click for help, or pass arguments)
+  sxpe-mcp.bat     MCP stdio
+  sxpe.exe         CLI (Qt-free)
+  sxpe_mcp.exe     MCP stdio (Qt-free)
+
+CLI:
+  sxpe-cli.bat --help
+  sxpe-cli.bat --version
+  sxpe-cli.bat help
+  sxpe-cli.bat help resource
+  sxpe-cli.bat resource rename --help
+
+How the CLI works:
+  Commands are noun + verb (resource list, package info).
+  --package PATH is one-shot: open, run, save if it writes, close.
+  Every command returns JSON {ok, data} or {ok, error}.
+  --format text or table prints a human table; json is compact JSON.
+  --force / --dry-run gate writes. --type/--group/--instance accept hex 0x...
+
+  sxpe-cli.bat package info --package path\to\file.package --format json
+
+MCP:
+  sxpe-mcp.bat
+
+For the Windows GUI portable zip (Qt plugins + SXPE.bat), use scripts/package.ps1
+without -NoGui, or download sxpe-<ver>-windows-x64.zip from GitHub Releases.
+
+License: GPL-3.0-or-later (LICENSE and NOTICE).
+Unofficial The Sims 3 package editor. Not affiliated with Electronic Arts.
+"@
+} else {
+    $readme = @"
 SXPE $ver (Windows x64)
 =======================
 
@@ -203,6 +272,7 @@ Platform limits:
 License: GPL-3.0-or-later (LICENSE and NOTICE).
 Unofficial The Sims 3 package editor. Not affiliated with Electronic Arts.
 "@
+}
 [System.IO.File]::WriteAllText((Join-Path $OutDir "README.txt"), $readme)
 
 $files = Get-ChildItem $OutDir -Recurse -File
@@ -211,7 +281,8 @@ Write-Host "Staged $($files.Count) files in $OutDir"
 if (-not $NoZip) {
     $distRoot = Split-Path $OutDir -Parent
     if (-not (Test-Path $distRoot)) { New-Item -ItemType Directory -Path $distRoot | Out-Null }
-    $zip = Join-Path $distRoot "sxpe-$ver-windows-x64.zip"
+    $zipName = if ($NoGui) { "sxpe-$ver-windows-x64-cli.zip" } else { "sxpe-$ver-windows-x64.zip" }
+    $zip = Join-Path $distRoot $zipName
     if (Test-Path $zip) { Remove-Item $zip -Force }
     Compress-Archive -Path $OutDir -DestinationPath $zip -CompressionLevel Optimal
     Write-Host "Zip $zip"

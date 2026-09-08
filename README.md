@@ -72,8 +72,9 @@ You do **not** need to compile if a download matches your computer.
 | You want | Do this |
 | --- | --- |
 | **Windows app** | Download `sxpe-0.7.0-windows-x64.zip` from **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip the **whole folder** somewhere you can write (leave the extra files next to the program). Double-click **`SXPE.bat`**. |
+| **Windows command-line tools** | Download `sxpe-0.7.0-windows-x64-cli.zip` from the same Release (CLI + MCP, no Qt). Unzip and run `sxpe-cli.bat` / `sxpe-mcp.bat`. |
 | **Linux command-line tools** | Download `sxpe-0.7.0-linux-x64-cli.tar.gz` from the same Release, extract, run `./sxpe`. |
-| **Linux windowed app** | Build from source with Qt 6 ([building.md](docs/building.md)). A Linux pack can include the GUI program but still needs Qt installed on that machine. |
+| **Linux windowed app** | Download `sxpe-0.7.0-linux-x64.tar.gz` from the same Release (includes `sxpe_gui`). Qt is **not** inside the tarball — install Qt 6.5+ on that machine, then run `./SXPE.sh`. Details: [building.md](docs/building.md). |
 
 Drop one `.package` on the window to open it. Drop several to merge them (you can un-merge later only if SXPE did the merge).
 
