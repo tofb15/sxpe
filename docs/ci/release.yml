@@ -1,8 +1,7 @@
 # MAINTAINER-ONLY - not end-user documentation.
-# GitHub Actions workflow to attach portable artifacts on version tags (v0.7.0, …).
-# Canonical maintainer copy. Promote into .github/workflows/release.yml when the
-# pushing token has the GitHub `workflow` scope (OAuth without that scope cannot
-# update .github/workflows/*). Until pasted, live release.yml may lag this file.
+# Attach four portable artifacts on v* tags (and workflow_dispatch).
+# Live: .github/workflows/release.yml
+# Maintainer copy: docs/ci/release.yml (keep identical).
 # See docs/ci/README.md and docs/building.md.
 #
 # Four artifacts per tag:
