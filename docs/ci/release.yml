@@ -1,5 +1,9 @@
-# Build Windows portable zip on version tags (v0.6.0, v1.0.0, …).
-# Requires a token that can push workflow files when adding this under .github/workflows/.
+# MAINTAINER-ONLY — not end-user documentation.
+# Paste-ready GitHub Actions workflow to build a Windows portable zip on version tags
+# (v0.6.0, v1.0.0, …) and attach it to the Release. Prefer copying into
+# .github/workflows/release.yml when the token has `workflow` scope.
+# See docs/ci/README.md and docs/building.md.
+#
 name: release
 
 on:
