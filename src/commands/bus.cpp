@@ -1277,10 +1277,23 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"rcol.summary", "RCOL summary",
-         "MODL/MLOD/GEOM chunk tags and vertex/face/LOD counts (RCOL scan; no mesh view).",
+         "MODL/MLOD/GEOM/MATD chunk tags, mesh counts, MATD shader name + texture TGIs when "
+         "parseable (RCOL scan; no mesh view).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
+    add({"rcol.replaceChunk", "RCOL replace chunk",
+         "Replace one internal RCOL chunk payload by 0-based index. Preserves TGI tables. "
+         "Session undo; optional backupPath writes the previous chunk bytes. dryRun.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"chunkIndex", {{"type", "integer"}}},
+                     {"payloadB64", {{"type", "string"}}},
+                     {"path", {{"type", "string"}}},
+                     {"backupPath", {{"type", "string"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "chunkIndex"})),
+         env_out, false, true, false, true});
     add({"clip.exportAs", "CLIP export as new name",
          "Copy CLIP with instance = fnv64_clip (age-letter masks, SimsWiki 0x6B20C4F3).",
          obj_schema({{"sessionId", sess_prop()},
@@ -4495,6 +4508,64 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"hasThingy", parsed->has_thingy},
                             {"thingy", parsed->thingy}});
     }
+    if (cmd == "rcol.replaceChunk") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        if (!args.contains("chunkIndex")) {
+            return envelope_err(err(ErrorCode::invalid_argument, "chunkIndex required"));
+        }
+        const auto chunk_index = static_cast<std::uint32_t>(as_u64(args.at("chunkIndex")));
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        auto raw = payload_from_args(args);
+        if (!raw) {
+            return envelope_err(raw.error());
+        }
+        auto oldb = sxpe::resources::extract_rcol_chunk(*body, chunk_index);
+        if (!oldb) {
+            return envelope_err(oldb.error());
+        }
+        auto out = sxpe::resources::replace_rcol_chunk(*body, chunk_index, *raw);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"chunkIndex", chunk_index},
+                                {"oldBytes", oldb->size()},
+                                {"newBytes", raw->size()},
+                                {"resourceBytes", out->size()}});
+        }
+        bool backed_up = false;
+        if (args.contains("backupPath") && args["backupPath"].is_string() &&
+            !args["backupPath"].get<std::string>().empty()) {
+            auto bp = check_path(args["backupPath"].get<std::string>());
+            if (!bp) {
+                return envelope_err(bp.error());
+            }
+            if (auto w = write_file(*bp, *oldb); !w) {
+                return envelope_err(w.error());
+            }
+            backed_up = true;
+        }
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"chunkIndex", chunk_index},
+                            {"oldBytes", oldb->size()},
+                            {"newBytes", raw->size()},
+                            {"bytes", out->size()},
+                            {"backedUp", backed_up}});
+    }
     if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "objd.get" || cmd == "casp.get" ||
         cmd == "refs.get" || cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {
         auto i = need_idx();
@@ -4769,34 +4840,73 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         if (cmd == "rcol.summary" ||
             (cmd == "graph.get" && (type == sxpe::resources::kModl || type == sxpe::resources::kMlod ||
-                                    type == sxpe::resources::kGeom))) {
+                                    type == sxpe::resources::kGeom || type == sxpe::resources::kMatd))) {
             auto r = sxpe::resources::parse_rcol_summary(*body);
             if (!r) {
                 if (cmd == "rcol.summary") {
                     return envelope_err(r.error());
                 }
             } else {
+                auto tgi_row = [](const sxpe::games::sims3::Tgi& t) {
+                    return json{{"type", t.type}, {"group", t.group}, {"instance", t.instance}};
+                };
+                auto tex_row = [&](const sxpe::resources::RcolTextureRef& tex) {
+                    json row{{"paramHash", tex.param_hash},
+                             {"paramName", tex.param_name},
+                             {"resolved", tex.resolved},
+                             {"rcolRef", tex.rcol_ref}};
+                    if (tex.resolved) {
+                        row["type"] = tex.tgi.type;
+                        row["group"] = tex.tgi.group;
+                        row["instance"] = tex.tgi.instance;
+                    }
+                    return row;
+                };
                 json chunks = json::array();
                 json nodes = json::array();
-                for (const auto& ch : r->chunks) {
-                    json row{{"type", ch.type},
+                for (std::size_t ci = 0; ci < r->chunks.size(); ++ci) {
+                    const auto& ch = r->chunks[ci];
+                    json row{{"index", ci},
+                             {"type", ch.type},
                              {"tag", ch.tag},
                              {"size", ch.size},
                              {"vertexCount", ch.vertex_count},
                              {"faceCount", ch.face_count},
                              {"groupCount", ch.group_count}};
+                    if (ch.has_matd) {
+                        row["shaderHash"] = ch.shader_hash;
+                        row["shaderName"] = ch.shader_name;
+                        row["materialNameHash"] = ch.material_name_hash;
+                        row["matdVersion"] = ch.matd_version;
+                        json mats = json::array();
+                        for (const auto& tex : ch.textures) {
+                            mats.push_back(tex_row(tex));
+                        }
+                        row["textures"] = mats;
+                    }
                     chunks.push_back(row);
-                    nodes.push_back({{"id", "chunk/" + (ch.tag.empty() ? std::to_string(ch.type) : ch.tag)},
+                    nodes.push_back({{"id", "chunk/" + std::to_string(ci) + "/" +
+                                             (ch.tag.empty() ? std::to_string(ch.type) : ch.tag)},
                                      {"label", ch.tag.empty() ? "chunk" : ch.tag},
                                      {"valueKind", "u32"},
                                      {"value", ch.size},
                                      {"children", json::array()}});
+                }
+                json externals = json::array();
+                for (const auto& t : r->external_tgis) {
+                    externals.push_back(tgi_row(t));
+                }
+                json textures = json::array();
+                for (const auto& tex : r->textures) {
+                    textures.push_back(tex_row(tex));
                 }
                 return envelope_ok({{"type", "RCOL"},
                                     {"version", r->version},
                                     {"internalCount", r->internal_count},
                                     {"externalCount", r->external_count},
                                     {"chunks", chunks},
+                                    {"externalTgis", externals},
+                                    {"textures", textures},
                                     {"totalVertices", r->total_vertices},
                                     {"totalFaces", r->total_faces},
                                     {"lodGroups", r->lod_groups},

@@ -75,6 +75,7 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 | `sims3pack.list` / `extract` / `pack` | TS3Pack inspect + limited pack |
 | `resource.list` / `read` / `export` / `importFiles` / `importPackage` / `delete` / `setFlags` / `rename` | Resources; merge via `importPackage` |
 | `nmap.*` / `stbl.*` / `xml.*` / `objd.*` / `casp.*` / `refs.*` | Structured editors |
+| `rcol.summary` / `rcol.replaceChunk` | Mesh/MATD summary; safe chunk replace |
 | `resource.findRefs` / `resource.listRefs` | Inbound / outbound TGI references |
 | `s3sa.info` / `exportDll` / `importDll` / `view` | Script assembly wrapper (never LoadLibrary) |
 | `hash.fnv` | FNV helpers |

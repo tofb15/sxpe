@@ -207,6 +207,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("&Catalog object…"), {}, [this] { open_objd(); });
     act(editors, tr("CAS &part…"), {}, [this] { open_casp(); });
     act(editors, tr("&Reference table…"), {}, [this] { open_refs(); });
+    act(editors, tr("Replace RCOL &chunk…"), {}, [this] { open_rcol_replace(); });
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&View S3SA…"), {}, [this] { view_s3sa(); });
@@ -1391,6 +1392,18 @@ void MainWindow::open_casp() {
     }
 }
 
+void MainWindow::open_rcol_replace() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_rcol_replace_chunk_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance,
+                                      r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::open_refs() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1768,6 +1781,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* objd = editors->addAction(tr("&Catalog object…"), this, [this] { open_objd(); });
     auto* casp = editors->addAction(tr("CAS &part…"), this, [this] { open_casp(); });
     auto* refs = editors->addAction(tr("&Reference table…"), this, [this] { open_refs(); });
+    auto* rcol = editors->addAction(tr("Replace RCOL &chunk…"), this, [this] { open_rcol_replace(); });
     objd->setEnabled(false);
     casp->setEnabled(false);
     refs->setEnabled(false);
@@ -1794,6 +1808,8 @@ void MainWindow::show_resource_context(const QPoint& global) {
         objd->setEnabled(r->type == sxpe::resources::kObjd);
         casp->setEnabled(r->type == sxpe::resources::kCasp);
         refs->setEnabled(r->type == sxpe::resources::kRefs);
+        rcol->setEnabled(r->type == sxpe::resources::kModl || r->type == sxpe::resources::kMlod ||
+                         r->type == sxpe::resources::kGeom || r->type == sxpe::resources::kMatd);
         bool xml_ok = r->type == sxpe::resources::kXml || r->type == sxpe::resources::kItun;
         if (!xml_ok) {
             // Match bus xml.get: enable when a short peek looks like XML.

@@ -101,8 +101,8 @@ Public RCOL chunk layout (MODL/MLOD/GEOM/MATD). s3pe does **not** 3D-preview the
 | Tag | Preview that is still useful | Difficulty | Priority |
 | --- | --- | --- | --- |
 | `GEOM` | Vertex/face counts via `rcol.summary` — **not** a 3D view | M (counts) / **L** (mesh GL) | **counts done**, P3 GL |
-| `MODL` `MLOD` | LOD/chunk counts via `rcol.summary` | M | **done** |
-| `MATD` | Shader name, texture TGI refs | M | P1 |
+| `MODL` `MLOD` | LOD/chunk counts + MATD texture refs via `rcol.summary`; chunk replace | M | **done** (#59) |
+| `MATD` | Shader name, texture TGI refs via `rcol.summary` | M | **done** (#59) |
 | `VBUF` `IBUF` `VRTF` `SKIN` | Buffer sizes / format | M | P2 |
 | `BONE` | Bone names / count (`00AE6C67` skcon) | M | P2 |
 | `VPXY` | Already listed; often a TGI list to MODL | S–M | P1 |

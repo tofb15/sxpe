@@ -416,6 +416,133 @@ int main() {
         CHECK(p->chunks[0].tag == "MLOD");
     }
 
+
+    {
+        // Synthetic RCOL: external _IMG + MATD chunk with DiffuseMap -> delayed external ref
+        std::vector<std::byte> matd;
+        matd.insert(matd.end(), {std::byte{'M'}, std::byte{'A'}, std::byte{'T'}, std::byte{'D'}});
+        wu32(matd, 0x103);
+        wu32(matd, 0);
+        wu32(matd, 0xB9105A6Du);  // Phong
+        wu32(matd, 0);
+        wu32(matd, 0);
+        wu32(matd, 0);
+        const auto mtnf_at = matd.size();
+        matd.insert(matd.end(), {std::byte{'M'}, std::byte{'T'}, std::byte{'N'}, std::byte{'F'}});
+        wu32(matd, 0);
+        wu32(matd, 4);
+        wu32(matd, 1);
+        wu32(matd, 0x6CC0FD85u);  // DiffuseMap
+        wu32(matd, 4);
+        wu32(matd, 4);
+        wu32(matd, 32);
+        while (matd.size() < mtnf_at + 32) {
+            wu8(matd, 0);
+        }
+        CHECK(matd.size() == mtnf_at + 32);
+        wu32(matd, 0x30000001u);
+        wu32(matd, 0);
+        wu32(matd, 0);
+        wu32(matd, 0);
+
+        std::vector<std::byte> chunk_a;
+        chunk_a.insert(chunk_a.end(), {std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'}});
+        for (int i = 0; i < 12; ++i) {
+            wu8(chunk_a, static_cast<std::uint8_t>(0xA0 + i));
+        }
+
+        std::vector<std::byte> bytes;
+        wu32(bytes, 3);
+        wu32(bytes, 1);
+        wu32(bytes, 0);
+        wu32(bytes, 1);
+        wu32(bytes, 2);
+        wu64(bytes, 0x1111ull);
+        wu32(bytes, sxpe::resources::kModl);
+        wu32(bytes, 0);
+        wu64(bytes, 0x2222ull);
+        wu32(bytes, sxpe::resources::kMatd);
+        wu32(bytes, 0);
+        wu64(bytes, 0xABCDEF0123456789ull);
+        wu32(bytes, sxpe::resources::kImg);
+        wu32(bytes, 0x12);
+        const auto loc_at = bytes.size();
+        wu32(bytes, 0);
+        wu32(bytes, static_cast<std::uint32_t>(chunk_a.size()));
+        wu32(bytes, 0);
+        wu32(bytes, static_cast<std::uint32_t>(matd.size()));
+        const auto pos0 = static_cast<std::uint32_t>(bytes.size());
+        bytes.insert(bytes.end(), chunk_a.begin(), chunk_a.end());
+        const auto pos1 = static_cast<std::uint32_t>(bytes.size());
+        bytes.insert(bytes.end(), matd.begin(), matd.end());
+        std::memcpy(bytes.data() + loc_at, &pos0, 4);
+        std::memcpy(bytes.data() + loc_at + 8, &pos1, 4);
+
+        auto p = sxpe::resources::parse_rcol_summary(bytes);
+        CHECK(p.has_value());
+        CHECK(p->internal_count == 2);
+        CHECK(p->external_count == 1);
+        CHECK(p->external_tgis.size() == 1);
+        CHECK(p->external_tgis[0].type == sxpe::resources::kImg);
+        CHECK(p->external_tgis[0].instance == 0xABCDEF0123456789ull);
+        CHECK(p->chunks.size() == 2);
+        CHECK(p->chunks[0].tag == "MODL");
+        CHECK(p->chunks[1].tag == "MATD");
+        CHECK(p->chunks[1].has_matd);
+        CHECK(p->chunks[1].shader_hash == 0xB9105A6Du);
+        CHECK(p->chunks[1].shader_name == "Phong");
+        CHECK(p->chunks[1].textures.size() == 1);
+        CHECK(p->chunks[1].textures[0].param_name == "DiffuseMap");
+        CHECK(p->chunks[1].textures[0].resolved);
+        CHECK(p->chunks[1].textures[0].tgi.type == sxpe::resources::kImg);
+        CHECK(p->chunks[1].textures[0].tgi.instance == 0xABCDEF0123456789ull);
+        CHECK(p->textures.size() == 1);
+
+        std::vector<std::byte> neu;
+        neu.insert(neu.end(), {std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'}});
+        wu32(neu, 0xDEADBEEFu);
+        auto replaced = sxpe::resources::replace_rcol_chunk(bytes, 0, neu);
+        CHECK(replaced.has_value());
+        auto p2 = sxpe::resources::parse_rcol_summary(*replaced);
+        CHECK(p2.has_value());
+        CHECK(p2->chunks.size() == 2);
+        CHECK(p2->chunks[0].size == neu.size());
+        CHECK(p2->chunks[1].tag == "MATD");
+        CHECK(p2->chunks[1].shader_name == "Phong");
+        CHECK(p2->textures.size() == 1);
+        CHECK(p2->textures[0].resolved);
+
+        auto extracted = sxpe::resources::extract_rcol_chunk(*replaced, 0);
+        CHECK(extracted.has_value());
+        CHECK(extracted->size() == neu.size());
+        CHECK(std::memcmp(extracted->data(), neu.data(), neu.size()) == 0);
+
+        auto old0 = sxpe::resources::extract_rcol_chunk(bytes, 0);
+        CHECK(old0.has_value());
+        auto back = sxpe::resources::replace_rcol_chunk(*replaced, 0, *old0);
+        CHECK(back.has_value());
+        auto p3 = sxpe::resources::parse_rcol_summary(*back);
+        CHECK(p3.has_value());
+        CHECK(p3->chunks[0].size == chunk_a.size());
+        CHECK(p3->textures[0].tgi.instance == 0xABCDEF0123456789ull);
+
+        auto bad = sxpe::resources::replace_rcol_chunk(bytes, 9, neu);
+        CHECK(!bad.has_value());
+    }
+
+    {
+        std::vector<std::byte> g;
+        g.insert(g.end(), {std::byte{'G'}, std::byte{'E'}, std::byte{'O'}, std::byte{'M'}});
+        wu32(g, 1);
+        std::vector<std::byte> neu{std::byte{'G'}, std::byte{'E'}, std::byte{'O'}, std::byte{'M'},
+                                   std::byte{0x11}};
+        auto out = sxpe::resources::replace_rcol_chunk(g, 0, neu);
+        CHECK(out.has_value());
+        CHECK(out->size() == 5);
+        auto bad = sxpe::resources::replace_rcol_chunk(g, 1, neu);
+        CHECK(!bad.has_value());
+    }
+
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";
         return 1;

@@ -84,6 +84,7 @@ private:
     void open_objd();
     void open_casp();
     void open_refs();
+    void open_rcol_replace();
     void export_s3sa();
     void import_s3sa();
     void view_s3sa();

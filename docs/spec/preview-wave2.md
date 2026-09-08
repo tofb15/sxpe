@@ -23,12 +23,13 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 - Reports anim/source/actor names when present and up to 64 joint-rule hashes (track hashes). No frame decode or playback.
 - `fnv64_clip` remains for `clip.exportAs` / hashing only.
 
-## MODL / MLOD / GEOM (`rcol.summary`)
+## MODL / MLOD / GEOM / MATD (`rcol.summary`)
 
-- RCOL header scan: internal chunk TGIs + absolute chunk ranges. Tags known chunk types (MODL/MLOD/GEOM/VBUF/IBUF/…).
+- RCOL header scan: internal chunk TGIs + absolute chunk ranges + external TGI table. Tags known chunk types (MODL/MLOD/GEOM/MATD/VBUF/IBUF/…).
 - MLOD: sum `VertexCount` / `PrimitiveCount` across groups when the subset size walk succeeds.
 - GEOM: bare `GEOM` fourcc or RCOL chunk — vertex count and face count (`NumFacePoints / 3`) when the format walk succeeds.
-- Caps oversized chunk tables (`4096`). Not a mesh viewer.
+- MATD: shader name (when hash is known) + texture TGIs from MTNF/MTRL type-code 4 params when parseable. See [rcol.md](rcol.md).
+- Caps oversized chunk tables (`4096`). Not a mesh viewer. Safe chunk replace: `rcol.replaceChunk` (backupPath + session undo).
 
 ## OBJK / VPXY
 
@@ -41,6 +42,7 @@ Sources: SimsWiki Catalog Resource / `0x319E4F1D` / `0x034AEECB` / `0x6B20C4F3` 
 | `objd.get` / `objd.set` | Common header card; typed editor |
 | `casp.get` / `casp.set` | Clothing / age-gender / TGIs; typed editor |
 | `clip.info` | Duration + tracks |
-| `rcol.summary` | Chunk / LOD / v-f counts |
+| `rcol.summary` | Chunk / LOD / v-f counts + MATD shader/textures |
+| `rcol.replaceChunk` | Replace one chunk by index; backup + undo |
 
 See also [objd.md](objd.md) and [casp.md](casp.md) for field layout assumptions.
