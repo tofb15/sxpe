@@ -336,23 +336,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     act(help, tr("Common &tasks…"), {}, [this] { show_common_tasks_dialog(this); });
     act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this, bus_); });
-    act(help, tr("&Feedback…"), {}, [] {
-        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/tofb15/sxpe/issues")));
-    });
+    act(help, tr("&Feedback…"), {}, [this] { show_feedback_dialog(this); });
     help->addSeparator();
-    act(help, tr("&About SXPE"), {}, [this] {
-        QMessageBox::about(
-            this, tr("About SXPE"),
-            tr("SXPE %1\n"
-               "SXPE is an unofficial Sims 3 package editor.\n"
-               "Not affiliated with Electronic Arts. Not s3pe.\n"
-               "License: GPL-3.0-or-later.\n"
-               "The Sims 3 is a trademark of Electronic Arts.\n"
-               "For updates, see https://github.com/tofb15/sxpe")
-                .arg(QCoreApplication::applicationVersion()));
-    });
-    act(help, tr("&Warranty"), {}, [this] { show_warranty(); });
-    act(help, tr("&Licence"), {}, [this] { show_licence(); });
+    act(help, tr("&About SXPE"), {}, [this] { show_about_dialog(this); });
+    act(help, tr("&Warranty"), {}, [this] { show_warranty_dialog(this); });
+    act(help, tr("&Licence"), {}, [this] { show_licence_dialog(this); });
 
     status_path_ = new QLabel(tr("No package"));
     status_layout_ = new QLabel;
@@ -1954,44 +1942,6 @@ void MainWindow::show_resource_context(const QPoint& global) {
     m.addAction(tr("Open in te&xt editor"), this, [this] { open_external(false); });
     m.addAction(tr("&Delete"), this, [this] { delete_resource(); })->setEnabled(!locked);
     m.exec(global);
-}
-
-void MainWindow::show_warranty() {
-    QMessageBox::information(
-        this, tr("Warranty"),
-        tr("There is no warranty for this program, to the extent permitted by applicable law. "
-           "Except when otherwise stated in writing the copyright holders and/or other parties "
-           "provide the program “as is” without warranty of any kind, either expressed or implied, "
-           "including, but not limited to, the implied warranties of merchantability and fitness "
-           "for a particular purpose. See GNU GPL version 3 for the full text."));
-}
-
-void MainWindow::show_licence() {
-    QString text;
-    const QString dir = QCoreApplication::applicationDirPath();
-    for (const auto& p : {dir + "/LICENSE", dir + "/../LICENSE", dir + "/../../LICENSE"}) {
-        QFile f(p);
-        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            text = QString::fromUtf8(f.readAll());
-            break;
-        }
-    }
-    if (text.isEmpty()) {
-        text = tr("SXPE is licensed under GPL-3.0-or-later.\n"
-                  "The full licence is the LICENSE file in the SXPE source tree.");
-    }
-    QDialog dlg(this);
-    dlg.setWindowTitle(tr("Licence"));
-    auto* lay = new QVBoxLayout(&dlg);
-    auto* view = new QPlainTextEdit;
-    view->setReadOnly(true);
-    view->setPlainText(text);
-    lay->addWidget(view);
-    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
-    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    lay->addWidget(box);
-    dlg.resize(640, 480);
-    dlg.exec();
 }
 
 void MainWindow::open_external(bool hex) {

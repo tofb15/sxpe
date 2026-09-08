@@ -11,7 +11,7 @@ Do **not** treat these as something a modder runs. Preferred live path is `.gith
 
 **Residual blocker:** OAuth tokens without `workflow` scope cannot push `.github/workflows/*`. Live `ci.yml` stays `linux-cli` + `windows-gui` until a scoped token (or UI paste) promotes `linux-gui.yml`. Live `release.yml` already publishes the four-artifact matrix. See [building.md](../building.md#ci).
 
-Release notes file is `docs/releases/<tag>.md` (e.g. `v0.8.0.md` for tag `v0.8.0`); the release workflow resolves `${GITHUB_REF_NAME}` / the `workflow_dispatch` `tag` input and uses that file when present, otherwise generates notes. Softprops does **not** force `prerelease:` — leave Beta marking to `gh release edit` after upload.
+Pick `X.Y.Z` with [versioning.md](../versioning.md) before tagging. Release notes file is `docs/releases/<tag>.md` (e.g. `v0.8.0.md` for tag `v0.8.0`); the release workflow resolves `${GITHUB_REF_NAME}` / the `workflow_dispatch` `tag` input and uses that file when present, otherwise generates notes. Softprops does **not** force `prerelease:` — leave Beta marking to `gh release edit` after upload.
 
 **Release matrix (four artifacts):**
 

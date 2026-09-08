@@ -8,7 +8,7 @@ This is a **public Beta** — not 1.0, and not a full s3pe replacement. Things m
 
 [![CI](https://github.com/tofb15/sxpe/actions/workflows/ci.yml/badge.svg)](https://github.com/tofb15/sxpe/actions/workflows/ci.yml)
 
-Current release: **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**.
+Current release: **[v0.7.1](https://github.com/tofb15/sxpe/releases/tag/v0.7.1)**.
 
 ---
 
@@ -71,10 +71,10 @@ You do **not** need to compile if a download matches your computer.
 
 | You want | Do this |
 | --- | --- |
-| **Windows app** | Download `sxpe-0.7.0-windows-x64.zip` from **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip the **whole folder** somewhere you can write (leave the extra files next to the program). Double-click **`SXPE.bat`**. |
-| **Windows command-line tools** | Download `sxpe-0.7.0-windows-x64-cli.zip` from the same Release (CLI + MCP, no Qt). Unzip and run `sxpe-cli.bat` / `sxpe-mcp.bat`. |
-| **Linux command-line tools** | Download `sxpe-0.7.0-linux-x64-cli.tar.gz` from the same Release, extract, run `./sxpe`. |
-| **Linux windowed app** | Download `sxpe-0.7.0-linux-x64.tar.gz` from the same Release (includes `sxpe_gui`). Qt is **not** inside the tarball — install Qt 6.5+ on that machine, then run `./SXPE.sh`. Details: [building.md](docs/building.md). |
+| **Windows app** | Download `sxpe-0.7.1-windows-x64.zip` from **[v0.7.1](https://github.com/tofb15/sxpe/releases/tag/v0.7.1)**. Unzip the **whole folder** somewhere you can write (leave the extra files next to the program). Double-click **`SXPE.bat`**. |
+| **Windows command-line tools** | Download `sxpe-0.7.1-windows-x64-cli.zip` from the same Release (CLI + MCP, no Qt). Unzip and run `sxpe-cli.bat` / `sxpe-mcp.bat`. |
+| **Linux command-line tools** | Download `sxpe-0.7.1-linux-x64-cli.tar.gz` from the same Release, extract, run `./sxpe`. |
+| **Linux windowed app** | Download `sxpe-0.7.1-linux-x64.tar.gz` from the same Release (includes `sxpe_gui`). Qt is **not** inside the tarball — install Qt 6.5+ on that machine, then run `./SXPE.sh`. Details: [building.md](docs/building.md). |
 
 Drop one `.package` on the window to open it. Drop several to merge them (you can un-merge later only if SXPE did the merge).
 
@@ -132,7 +132,7 @@ GUI needs Qt 6.5+ Widgets. Without Qt, CLI and MCP still build. Wayland, packagi
 
 ## Version
 
-Project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` and `vcpkg.json`). Notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md). Template for the next tag: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
+Project version is **0.7.1** (`CMakeLists.txt` `PROJECT_VERSION` and `vcpkg.json`). Notes: [docs/releases/v0.7.1.md](docs/releases/v0.7.1.md). When to bump: [docs/versioning.md](docs/versioning.md). Template for the next tag: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
 
 ---
 

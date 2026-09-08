@@ -11,6 +11,7 @@ Start at the **[repository README](../README.md)** for what SXPE is, why it exis
 | Doing a named mod task | [workflows.md](workflows.md) |
 | Writing scripts or agent tools | [cli-mcp.md](cli-mcp.md), then [spec/catalog.md](spec/catalog.md) |
 | Compiling or packaging | [building.md](building.md) |
+| Cutting a release / bumping X.Y.Z | [versioning.md](versioning.md), then [building.md](building.md#releases) |
 | Implementing a codec | [spec/](spec/README.md) |
 | Changing architecture | [DESIGN.md](../DESIGN.md) |
 | Sending a patch | [CONTRIBUTING.md](../CONTRIBUTING.md) |
@@ -25,6 +26,7 @@ Start at the **[repository README](../README.md)** for what SXPE is, why it exis
 | Bus envelopes, CLI flags, MCP names | [cli-mcp.md](cli-mcp.md) |
 | Full command table | [spec/catalog.md](spec/catalog.md) |
 | Configure / build / test / zip / CI | [building.md](building.md) |
+| When to bump MAJOR.MINOR.PATCH | [versioning.md](versioning.md) |
 | Neighborhood layout lock | [neighborhood-layout.md](neighborhood-layout.md) |
 | Optional FullBuild/CC round-trip | [testing.md](testing.md) |
 | Release notes for a tag | [releases/](releases/TEMPLATE.md) |
