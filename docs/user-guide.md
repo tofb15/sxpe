@@ -68,7 +68,7 @@ Consent: SXPE never auto-installs or silently fetches zip assets. You choose whe
 
 ## Merge and un-merge
 
-1. **Tools → Merge packages…** (or drop several files → **Merge into new package**) combines resources into a **new untitled** package. A **progress dialog** shows per-package status. SXPE writes an **SXMM** manifest and **strips** known leftover Sims3Pack manifests (`0x73E93EEB` instance 0) by default.
+1. **Tools → Merge packages…** (or drop several files → **Merge into new package**) combines resources into a **new untitled** package. A **progress dialog** shows per-package status with a **Cancel** button that aborts and rolls back (no corrupt session). SXPE writes an **SXMM** manifest and **strips** known leftover Sims3Pack manifests (`0x73E93EEB` instance 0) by default.
 2. **Resource → Import → From package(s) into this package…** copies into the **open** tab (different intent). **As DBC into this package…** is the historical s3pe DBC-equivalent path — same bus merge/import, not a different file format.
 3. **Tools → Un-merge package…** recreates source packages **only** when an SXMM manifest is present and valid. Merges from other tools are not reversible this way.
 4. **Tools → Validate** summary highlights **conflict hotspots** (leftover manifests / duplicate TGIs).

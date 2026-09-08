@@ -72,7 +72,7 @@ Still open (follow-ups, not blocking this harness):
 
 ## Large-merge stress (synthetic)
 
-`sxpe_commands_test` builds many tiny DBPF packages under `%TEMP%/sxpe-m3` (or `/tmp`) and merges them via `resource.importPackage`. Cases cover: clean multi-package merge (no leftover `*.sxpe-tmp-*`), mid-merge failure leaving no orphan multi-GB temps, `maxPackages` / `maxTotalBytes` refusals, progress events, and explicit `checkpointBetweenPackages`. No EA/CC bytes. Issue #64: synthetic packages plant leftover manifest TGI `0x73E93EEB` instance 0 and duplicate TGIs — strip/warn/keep and force/skip/fail policies are asserted; `package.validate` lists conflict hotspots.
+`sxpe_commands_test` builds many tiny DBPF packages under `%TEMP%/sxpe-m3` (or `/tmp`) and merges them via `resource.importPackage`. Cases cover: clean multi-package merge (no leftover `*.sxpe-tmp-*`), mid-merge failure leaving no orphan multi-GB temps, `maxPackages` / `maxTotalBytes` refusals, progress events, explicit `checkpointBetweenPackages`, and cancel/rollback (`request_cancel` / `cancel_check`) for issue #66. No EA/CC bytes. Issue #64: synthetic packages plant leftover manifest TGI `0x73E93EEB` instance 0 and duplicate TGIs — strip/warn/keep and force/skip/fail policies are asserted; `package.validate` lists conflict hotspots.
 
 
 ## Huge-package open performance (issue #65)

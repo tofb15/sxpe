@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <csignal>
 #include <cctype>
 #include <iomanip>
 #include <iostream>
@@ -30,6 +32,14 @@ namespace {
 
 using nlohmann::json;
 using sxpe::commands::Bus;
+
+std::atomic<Bus*> g_bus_for_signal{nullptr};
+
+void on_sigint(int) {
+    if (auto* b = g_bus_for_signal.load(std::memory_order_relaxed)) {
+        b->request_cancel();
+    }
+}
 
 bool stdout_tty() {
 #ifdef _WIN32
@@ -175,7 +185,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "How it works:\n";
     std::cout << "  Commands are noun + verb (resource list, package info).\n";
     std::cout << "  --package PATH is one-shot: open, run, save if it writes, close.\n";
-    std::cout << "  Every result is JSON {ok, data|error}. --format text|table is a human view.\n  --progress writes merge/import progress JSON lines to stderr (bus progress).\n";
+    std::cout << "  Every result is JSON {ok, data|error}. --format text|table is a human view.\n  --progress writes merge/import progress JSON lines to stderr (bus progress).\n  Ctrl+C / SIGINT cooperatively cancels an in-flight merge/import/scan and rolls back.\n";
     std::cout << "  --type/--group/--instance (hex 0x… ok) is an alternative to --id JSON.\n";
     std::cout << "  Destructive commands need --force; --dry-run reports without writing.\n\n";
     std::cout << "One-shot (no session):\n";
@@ -679,7 +689,7 @@ int main(int argc, char** argv) {
                  "Allow writable open above the large-package read-only threshold");
     app.add_flag("--include-payload", include_payload);
     app.add_flag("--progress", want_progress,
-                 "Emit merge/import progress JSON lines on stderr");
+                 "Emit merge/import/scan progress JSON lines on stderr; SIGINT cancels");
     app.add_option("--limit", limit);
     std::string cursor;
     app.add_option("--cursor", cursor);
@@ -695,6 +705,8 @@ int main(int argc, char** argv) {
     }
 
     Bus bus;
+    g_bus_for_signal.store(&bus, std::memory_order_relaxed);
+    std::signal(SIGINT, on_sigint);
     if (want_progress) {
         bus.set_progress_handler([](const json& ev) {
             std::cerr << ev.dump() << '\n';

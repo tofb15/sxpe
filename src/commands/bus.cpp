@@ -29,6 +29,7 @@
 #include "sxpe/resources/refs.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstring>
@@ -967,7 +968,8 @@ std::vector<Tool> make_catalog() {
          "Caps (defaults in core/caps): maxPackages, maxTotalBytes, maxResources — refuse with cap_exceeded "
          "before OOM; split the job. reportProgress (default true) emits bus progress events and returns "
          "progress[] in data. Optional checkpointPath + checkpointBetweenPackages saves after each source "
-         "(explicit; not autosave) and remaps so RAM stays bounded.",
+         "(explicit; not autosave) and remaps so RAM stays bounded. Cooperative cancel via bus "
+         "request_cancel / cancel_check rolls the session package back to its pre-import state.",
          obj_schema({{"sessionId", sess_prop()},
                      {"path", {{"type", "string"}}},
                      {"paths", {{"type", "array"}, {"items", {{"type", "string"}}}}},
@@ -1395,11 +1397,84 @@ struct Bus::Impl {
     std::uint32_t next_id{1};
     std::map<std::string, json> idem;
     ProgressHandler progress;
+    CancelCheck cancel_check;
+    std::atomic<bool> cancel_flag{false};
 
     void emit_progress(json ev) {
         if (progress) {
             progress(ev);
         }
+    }
+
+    [[nodiscard]] bool cancelled() const {
+        if (cancel_flag.load(std::memory_order_relaxed)) {
+            return true;
+        }
+        return cancel_check && cancel_check();
+    }
+
+    void clear_cancel_state() {
+        cancel_flag.store(false, std::memory_order_relaxed);
+    }
+
+    /// Snapshot a pre-existing resource before in-place merge mutation (TGI+ordinal keyed).
+    struct MutSnap {
+        Tgi tgi{};
+        std::uint32_t ordinal{0};
+        std::uint16_t compressed{0};
+        bool deleted{false};
+        std::vector<std::byte> payload;
+    };
+
+    static VoidResult capture_mut(Session& s, std::uint32_t i, std::vector<MutSnap>& snaps,
+                                  std::unordered_set<std::uint64_t>& seen_keys) {
+        const auto& e = s.pkg.entry(i);
+        // Pack type|group|ordinal low bits + instance into a stable key for de-dupe.
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(e.tgi.type) << 32) ^
+            (static_cast<std::uint64_t>(e.tgi.group) << 16) ^ e.ordinal ^
+            (e.tgi.instance * 0x9e3779b97f4a7c15ull);
+        if (!seen_keys.insert(key).second) {
+            return ok();
+        }
+        auto body = s.pkg.uncompressed(i);
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        MutSnap snap;
+        snap.tgi = e.tgi;
+        snap.ordinal = e.ordinal;
+        snap.compressed = e.compressed;
+        snap.deleted = s.pkg.deleted(i);
+        snap.payload = std::move(*body);
+        snaps.push_back(std::move(snap));
+        return ok();
+    }
+
+    static VoidResult rollback_import(Session& s, std::uint32_t baseline_count, bool baseline_dirty,
+                                      std::vector<MutSnap>& snaps) {
+        while (s.pkg.count() > baseline_count) {
+            if (auto r = s.pkg.remove(s.pkg.count() - 1); !r) {
+                return r;
+            }
+        }
+        for (auto& snap : snaps) {
+            auto idx = s.pkg.find(snap.tgi, snap.ordinal);
+            if (!idx) {
+                return std::unexpected(err(ErrorCode::corrupt,
+                                           "cancel rollback: mutated resource missing"));
+            }
+            if (auto r = s.pkg.set_uncompressed(*idx, snap.payload, snap.compressed == 0xFFFF);
+                !r) {
+                return r;
+            }
+            if (auto r = s.pkg.set_deleted(*idx, snap.deleted); !r) {
+                return r;
+            }
+        }
+        s.pkg.set_dirty(baseline_dirty);
+        s.invalidate_names();
+        return ok();
     }
 
     Session* find(const std::string& id) {
@@ -1580,6 +1655,29 @@ void Bus::set_progress_handler(ProgressHandler handler) {
 void Bus::clear_progress_handler() {
     std::lock_guard<std::recursive_mutex> lock(impl_->mu);
     impl_->progress = nullptr;
+}
+
+void Bus::set_cancel_check(CancelCheck check) {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->cancel_check = std::move(check);
+}
+
+void Bus::clear_cancel_check() {
+    std::lock_guard<std::recursive_mutex> lock(impl_->mu);
+    impl_->cancel_check = nullptr;
+}
+
+void Bus::request_cancel() {
+    // Async-signal-safe: only touch the atomic.
+    impl_->cancel_flag.store(true, std::memory_order_relaxed);
+}
+
+void Bus::clear_cancel() {
+    impl_->clear_cancel_state();
+}
+
+bool Bus::cancel_requested() const {
+    return impl_->cancelled();
 }
 
 std::vector<Tool> Bus::tools() const { return impl_->catalog; }
@@ -2006,6 +2104,9 @@ json Bus::Impl::exec(std::string_view id, json args) {
         std::uint32_t ok_count = 0;
         bool capped = false;
         std::string cap_reason;
+        bool scan_cancelled = false;
+        const bool report_progress = args.value("reportProgress", true);
+        clear_cancel_state();
 
         const auto opts = std::filesystem::directory_options::skip_permission_denied;
         std::filesystem::recursive_directory_iterator it(*root, opts, ec);
@@ -2013,7 +2114,17 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (ec) {
             return envelope_err(err(ErrorCode::io, "cannot iterate directory: " + ec.message()), true);
         }
+        if (report_progress) {
+            emit_progress({{"command", cmd},
+                           {"phase", "start"},
+                           {"filesScanned", 0},
+                           {"path", root->string()}});
+        }
         for (; it != end; it.increment(ec)) {
+            if (cancelled()) {
+                scan_cancelled = true;
+                break;
+            }
             if (ec) {
                 ec.clear();
                 continue;
@@ -2164,6 +2275,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                   {"okCount", ok_count},
                   {"issueCount", issues_arr.size()},
                   {"capped", capped},
+                  {"cancelled", scan_cancelled},
                   {"files", files_arr},
                   {"issues", issues_arr},
                   {"duplicates", duplicates},
@@ -2178,7 +2290,19 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (capped) {
             data["capReason"] = cap_reason;
         }
+        if (report_progress) {
+            emit_progress({{"command", cmd},
+                           {"phase", scan_cancelled ? "cancelled" : "done"},
+                           {"filesScanned", files_scanned},
+                           {"cancelled", scan_cancelled}});
+        }
+        clear_cancel_state();
         data["summary"] = folder_scan_summary_json(data);
+        if (scan_cancelled) {
+            auto env = envelope_err(err(ErrorCode::refused, "cancelled"), false, "none");
+            env["data"] = std::move(data);
+            return env;
+        }
         return envelope_ok(std::move(data));
     }
     if (cmd == "package.unmerge") {
@@ -3114,6 +3238,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json errors = json::array();
         json sources = json::array();
         json progress_log = json::array();
+        const auto baseline_count = s.pkg.count();
+        const bool baseline_dirty = s.pkg.dirty();
+        std::vector<MutSnap> mut_snaps;
+        std::unordered_set<std::uint64_t> mut_seen;
+        clear_cancel_state();
         const bool write_man = args.value("writeMergeManifest", false);
         std::string dir_policy;
         if (args.contains("dirPolicy") && args["dirPolicy"].is_string()) {
@@ -3161,17 +3290,47 @@ json Bus::Impl::exec(std::string_view id, json args) {
             emit_progress(ev);
         };
         const auto packages_total = static_cast<std::uint32_t>(paths.size());
+        std::uint32_t imported = 0;
+        std::uint32_t would = 0;
+        int src_n = 0;
+        std::uint32_t packages_done = 0;
+        auto abort_cancelled = [&](const char* where) -> json {
+            push_progress({{"command", cmd},
+                           {"phase", "cancelled"},
+                           {"where", where},
+                           {"packagesDone", packages_done},
+                           {"packagesTotal", packages_total},
+                           {"imported", imported}});
+            auto rb = rollback_import(s, baseline_count, baseline_dirty, mut_snaps);
+            clear_cancel_state();
+            if (!rb) {
+                return envelope_err(
+                    err(ErrorCode::corrupt,
+                        std::string("cancelled but rollback failed: ") + rb.error().message),
+                    false, "unknown");
+            }
+            auto env = envelope_err(err(ErrorCode::refused, "cancelled"), false, "none");
+            env["data"] = {{"cancelled", true},
+                           {"rolledBack", true},
+                           {"packagesDone", packages_done},
+                           {"packagesTotal", packages_total},
+                           {"baselineCount", baseline_count},
+                           {"indexCount", s.pkg.count()}};
+            if (report_progress) {
+                env["data"]["progress"] = std::move(progress_log);
+            }
+            return env;
+        };
         push_progress({{"command", cmd},
                        {"phase", "start"},
                        {"packagesDone", 0},
                        {"packagesTotal", packages_total},
                        {"imported", 0},
                        {"totalInputBytes", total_bytes}});
-        std::uint32_t imported = 0;
-        std::uint32_t would = 0;
-        int src_n = 0;
-        std::uint32_t packages_done = 0;
         for (const auto& rawp : paths) {
+            if (cancelled()) {
+                return abort_cancelled("before_package");
+            }
             auto path = check_path(rawp);
             if (!path) {
                 errors.push_back({{"path", rawp}, {"message", path.error().message}});
@@ -3260,8 +3419,17 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     }
                     // keep: copy silently
                 }
+                if (cancelled()) {
+                    return abort_cancelled("mid_package");
+                }
                 auto ex = s.pkg.find(t, src->entry(i).ordinal);
                 if (ex && t.type == kNmap) {
+                    if (auto cap = capture_mut(s, *ex, mut_snaps, mut_seen); !cap) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", cap.error().message}});
+                        file_ok = false;
+                        break;
+                    }
                     auto wr = merge_nmap_from(s.pkg, *ex, *src, i);
                     if (!wr) {
                         errors.push_back(
@@ -3296,6 +3464,12 @@ json Bus::Impl::exec(std::string_view id, json args) {
                     // force
                     dup["action"] = "force";
                     duplicate_warnings.push_back(dup);
+                    if (auto cap = capture_mut(s, *ex, mut_snaps, mut_seen); !cap) {
+                        errors.push_back(
+                            {{"path", path->string()}, {"message", cap.error().message}});
+                        file_ok = false;
+                        break;
+                    }
                     auto wr = replace_resource_through(s.pkg, *ex, *src, i);
                     if (!wr) {
                         errors.push_back(
@@ -3374,6 +3548,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
         }
         if (dry(args)) {
+            clear_cancel_state();
             json out{{"dryRun", true},
                      {"packages", packages.size()},
                      {"count", would},
@@ -3426,12 +3601,16 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 return envelope_err(pin.error());
             }
         }
+        if (cancelled()) {
+            return abort_cancelled("before_finalize");
+        }
         push_progress({{"command", cmd},
                        {"phase", "done"},
                        {"packagesDone", packages_done},
                        {"packagesTotal", packages_total},
                        {"imported", imported},
                        {"failed", errors.size()}});
+        clear_cancel_state();
         json out{{"imported", imported},
                  {"packages", packages.size()},
                  {"failed", errors.size()},

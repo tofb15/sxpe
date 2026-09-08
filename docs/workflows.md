@@ -35,7 +35,7 @@ Community merges of ~150–250 MiB+ / dozens of packages often OOMed or left g
 
 Clear `cap_exceeded` errors say **split the job** — prefer batches of **~20–40 packages** or **under ~100–150 MiB** of inputs when machines are tight (same advice as old s3pe guides, with hard caps instead of mystery crashes).
 
-**Explicit checkpoint (optional):** pass `checkpointPath` + `checkpointBetweenPackages: true` to save after each successful source. This is **not** autosave — you choose the path. Checkpoint flushes the session to disk (unique `*.sxpe-tmp-*` temps, deleted on failure) so peak RAM stays closer to one package’s overrides. MCP clients can send `_meta.progressToken` to receive `notifications/progress`.
+**Explicit checkpoint (optional):** pass `checkpointPath` + `checkpointBetweenPackages: true` to save after each successful source. This is **not** autosave — you choose the path. Checkpoint flushes the session to disk (unique `*.sxpe-tmp-*` temps, deleted on failure) so peak RAM stays closer to one package’s overrides. MCP clients can send `_meta.progressToken` to receive `notifications/progress`. Cancel: GUI **Cancel** aborts and rolls back; CLI **Ctrl+C** sets cooperative cancel (same bus `request_cancel`). Mid-flight MCP `notifications/cancelled` is not wired yet (sync tools/call).
 
 Synthetic stress coverage: many tiny packages under a temp dir (no EA files) — see `tests/commands_test.cpp` large-merge cases.
 
