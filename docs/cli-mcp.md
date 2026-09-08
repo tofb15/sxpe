@@ -81,16 +81,29 @@ Stdout is **data**. Do not assume a TTY. List endpoints paginate with `limit` / 
 
 Full table and flags: [spec/catalog.md](spec/catalog.md). Codec bytes: [spec/](spec/README.md).
 
-## Large merge / import
+## Merge assistant equivalent
+
+GUI **Tools → Merge packages…** is a thin wizard over these bus steps (same for MCP `package_new` / `resource_importPackage` / `package_validate` / `package_saveAs`):
+
+1. `package.new` → `sessionId`
+2. `resource.importPackage` with `paths`, `force=true`, `writeMergeManifest=true`, `leftoverManifestPolicy=strip`, `duplicateTgiPolicy=force`, `reportProgress=true` (CLI: `--progress`)
+3. Optional `package.validate` on that session (GUI checkbox **Validate after merge**)
+4. `package.saveAs` when the human/agent wants a file on disk
 
 ```text
+sxpe package new
 sxpe resource importPackage --session s-1 --progress \
-  --paths '["a.package","b.package"]' --force --write-merge-manifest true
+  --paths '["a.package","b.package"]' --force --write-merge-manifest true \
+  --leftover-manifest-policy strip --duplicate-tgi-policy force
+sxpe package validate --session s-1
+sxpe package saveAs --session s-1 --path merged.package --force
 ```
+
+## Large merge / import
 
 Caps: `--max-packages`, `--max-total-bytes`, `--max-resources` (camelCase on the bus). Optional explicit checkpoint: `--checkpoint-path OUT.package --checkpoint-between-packages true`.
 
-Hygiene (#64): `leftoverManifestPolicy` defaults to `strip` (allowlisted Sims3Pack leftover `0x73E93EEB` instance 0). `duplicateTgiPolicy` is `force` | `skip` | `fail` (defaults from `--force`). Response lists `strippedLeftovers[]` and `duplicates[]`. `resource.importDbc` is the DBC-equivalent of the same import path. `package.validate` returns `conflictHotspots[]` in the summary.
+Hygiene (#64): `leftoverManifestPolicy` defaults to `strip` (allowlisted Sims3Pack leftover `0x73E93EEB` instance 0). `duplicateTgiPolicy` is `force` | `skip` | `fail` (defaults from `--force`). Response lists `strippedLeftovers[]` and `duplicates[]`. `resource.importDbc` is the DBC-equivalent of the same import path. `package.validate` returns `conflictHotspots[]` in the summary. Cancel: GUI **Cancel** / CLI **Ctrl+C** (same as the assistant progress dialog).
 
 ## Examples
 

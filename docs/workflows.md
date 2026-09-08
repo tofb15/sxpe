@@ -4,24 +4,35 @@ Task-oriented recipes. Pair with the [user guide](user-guide.md) or [CLI/MCP](cl
 
 ## Merge custom content into one package
 
-1. Collect the `.package` files you want to combine (work on **copies**).
-2. GUI — pick **one** clear path:
-   - **Tools → Merge packages…** (or drop several files → **Merge into new package**) — new untitled package + **SXMM** manifest. Prefer this for “combine CC into one file”.
-   - **Resource → Import → From package(s) into this package…** — copy into the **open** tab (no SXMM unless you pass `writeMergeManifest` via CLI/MCP).
-   - **Resource → Import → As DBC into this package…** — **DBC-equivalent** of the same bus command (`resource.importDbc`); same copy-through / caps / leftover strip / duplicate policy as `importPackage`. Historical s3pe name; not a different format.
-3. Save the merged result. Drop-merge / Tools → Merge write **SXMM** so un-merge can reverse SXPE merges only.
+1. Collect the `.package` files you want to combine (work on **copies**). Prefer one flat folder.
+2. GUI — **Merge assistant** (recommended for non-experts):
+   - **Tools → Merge packages…**
+   - **Choose folder…** (optional: include subfolders) **or** **Choose files…**
+   - Preview **package count** and **total size**
+   - Tick **Validate after merge** if you want a conflict-hotspot check immediately
+   - **Merge** → new untitled package + **SXMM** manifest → **File → Save As…**
+3. Other GUI paths (same bus under the hood):
+   - Drop several files → **Merge into new package** — same SXMM merge, no folder preview
+   - **Resource → Import → From package(s) into this package…** — copy into the **open** tab (no SXMM unless you pass `writeMergeManifest` via CLI/MCP)
+   - **Resource → Import → As DBC into this package…** — **DBC-equivalent** (`resource.importDbc`); same caps / leftover strip / duplicate policy. Historical s3pe name; not a different format
 4. Tools → **Validate** — summary lists **conflict hotspots** (leftover Sims3Pack manifests `0x73E93EEB:0`, duplicate TGIs).
 5. To split again later: Tools → **Un-merge package…** (SXPE merges only).
 
-CLI/agents:
+Help → **Common tasks** links here from the GUI. First-run tip points at the same flow.
+
+### Agent / CLI path (same steps as the assistant)
 
 ```text
+sxpe package new
+# note sessionId from the envelope, e.g. s-1
 sxpe resource importPackage --session s-1 --progress \
   --paths '["a.package","b.package"]' --force --write-merge-manifest true \
   --leftover-manifest-policy strip --duplicate-tgi-policy force
+sxpe package validate --session s-1
+sxpe package saveAs --session s-1 --path merged.package --force
 ```
 
-Un-merge with `package.unmerge` when an SXMM is present. See [merge-manifest.md](spec/merge-manifest.md) for leftover allowlist + duplicate policy.
+Un-merge with `package.unmerge` when an SXMM is present. See [merge-manifest.md](spec/merge-manifest.md) for leftover allowlist + duplicate policy. Flag reference: [cli-mcp.md](cli-mcp.md#merge-assistant-equivalent).
 
 ### Large CC batches (s3pe OOM pain)
 

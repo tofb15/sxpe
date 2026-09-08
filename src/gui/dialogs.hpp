@@ -3,6 +3,7 @@
 #include "sxpe/commands/bus.hpp"
 #include <QDialog>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 #include <functional>
@@ -42,6 +43,16 @@ bool show_replace_snap_dialog(QWidget* parent, sxpe::commands::Bus& bus, const Q
                               std::uint32_t ordinal, std::uint32_t max_bytes);
 void show_bookmarks_dialog(QWidget* parent, QStringList* bookmarks);
 void show_contents_dialog(QWidget* parent);
+/// Help → Common tasks: plain-language recipes + link to docs/workflows.md.
+void show_common_tasks_dialog(QWidget* parent);
+/// Tools → Merge packages…: folder/files → preview count/size → merge (bus) → optional validate.
+/// Calls on_merge(paths, validate_after) when the user confirms; does not run the bus itself.
+void show_merge_assistant_dialog(
+    QWidget* parent,
+    const std::function<void(const QStringList& paths, bool validate_after)>& on_merge);
+/// One-shot first-run tip (skip when smoke_mode). Sets onboarding/seenFirstRunTip.
+void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
+                                  const std::function<void()>& open_merge_assistant = {});
 /// Query GitHub Releases API; never downloads. Graceful offline / no-release.
 void show_check_for_update_dialog(QWidget* parent);
 void show_validate_dialog(QWidget* parent, const nlohmann::json& envelope);

@@ -11,6 +11,8 @@
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFileInfo>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
 #include <QFontDatabase>
@@ -982,7 +984,9 @@ void show_contents_dialog(QWidget* parent) {
         "reorder, compact, create NMAP. Error and Validate text name "
         "“neighborhood / world layout lock”.</p>"
         "<h3>Tools</h3>"
-        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), inspect Sims3Pack, <b>Merge packages…</b>, un-merge package, byte search, validate (conflict hotspots), compact / save.</p>"
+        "<p>FNV-1 / CLIP hash, compare packages, find references, scan folder (Downloads hygiene), inspect Sims3Pack, "
+        "<b>Merge packages…</b> (Merge assistant: folder → preview → SXMM merge → optional validate), "
+        "un-merge package, byte search, validate (conflict hotspots), compact / save.</p>"
         "<ul>"
         "<li><b>Search…</b> — Ctrl+F</li>"
         "</ul>"
@@ -990,7 +994,8 @@ void show_contents_dialog(QWidget* parent) {
         "<p>Preview toggles (DDS / text / hex), DBC import checkpoint, bookmarks, "
         "built-in handlers, external programs (hex/text/S3SA viewer), save settings.</p>"
         "<h3>Help</h3>"
-        "<p>Contents (this window), Check for update (GitHub Releases; never auto-downloads), About, Warranty, Licence.</p>"
+        "<p>Contents (this window), <b>Common tasks</b> (links to workflows.md), "
+        "Check for update (GitHub Releases; never auto-downloads), About, Warranty, Licence.</p>"
         "<h3>Context menus</h3>"
         "<p>Right-click the resource list for Resource actions. Right-click a package tab "
         "to save, close (this / others / left / right), or bookmark. Right-click column "
@@ -2015,5 +2020,343 @@ void show_check_for_update_dialog(QWidget* parent) {
     dlg.exec();
 }
 
+
+
+namespace {
+
+QString find_repo_doc(const QString& relative) {
+    const QString dir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        dir + QStringLiteral("/../") + relative,
+        dir + QStringLiteral("/../../") + relative,
+        dir + QStringLiteral("/../../../") + relative,
+        QDir::current().absoluteFilePath(relative),
+    };
+    for (const auto& p : candidates) {
+        if (QFileInfo::exists(p)) {
+            return QFileInfo(p).absoluteFilePath();
+        }
+    }
+    return {};
+}
+
+QString format_bytes(qint64 bytes) {
+    if (bytes < 1024) {
+        return QObject::tr("%1 B").arg(bytes);
+    }
+    const double kib = bytes / 1024.0;
+    if (kib < 1024.0) {
+        return QObject::tr("%1 KiB").arg(kib, 0, 'f', 1);
+    }
+    const double mib = kib / 1024.0;
+    if (mib < 1024.0) {
+        return QObject::tr("%1 MiB").arg(mib, 0, 'f', 1);
+    }
+    return QObject::tr("%1 GiB").arg(mib / 1024.0, 0, 'f', 2);
+}
+
+bool is_mergeable_package(const QFileInfo& fi) {
+    if (!fi.isFile()) {
+        return false;
+    }
+    const auto suf = fi.suffix().toLower();
+    return suf == QLatin1String("package") || suf == QLatin1String("dbc");
+}
+
+QStringList collect_packages_in_folder(const QString& folder, bool recursive) {
+    QStringList out;
+    if (folder.isEmpty() || !QDir(folder).exists()) {
+        return out;
+    }
+    QDirIterator::IteratorFlags flags = QDirIterator::NoIteratorFlags;
+    if (recursive) {
+        flags |= QDirIterator::Subdirectories;
+    }
+    QDirIterator it(folder,
+                    QStringList{QStringLiteral("*.package"), QStringLiteral("*.dbc"),
+                                QStringLiteral("*.PACKAGE"), QStringLiteral("*.DBC")},
+                    QDir::Files | QDir::Readable | QDir::NoSymLinks, flags);
+    while (it.hasNext()) {
+        it.next();
+        const auto fi = it.fileInfo();
+        if (is_mergeable_package(fi)) {
+            out.push_back(fi.absoluteFilePath());
+        }
+    }
+    out.sort(Qt::CaseInsensitive);
+    out.removeDuplicates();
+    return out;
+}
+
+qint64 total_size_of(const QStringList& paths) {
+    qint64 total = 0;
+    for (const auto& p : paths) {
+        total += QFileInfo(p).size();
+    }
+    return total;
+}
+
+}  // namespace
+
+void show_common_tasks_dialog(QWidget* parent) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Common tasks"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* view = new QTextBrowser;
+    view->setOpenExternalLinks(true);
+    const auto workflows = find_repo_doc(QStringLiteral("docs/workflows.md"));
+    const QString workflows_link =
+        workflows.isEmpty()
+            ? QStringLiteral("https://github.com/tofb15/sxpe/blob/dev/docs/workflows.md")
+            : QUrl::fromLocalFile(workflows).toString();
+    view->setHtml(QObject::tr(
+                      "<h2>Common tasks</h2>"
+                      "<p>Short recipes for everyday mod work. Full step-by-step: "
+                      "<a href=\"%1\">workflows.md</a>.</p>"
+                      "<h3>Merge a folder of packages into one file</h3>"
+                      "<ol>"
+                      "<li>Put the <b>.package</b> files you want to combine in one folder "
+                      "(work on <b>copies</b>).</li>"
+                      "<li><b>Tools → Merge packages…</b> opens the <b>Merge assistant</b>.</li>"
+                      "<li>Choose the folder (or pick files) → check the preview count and size → "
+                      "<b>Merge</b>.</li>"
+                      "<li>Optional: tick <b>Validate after merge</b>.</li>"
+                      "<li><b>File → Save As…</b> to write the new combined package. "
+                      "Originals are never changed.</li>"
+                      "</ol>"
+                      "<p>SXPE writes an <b>SXMM</b> manifest so <b>Tools → Un-merge package…</b> "
+                      "can reverse SXPE merges later.</p>"
+                      "<h3>Open / edit a package</h3>"
+                      "<p><b>File → Open…</b> (or drop one file). Edit resources, then Save. "
+                      "Use <b>Tools → Validate</b> before you share.</p>"
+                      "<h3>Clean Downloads / Mods folders</h3>"
+                      "<p><b>Tools → Scan folder…</b> — read-only hygiene. SXPE never auto-deletes.</p>"
+                      "<h3>Inspect a Sims3Pack</h3>"
+                      "<p><b>File → Open Sims3Pack…</b> or <b>Tools → Inspect Sims3Pack…</b>, "
+                      "then extract embedded packages.</p>"
+                      "<h3>Coming from s3pe?</h3>"
+                      "<p>See the README / user guide section <b>If you used s3pe before</b> "
+                      "for what maps where. The Merge assistant replaces the old "
+                      "“drop everything and hope” flow with a preview and safe caps.</p>")
+                      .arg(workflows_link));
+    lay->addWidget(view, 1);
+    auto* row = new QHBoxLayout;
+    auto* open_doc = new QPushButton(QObject::tr("Open workflows.md…"));
+    open_doc->setEnabled(!workflows.isEmpty());
+    QObject::connect(open_doc, &QPushButton::clicked, &dlg, [workflows] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(workflows));
+    });
+    auto* web = new QPushButton(QObject::tr("Online copy"));
+    QObject::connect(web, &QPushButton::clicked, &dlg, [] {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://github.com/tofb15/sxpe/blob/dev/docs/workflows.md")));
+    });
+    row->addWidget(open_doc);
+    row->addWidget(web);
+    row->addStretch(1);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    row->addWidget(box);
+    lay->addLayout(row);
+    dlg.resize(640, 520);
+    dlg.exec();
+}
+
+void show_merge_assistant_dialog(
+    QWidget* parent,
+    const std::function<void(const QStringList& paths, bool validate_after)>& on_merge) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Merge assistant"));
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* intro = new QLabel(QObject::tr(
+        "Combine several Sims 3 <b>.package</b> files into one new untitled package.<br/>"
+        "Your originals are never changed. Prefer working on copies."));
+    intro->setWordWrap(true);
+    intro->setTextFormat(Qt::RichText);
+    lay->addWidget(intro);
+
+    auto* path_row = new QHBoxLayout;
+    auto* path_edit = new QLineEdit;
+    path_edit->setPlaceholderText(QObject::tr("Folder or selected files…"));
+    path_edit->setReadOnly(true);
+    auto* pick_folder = new QPushButton(QObject::tr("Choose folder…"));
+    auto* pick_files = new QPushButton(QObject::tr("Choose files…"));
+    path_row->addWidget(path_edit, 1);
+    path_row->addWidget(pick_folder);
+    path_row->addWidget(pick_files);
+    lay->addLayout(path_row);
+
+    auto* recursive = new QCheckBox(QObject::tr("Include subfolders (folder mode)"));
+    recursive->setChecked(false);
+    lay->addWidget(recursive);
+
+    auto* preview = new QLabel(QObject::tr("No packages selected."));
+    preview->setWordWrap(true);
+    preview->setTextFormat(Qt::RichText);
+    lay->addWidget(preview);
+
+    auto* list = new QListWidget;
+    list->setSelectionMode(QAbstractItemView::NoSelection);
+    list->setMinimumHeight(140);
+    lay->addWidget(list, 1);
+
+    auto* validate_after = new QCheckBox(QObject::tr("Validate after merge (recommended)"));
+    validate_after->setChecked(true);
+    lay->addWidget(validate_after);
+
+    auto* note = new QLabel(QObject::tr(
+        "Merge writes an <b>SXMM</b> manifest, strips known leftover Sims3Pack manifests, "
+        "and uses the same bus caps / progress / Cancel as CLI "
+        "(<code>resource.importPackage</code>). Save with <b>File → Save As…</b> when done."));
+    note->setWordWrap(true);
+    note->setTextFormat(Qt::RichText);
+    lay->addWidget(note);
+
+    QStringList selected;
+
+    auto refresh = [&] {
+        list->clear();
+        if (selected.isEmpty()) {
+            preview->setText(QObject::tr("No packages selected."));
+            return;
+        }
+        const auto bytes = total_size_of(selected);
+        preview->setText(QObject::tr("Ready: <b>%1</b> package(s) · <b>%2</b> total")
+                             .arg(selected.size())
+                             .arg(format_bytes(bytes)));
+        const int show = static_cast<int>(std::min<qsizetype>(selected.size(), 200));
+        for (int i = 0; i < show; ++i) {
+            list->addItem(selected[i]);
+        }
+        if (selected.size() > show) {
+            list->addItem(QObject::tr("… and %1 more").arg(selected.size() - show));
+        }
+    };
+
+    QObject::connect(pick_folder, &QPushButton::clicked, &dlg, [&] {
+        const auto folder = QFileDialog::getExistingDirectory(
+            &dlg, QObject::tr("Choose folder of packages to merge"));
+        if (folder.isEmpty()) {
+            return;
+        }
+        selected = collect_packages_in_folder(folder, recursive->isChecked());
+        path_edit->setText(folder);
+        refresh();
+        if (selected.size() < 2) {
+            QMessageBox::information(
+                &dlg, QObject::tr("Merge assistant"),
+                QObject::tr("Need at least two .package / .dbc files in that folder%1.")
+                    .arg(recursive->isChecked() ? QObject::tr(" (including subfolders)")
+                                                : QString()));
+        }
+    });
+
+    QObject::connect(recursive, &QCheckBox::toggled, &dlg, [&](bool) {
+        const auto folder = path_edit->text();
+        if (folder.isEmpty() || !QDir(folder).exists()) {
+            return;
+        }
+        if (QFileInfo(folder).isDir()) {
+            selected = collect_packages_in_folder(folder, recursive->isChecked());
+            refresh();
+        }
+    });
+
+    QObject::connect(pick_files, &QPushButton::clicked, &dlg, [&] {
+        const auto paths = QFileDialog::getOpenFileNames(
+            &dlg, QObject::tr("Choose packages to merge"), {},
+            QObject::tr("Packages (*.package *.dbc);;All (*.*)"));
+        if (paths.isEmpty()) {
+            return;
+        }
+        selected = paths;
+        selected.sort(Qt::CaseInsensitive);
+        selected.removeDuplicates();
+        if (selected.size() == 1) {
+            path_edit->setText(selected.front());
+        } else {
+            path_edit->setText(QObject::tr("%1 files selected").arg(selected.size()));
+        }
+        refresh();
+        if (selected.size() < 2) {
+            QMessageBox::information(
+                &dlg, QObject::tr("Merge assistant"),
+                QObject::tr(
+                    "Select at least two packages to merge into a new untitled package.\n"
+                    "To import into the open tab, use Resource → Import → "
+                    "From package(s) into this package…"));
+        }
+    });
+
+    auto* buttons = new QDialogButtonBox;
+    auto* merge_btn = buttons->addButton(QObject::tr("Merge"), QDialogButtonBox::AcceptRole);
+    auto* help_btn =
+        buttons->addButton(QObject::tr("Common tasks…"), QDialogButtonBox::HelpRole);
+    buttons->addButton(QDialogButtonBox::Cancel);
+    lay->addWidget(buttons);
+
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(help_btn, &QPushButton::clicked, &dlg,
+                     [&dlg] { show_common_tasks_dialog(&dlg); });
+    QObject::connect(merge_btn, &QPushButton::clicked, &dlg, [&] {
+        if (selected.size() < 2) {
+            QMessageBox::information(
+                &dlg, QObject::tr("Merge assistant"),
+                QObject::tr("Choose a folder or at least two package files first."));
+            return;
+        }
+        const auto bytes = total_size_of(selected);
+        const auto reply = QMessageBox::question(
+            &dlg, QObject::tr("Merge assistant"),
+            QObject::tr("Merge %1 package(s) (%2) into a new untitled package?\n\n"
+                        "Originals stay untouched. You will Save As when finished.")
+                .arg(selected.size())
+                .arg(format_bytes(bytes)),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+        const auto paths = selected;
+        const bool do_validate = validate_after->isChecked();
+        dlg.accept();
+        if (on_merge) {
+            on_merge(paths, do_validate);
+        }
+    });
+
+    dlg.resize(720, 520);
+    dlg.exec();
+}
+
+void show_first_run_tip_if_needed(QWidget* parent, bool smoke_mode,
+                                  const std::function<void()>& open_merge_assistant) {
+    if (smoke_mode) {
+        return;
+    }
+    QSettings st(QStringLiteral("SXPE"), QStringLiteral("SXPE"));
+    if (st.value(QStringLiteral("onboarding/seenFirstRunTip"), false).toBool()) {
+        return;
+    }
+    st.setValue(QStringLiteral("onboarding/seenFirstRunTip"), true);
+    QMessageBox box(parent);
+    box.setWindowTitle(QObject::tr("Welcome to SXPE"));
+    box.setIcon(QMessageBox::Information);
+    box.setText(QObject::tr("New here? Start with Help → Common tasks."));
+    box.setInformativeText(QObject::tr(
+        "To combine a folder of custom-content packages into one file, use "
+        "Tools → Merge packages… (Merge assistant). "
+        "It previews count and size, merges safely with an SXMM manifest, "
+        "and can validate afterwards — no MTS lore required."));
+    auto* tasks = box.addButton(QObject::tr("Common tasks…"), QMessageBox::AcceptRole);
+    auto* merge = box.addButton(QObject::tr("Merge assistant…"), QMessageBox::ActionRole);
+    box.addButton(QObject::tr("Dismiss"), QMessageBox::RejectRole);
+    box.exec();
+    if (box.clickedButton() == tasks) {
+        show_common_tasks_dialog(parent);
+    } else if (box.clickedButton() == merge && open_merge_assistant) {
+        open_merge_assistant();
+    }
+}
 
 }  // namespace sxpe::gui
