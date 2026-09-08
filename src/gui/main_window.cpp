@@ -228,31 +228,68 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     auto* tools = menuBar()->addMenu(tr("&Tools"));
-    act(tools, tr("&FNV hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
+    // Package group
+    act(tools, tr("&Merge packages…"), {}, [this] { open_merge_assistant(); });
+    act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
     act(tools, tr("&Compare packages…"), {}, [this] { compare_packages(); });
-    act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
+    validate_act_ = act(tools, tr("&Validate package…"), {}, [this] {
+        if (auto* t = current_tab()) {
+            auto env = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
+            show_validate_dialog(this, env,
+                                 [this](std::uint32_t type, std::uint32_t group,
+                                        std::uint64_t instance, std::uint32_t ordinal) {
+                                     if (auto* tab = current_tab()) {
+                                         tab->select_resource(type, group, instance, ordinal);
+                                     }
+                                 });
+        }
+    });
+    compact_act_ = act(tools, tr("Com&pact package…"), {}, [this] {
+        auto* t = current_tab();
+        if (!t) {
+            return;
+        }
+        const auto reply = QMessageBox::question(
+            this, tr("Compact package"),
+            tr("Rewrite this package file, dropping session-deleted resources.\n\n"
+               "On a normal .package this is the same write path as File → Save. "
+               "Neighborhood / world / DBC files refuse compact (layout lock).\n\n"
+               "Continue?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+        run("package.compact", {{"sessionId", t->session_id().toStdString()}});
+        t->reload();
+    });
+    tools->addSeparator();
+    // Folder / pack group
     act(tools, tr("Scan &folder…"), {}, [this] { scan_folder(); });
     act(tools, tr("Inspect &Sims3Pack…"), {}, [this] { inspect_sims3pack(); });
     act(tools, tr("Create Sims3&Pack…"), {}, [this] { create_sims3pack(); });
-    act(tools, tr("&Merge packages…"), {}, [this] { open_merge_assistant(); });
-    act(tools, tr("&Un-merge package…"), {}, [this] { unmerge_package(); });
-    act(tools, tr("&Search…"), QKeySequence::Find, [this] {
+    tools->addSeparator();
+    // Resource group
+    find_refs_act_ = act(tools, tr("Find &references…"), {}, [this] { find_refs(); });
+    search_act_ = act(tools, tr("&Search…"), QKeySequence::Find, [this] {
         if (auto* t = current_tab()) {
-            show_search_dialog(this, bus_, t->session_id());
+            show_search_dialog(
+                this, bus_, t->session_id(),
+                [this](std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                       std::uint32_t ordinal) {
+                    if (auto* tab = current_tab()) {
+                        if (!tab->select_resource(type, group, instance, ordinal)) {
+                            QMessageBox::information(
+                                this, tr("Search"),
+                                tr("Hit listed, but the resource was not found in the index."));
+                        }
+                    }
+                });
         }
     });
-    act(tools, tr("&Validate"), {}, [this] {
-        if (auto* t = current_tab()) {
-            auto env = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
-            show_validate_dialog(this, env);
-        }
-    });
-    compact_act_ = act(tools, tr("&Compact / save"), {}, [this] {
-        if (auto* t = current_tab()) {
-            run("package.compact", {{"sessionId", t->session_id().toStdString()}});
-            t->reload();
-        }
-    });
+    tools->addSeparator();
+    // Hash group
+    act(tools, tr("&FNV-1 / CLIP hash…"), {}, [this] { show_fnv_dialog(this, bus_); });
+    connect(tools, &QMenu::aboutToShow, this, &MainWindow::sync_tools_actions);
 
     auto* settings = menuBar()->addMenu(tr("&Settings"));
     QSettings st("SXPE", "SXPE");
@@ -365,24 +402,7 @@ void MainWindow::new_package() {
 }
 
 void MainWindow::unmerge_package() {
-    const auto path = QFileDialog::getOpenFileName(this, tr("Un-merge package"), {},
-                                                   tr("Packages (*.package);;All files (*.*)"));
-    if (path.isEmpty()) {
-        return;
-    }
-    const auto dir = QFileDialog::getExistingDirectory(this, tr("Output folder"));
-    if (dir.isEmpty()) {
-        return;
-    }
-    auto env = run("package.unmerge", {{"path", path.toStdString()},
-                                       {"outDir", dir.toStdString()},
-                                       {"force", true}});
-    if (env.value("ok", false)) {
-        QMessageBox::information(
-            this, tr("Un-merge"),
-            tr("Wrote %1 package(s). Only SXPE-manifest merges can be un-merged.")
-                .arg(env["data"].value("packagesWritten", 0)));
-    }
+    show_unmerge_assistant_dialog(this, bus_, current_package_path());
 }
 
 
@@ -395,6 +415,7 @@ void MainWindow::find_refs() {
         return;
     }
     show_find_refs_dialog(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal,
+                          r->name,
                           [this](std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                                  std::uint32_t ordinal) {
                               if (auto* tab = current_tab()) {
@@ -432,20 +453,30 @@ void MainWindow::inspect_sims3pack() {
 
 
 void MainWindow::compare_packages() {
-    show_package_diff_dialog(this, bus_, [this](const QString& path, std::uint32_t type,
-                                                std::uint32_t group, std::uint64_t instance,
-                                                std::uint32_t ordinal) {
-        if (!open_path(path, true)) {
-            return;
-        }
-        if (auto* t = current_tab()) {
-            if (!t->select_resource(type, group, instance, ordinal)) {
-                QMessageBox::information(this, tr("Compare packages"),
-                                         tr("Opened the package, but the resource was not found "
-                                            "in the index."));
+    QString prefill;
+    bool needs_save = false;
+    if (auto* t = current_tab()) {
+        prefill = package_path(t);
+        auto info = bus_.execute("package.info", {{"sessionId", t->session_id().toStdString()}});
+        const bool dirty = info.value("ok", false) && info["data"].value("dirty", false);
+        needs_save = prefill.isEmpty() || dirty;
+    }
+    show_package_diff_dialog(
+        this, bus_,
+        [this](const QString& path, std::uint32_t type, std::uint32_t group,
+               std::uint64_t instance, std::uint32_t ordinal) {
+            if (!open_path(path, true)) {
+                return;
             }
-        }
-    });
+            if (auto* t = current_tab()) {
+                if (!t->select_resource(type, group, instance, ordinal)) {
+                    QMessageBox::information(this, tr("Compare packages"),
+                                             tr("Opened the package, but the resource was not found "
+                                                "in the index."));
+                }
+            }
+        },
+        prefill, needs_save);
 }
 
 void MainWindow::merge_dropped_packages(const QStringList& paths, bool validate_after) {
@@ -520,7 +551,9 @@ void MainWindow::merge_dropped_packages(const QStringList& paths, bool validate_
                           ? env["data"]["duplicates"].size()
                           : 0;
     QString msg = tr("Merged %1 resource(s) from %2 file(s) into a new untitled package. "
-                     "Use File → Save As to write it. The original files were not changed.")
+                     "Use File → Save As… to write it. The original files were not changed.\n\n"
+                     "After Save As, Tools → Un-merge package… can split this SXPE merge later "
+                     "(SXMM only — not merges from other tools).")
                       .arg(imported)
                       .arg(pkgs);
     if (stripped > 0) {
@@ -540,7 +573,13 @@ void MainWindow::merge_dropped_packages(const QStringList& paths, bool validate_
     if (validate_after) {
         if (auto* t = current_tab()) {
             auto ven = run("package.validate", {{"sessionId", t->session_id().toStdString()}});
-            show_validate_dialog(this, ven);
+            show_validate_dialog(this, ven,
+                                 [this](std::uint32_t type, std::uint32_t group,
+                                        std::uint64_t instance, std::uint32_t ordinal) {
+                                     if (auto* tab = current_tab()) {
+                                         tab->select_resource(type, group, instance, ordinal);
+                                     }
+                                 });
         }
     }
 }
@@ -1742,10 +1781,42 @@ void MainWindow::sync_layout_lock_actions() {
         import_menu_->setEnabled(allow_mutate_layout);
     }
     if (compact_act_) {
-        compact_act_->setEnabled(allow_mutate_layout);
-        compact_act_->setToolTip(
-            locked ? tr("Neighborhood / world layout lock: compact is not supported") : QString());
+        const bool has_tab = current_tab() != nullptr;
+        compact_act_->setEnabled(has_tab && allow_mutate_layout);
+        if (!has_tab) {
+            compact_act_->setToolTip(tr("Open a package first."));
+        } else if (locked) {
+            compact_act_->setToolTip(
+                tr("Neighborhood / world layout lock: compact is not supported"));
+        } else {
+            compact_act_->setToolTip(
+                tr("Rewrite the file (same as Save on a normal .package); drops deleted resources."));
+        }
     }
+}
+
+void MainWindow::sync_tools_actions() {
+    const bool has_tab = current_tab() != nullptr;
+    const auto* res = has_tab ? current_tab()->current() : nullptr;
+    if (search_act_) {
+        search_act_->setEnabled(has_tab);
+        search_act_->setToolTip(has_tab ? tr("Byte search inside resource payloads (Ctrl+F). "
+                                             "Not the resource-list filter box.")
+                                        : tr("Open a package first."));
+    }
+    if (validate_act_) {
+        validate_act_->setEnabled(has_tab);
+        validate_act_->setToolTip(has_tab ? tr("Validate the open package (conflict hotspots, DIR, "
+                                               "layout lock).")
+                                          : tr("Open a package first."));
+    }
+    if (find_refs_act_) {
+        find_refs_act_->setEnabled(res != nullptr);
+        find_refs_act_->setToolTip(res ? tr("Find who points at the selected resource (also on the "
+                                            "resource context menu).")
+                                       : tr("Select a resource first."));
+    }
+    sync_layout_lock_actions();
 }
 
 void MainWindow::show_resource_context(const QPoint& global) {

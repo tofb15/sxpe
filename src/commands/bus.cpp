@@ -830,12 +830,14 @@ std::vector<Tool> make_catalog() {
          "files. Never deletes or moves. Caps: maxFiles (default 5000), maxTotalBytes (default 8 GiB), "
          "maxDuplicateSamples (default 100), maxPathsPerDuplicate (default 8). Path refuses '..' "
          "(and SXPE_ALLOW_PATHS when set). Returns files[], issues[], duplicates[] (sample), "
-         "summary[] for CLI --format text / GUI. Example: {\"path\":\"Mods\"}.",
+         "summary[] for CLI --format text / GUI. reportProgress (default true) + cancel_check "
+         "supported. Example: {\"path\":\"Mods\"}.",
          obj_schema({{"path", {{"type", "string"}}},
                      {"maxFiles", {{"type", "integer"}}},
                      {"maxTotalBytes", {{"type", "integer"}}},
                      {"maxDuplicateSamples", {{"type", "integer"}}},
-                     {"maxPathsPerDuplicate", {{"type", "integer"}}}},
+                     {"maxPathsPerDuplicate", {{"type", "integer"}}},
+                     {"reportProgress", {{"type", "boolean"}, {"default", true}}}},
                     json::array({"path"})),
          env_out, true, false, true, true});
 
@@ -884,7 +886,7 @@ std::vector<Tool> make_catalog() {
          env_out, false, false, false, true});
 
 
-    add({"package.compact", "Compact", "Save dropping session-deleted resources.",
+    add({"package.compact", "Compact package", "Rewrite/save dropping session-deleted resources. Same write as package.save on a normal .package; refused on .nhd/.world/.dbc (layout lock).",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
     add({"resource.list", "List resources",
@@ -2401,6 +2403,13 @@ json Bus::Impl::exec(std::string_view id, json args) {
 
             ++files_scanned;
             bytes_scanned += file_bytes;
+            if (report_progress && (files_scanned == 1 || files_scanned % 10u == 0)) {
+                emit_progress({{"command", cmd},
+                               {"phase", "scan"},
+                               {"filesScanned", files_scanned},
+                               {"bytesScanned", bytes_scanned},
+                               {"path", entry.path().string()}});
+            }
             const auto path_s = entry.path().string();
 
             json file_row{{"path", path_s}, {"bytes", file_bytes}};

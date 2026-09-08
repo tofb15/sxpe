@@ -110,3 +110,35 @@ Community guides (and the Sims Wiki) warn that editing a `.package` while The Si
 ## Check for a new SXPE build
 
 Help → **Check for update…**, or `sxpe app checkUpdate`, or open [Releases](https://github.com/tofb15/sxpe/releases). SXPE never downloads a zip for you. Results and private-repo 404: [user-guide](user-guide.md#check-for-update).
+
+
+## Compare a merge against the previous good package
+
+1. Save the merged (or edited) package with **File → Save As…**.
+2. **Tools → Compare packages…** — Package A prefills from the current tab when it is saved.
+3. Browse Package B to the previous good file.
+4. Filter **Different** (or A-only / B-only). Double-click a Different row and choose A or B.
+
+## Find references to a CAS part / object
+
+1. Select the resource in the grid.
+2. **Tools → Find references…** (or the resource context menu).
+3. Inbound = who points here; outbound = what this table lists.
+4. **Jump** (or double-click) to select a hit.
+
+## Search for a string or hex pattern inside resources
+
+1. Open a package tab.
+2. **Tools → Search…** (Ctrl+F) — not the filter box above the grid.
+3. Enter text or `0x…` hex; review the hits table; **Jump** to select.
+
+## Create a Sims3Pack (limited)
+
+1. Put the `.package` files in one folder (non-recursive).
+2. **Tools → Create Sims3Pack…** — read the limits banner (CRC zeros; no Store/DRM).
+3. Preview the file list, then Create. Prefer **Inspect Sims3Pack…** to verify.
+
+## Compact vs Save
+
+- **File → Save** — everyday write; drops session-deleted resources.
+- **Tools → Compact package…** — same `package.save` path on a normal `.package`, with a confirm; refused on `.nhd` / `.world` / `.dbc` because compact rebuilds the file layout.

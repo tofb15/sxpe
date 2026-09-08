@@ -100,6 +100,7 @@ private:
     void show_resource_context(const QPoint& global);
     void sync_flag_actions();
     void sync_layout_lock_actions();
+    void sync_tools_actions();
     [[nodiscard]] bool current_layout_locked();
     void open_external(bool hex);
     void show_licence();
@@ -125,6 +126,9 @@ private:
     QAction* compressed_act_{};
     QAction* deleted_act_{};
     QAction* compact_act_{};
+    QAction* search_act_{};
+    QAction* validate_act_{};
+    QAction* find_refs_act_{};
     QMenu* import_menu_{};
     QAction* preview_dds_act_{};
     QAction* preview_text_act_{};

@@ -17,7 +17,7 @@ Drop one `.package` to open it. Drop **several** to merge into a new package (SX
 
 ### File
 
-New, Open, Open read-only, Open Sims3Pack, Save / Save As / Save Copy As, Close, Recent, Bookmarks, Exit.
+New, Open, Open read-only, Open Sims3Pack… (inspect/extract — same as Tools → Inspect Sims3Pack…), Save / Save As / Save Copy As, Close, Recent, Bookmarks, Exit.
 
 ### Edit
 
@@ -33,7 +33,14 @@ Add, Copy, Paste, Duplicate, Replace; Compressed / Deleted flags; Details; Copy 
 
 ### Tools
 
-FNV hash, Compare packages, Find references, Scan folder, Inspect Sims3Pack, Create Sims3Pack… (limited packer), **Merge packages…**, Un-merge package, byte Search, Validate, Compact / save.
+Grouped with separators:
+
+- **Package:** Merge packages…, Un-merge package…, Compare packages…, Validate package…, Compact package…
+- **Folder / pack:** Scan folder…, Inspect Sims3Pack… (same as File → Open Sims3Pack…), Create Sims3Pack… (limited packer)
+- **Resource:** Find references…, Search… (Ctrl+F)
+- **Hash:** FNV-1 / CLIP hash…
+
+Session-dependent items disable with a tooltip when they cannot run (no tab / no selection / layout lock). Search results are a jumpable table, not a JSON dump. Compact package… confirms before rewrite; on a normal `.package` it matches File → Save (drops deleted resources) and is refused on `.nhd` / `.world` / `.dbc`.
 
 ### Settings
 
@@ -85,13 +92,16 @@ Large CC: SXPE refuses oversized jobs (`cap_exceeded`) instead of OOM. Step-by-s
 | CLIP | Metadata… / Export as new name… | Safe fields + exportAs; no playback |
 | DDS / SNAP / VID | Replace / export | Image / video payload helpers |
 
-## Validate, compare, scan, Sims3Pack
+## Validate, compare, scan, Sims3Pack, search, compact
 
-- **Validate** - DIR / layout-lock + conflict hotspots. Prefer a clean report before sharing.
-- **Compare** - TGI+ordinal and payload hash.
-- **Find references** - inbound (who points at the selection) or outbound (REFS/OBJK/VPXY/CASP).
-- **Scan folder** - read-only Downloads-style hygiene. Does **not** auto-delete.
-- **Sims3Pack** - list/extract/limited pack; no Store/DRM.
+- **Validate package…** - DIR / layout-lock + conflict hotspots (jumpable when TGI is known). Copy report or JSON. Needs an open package.
+- **Compare** - Prefills Package A from the saved current tab; save first if dirty/untitled. Filter A-only / B-only / Different.
+- **Find references** - inbound (who points at the selection) or outbound (REFS/OBJK/VPXY/CASP). Disabled without a selection.
+- **Search…** - byte search in payloads (Ctrl+F); results table + Jump. Not the resource-list filter.
+- **Scan folder** - remembers last path; progress + Cancel; read-only; never auto-deletes.
+- **Sims3Pack** - File → Open / Tools → Inspect are the same inspect/extract dialog; Create is a limited packer (CRC zeros; no Store/DRM).
+- **Compact package…** - same write path as Save on normal packages; refused on layout-locked neighborhood files.
+- **FNV-1 / CLIP hash…** - live calculator; see [hashing.md](spec/hashing.md).
 
 ## Check for update
 
