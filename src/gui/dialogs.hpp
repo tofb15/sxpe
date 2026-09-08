@@ -44,6 +44,9 @@ bool show_casp_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
 bool show_refs_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                       std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                       std::uint32_t ordinal);
+bool show_rcol_replace_chunk_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                                    std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                                    std::uint32_t ordinal);
 bool show_clip_export_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
                              std::uint32_t type, std::uint32_t group, std::uint64_t instance,
                              std::uint32_t ordinal);

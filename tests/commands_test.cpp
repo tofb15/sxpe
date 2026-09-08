@@ -9,6 +9,7 @@
 #include "sxpe/resources/xml.hpp"
 #include "sxpe/resources/objd.hpp"
 #include "sxpe/resources/casp.hpp"
+#include "sxpe/resources/rcol.hpp"
 #include "sxpe/core/caps.hpp"
 #include "sxpe/core/file_lock.hpp"
 
@@ -3001,6 +3002,96 @@ int main() {
         CHECK(outb["data"]["refs"][0]["instance"] == 0x42);
     }
 
+
+
+    {
+        // #59 rcol.replaceChunk bus: synthetic two-chunk RCOL + backup + undo
+        auto wu32 = [](std::vector<std::byte>& o, std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 4);
+        };
+        auto wu64 = [](std::vector<std::byte>& o, std::uint64_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            o.insert(o.end(), p, p + 8);
+        };
+        std::vector<std::byte> c0{std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'},
+                                  std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+        std::vector<std::byte> c1{std::byte{'M'}, std::byte{'A'}, std::byte{'T'}, std::byte{'D'},
+                                  std::byte{9}};
+        std::vector<std::byte> body;
+        wu32(body, 3);
+        wu32(body, 1);
+        wu32(body, 0);
+        wu32(body, 0);
+        wu32(body, 2);
+        wu64(body, 1);
+        wu32(body, sxpe::resources::kModl);
+        wu32(body, 0);
+        wu64(body, 2);
+        wu32(body, sxpe::resources::kMatd);
+        wu32(body, 0);
+        const auto loc = body.size();
+        wu32(body, 0);
+        wu32(body, static_cast<std::uint32_t>(c0.size()));
+        wu32(body, 0);
+        wu32(body, static_cast<std::uint32_t>(c1.size()));
+        const auto p0 = static_cast<std::uint32_t>(body.size());
+        body.insert(body.end(), c0.begin(), c0.end());
+        const auto p1 = static_cast<std::uint32_t>(body.size());
+        body.insert(body.end(), c1.begin(), c1.end());
+        std::memcpy(body.data() + loc, &p0, 4);
+        std::memcpy(body.data() + loc + 8, &p1, 4);
+
+        auto created = bus.execute("package.new", json::object());
+        CHECK(created["ok"] == true);
+        const auto sid59 = created["data"]["sessionId"].get<std::string>();
+        auto rrid = json{{"type", sxpe::resources::kModl}, {"group", 0}, {"instance", 59}};
+        CHECK(bus.execute("resource.add",
+                          json{{"sessionId", sid59},
+                               {"resourceId", rrid},
+                               {"payloadB64", b64(body)}})["ok"] == true);
+
+        auto sum = bus.execute("rcol.summary", json{{"sessionId", sid59}, {"resourceId", rrid}});
+        CHECK(sum["ok"] == true);
+        CHECK(sum["data"]["chunks"].size() == 2);
+        CHECK(sum["data"]["chunks"][1]["tag"] == "MATD");
+
+        std::vector<std::byte> neu{std::byte{'M'}, std::byte{'O'}, std::byte{'D'}, std::byte{'L'},
+                                   std::byte{0xEE}};
+        const auto bak = std::filesystem::temp_directory_path() / "sxpe-rcol-chunk0.bak";
+        std::filesystem::remove(bak);
+        auto dry = bus.execute("rcol.replaceChunk",
+                               json{{"sessionId", sid59},
+                                    {"resourceId", rrid},
+                                    {"chunkIndex", 0},
+                                    {"payloadB64", b64(neu)},
+                                    {"dryRun", true}});
+        CHECK(dry["ok"] == true);
+        CHECK(dry["data"]["dryRun"] == true);
+        CHECK(dry["data"]["oldBytes"] == c0.size());
+        CHECK(dry["data"]["newBytes"] == neu.size());
+
+        auto rep = bus.execute("rcol.replaceChunk",
+                               json{{"sessionId", sid59},
+                                    {"resourceId", rrid},
+                                    {"chunkIndex", 0},
+                                    {"payloadB64", b64(neu)},
+                                    {"backupPath", bak.string()}});
+        CHECK(rep["ok"] == true);
+        CHECK(rep["data"]["backedUp"] == true);
+        CHECK(std::filesystem::exists(bak));
+        CHECK(std::filesystem::file_size(bak) == c0.size());
+
+        auto sum2 = bus.execute("rcol.summary", json{{"sessionId", sid59}, {"resourceId", rrid}});
+        CHECK(sum2["ok"] == true);
+        CHECK(sum2["data"]["chunks"][0]["size"] == neu.size());
+        CHECK(sum2["data"]["chunks"][1]["tag"] == "MATD");
+
+        CHECK(bus.execute("undo", json{{"sessionId", sid59}})["ok"] == true);
+        auto sum3 = bus.execute("rcol.summary", json{{"sessionId", sid59}, {"resourceId", rrid}});
+        CHECK(sum3["data"]["chunks"][0]["size"] == c0.size());
+        std::filesystem::remove(bak);
+    }
 
     if (g_failed != 0) {
         std::cerr << g_failed << " check(s) failed\n";

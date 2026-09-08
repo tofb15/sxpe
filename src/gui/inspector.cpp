@@ -715,7 +715,7 @@ void Inspector::load_preview(const nlohmann::json& rid) {
     }
 
     if (pending_type_ == sxpe::resources::kModl || pending_type_ == sxpe::resources::kMlod ||
-        pending_type_ == sxpe::resources::kGeom) {
+        pending_type_ == sxpe::resources::kGeom || pending_type_ == sxpe::resources::kMatd) {
         auto info = bus_.execute("rcol.summary", {{"sessionId", sid}, {"resourceId", rid}});
         if (info.value("ok", false)) {
             const auto& d = info["data"];
@@ -732,11 +732,52 @@ void Inspector::load_preview(const nlohmann::json& rid) {
                              .arg(d.value("totalVertices", 0))
                              .arg(d.value("totalFaces", 0));
             }
+            if (d.contains("textures") && d["textures"].is_array() && !d["textures"].empty()) {
+                lines << tr("Textures (MATD):");
+                int n = 0;
+                for (const auto& tex : d["textures"]) {
+                    if (n++ >= 24) {
+                        lines << QChar(0x2026);
+                        break;
+                    }
+                    const auto pname = QString::fromStdString(tex.value("paramName", std::string()));
+                    QString row = pname.isEmpty() ? hex32(tex.value("paramHash", 0u)) : pname;
+                    if (tex.value("resolved", false)) {
+                        row += QStringLiteral("  %1:%2:%3")
+                                   .arg(hex32(tex.value("type", 0u)))
+                                   .arg(hex32(tex.value("group", 0u)))
+                                   .arg(hex64(tex.value("instance", 0ull)));
+                    } else {
+                        row += tr("  (unresolved)");
+                    }
+                    lines << row;
+                }
+            } else if (d.contains("externalTgis") && d["externalTgis"].is_array() &&
+                       !d["externalTgis"].empty()) {
+                lines << tr("External TGIs:");
+                int n = 0;
+                for (const auto& tg : d["externalTgis"]) {
+                    if (n++ >= 16) {
+                        lines << QChar(0x2026);
+                        break;
+                    }
+                    lines << QStringLiteral("  %1:%2:%3")
+                                 .arg(hex32(tg.value("type", 0u)))
+                                 .arg(hex32(tg.value("group", 0u)))
+                                 .arg(hex64(tg.value("instance", 0ull)));
+                }
+            }
             if (d.contains("chunks")) {
                 for (const auto& ch : d["chunks"]) {
                     const auto tag = QString::fromStdString(ch.value("tag", std::string()));
-                    QString row = tag.isEmpty() ? hex32(ch.value("type", 0u)) : tag;
+                    QString row = QStringLiteral("[%1] ").arg(ch.value("index", 0));
+                    row += tag.isEmpty() ? hex32(ch.value("type", 0u)) : tag;
                     row += QStringLiteral("  %1 B").arg(ch.value("size", 0));
+                    if (ch.contains("shaderName") || ch.contains("shaderHash")) {
+                        const auto sn = QString::fromStdString(ch.value("shaderName", std::string()));
+                        row += QStringLiteral("  shader ");
+                        row += sn.isEmpty() ? hex32(ch.value("shaderHash", 0u)) : sn;
+                    }
                     if (ch.value("groupCount", 0) > 0) {
                         row += tr("  groups %1").arg(ch.value("groupCount", 0));
                     }

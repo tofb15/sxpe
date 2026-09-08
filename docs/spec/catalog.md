@@ -43,7 +43,8 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `refs.get` / `refs.set` | y / n | n / y | REFS TGI+aux table + indices; dryRun + undo |
 | `resource.listRefs` | y | n | Outbound TGIs from REFS/OBJK/VPXY/CASP |
 | `clip.info` | y | n | CLIP duration + track hashes (no playback) |
-| `rcol.summary` | y | n | MODL/MLOD/GEOM chunk and mesh counts |
+| `rcol.summary` | y | n | MODL/MLOD/GEOM/MATD chunks, mesh counts, MATD textures |
+| `rcol.replaceChunk` | n | y | Replace one RCOL chunk by index; backupPath + undo |
 | `undo` / `redo` | n | y | Session mutation stack (50) |
 | `s3sa.info` | y | n | Wrapper + decrypted PE facts. Never LoadLibrary |
 | `s3sa.exportDll` | y | n | Decrypt then write PE |

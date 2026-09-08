@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QDialogButtonBox>
@@ -944,6 +945,108 @@ bool show_refs_editor(QWidget* parent, sxpe::commands::Bus& bus, const QString& 
         dlg.accept();
     });
     dlg.resize(640, 520);
+    return dlg.exec() == QDialog::Accepted;
+}
+
+
+bool show_rcol_replace_chunk_dialog(QWidget* parent, sxpe::commands::Bus& bus, const QString& session,
+                                    std::uint32_t type, std::uint32_t group, std::uint64_t instance,
+                                    std::uint32_t ordinal) {
+    nlohmann::json rid{{"type", type}, {"group", group}, {"instance", instance}, {"ordinal", ordinal}};
+    auto got = bus.execute("rcol.summary", {{"sessionId", session.toStdString()}, {"resourceId", rid}});
+    if (!got.value("ok", false)) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"),
+                             QObject::tr("This resource is not an RCOL mesh/material, or it failed to parse."));
+        return false;
+    }
+    const auto& d = got["data"];
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Replace RCOL chunk"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* info = new QLabel(
+        QObject::tr("RCOL v%1 · %2 internal chunk(s). Session undo restores the whole resource; "
+                    "optional backup writes the previous chunk bytes.")
+            .arg(d.value("version", 0))
+            .arg(d.value("internalCount", 0)));
+    info->setWordWrap(true);
+    lay->addWidget(info);
+    auto* chunk_list = new QComboBox;
+    if (d.contains("chunks") && d["chunks"].is_array()) {
+        for (const auto& ch : d["chunks"]) {
+            const auto tag = QString::fromStdString(ch.value("tag", std::string()));
+            const auto idx = ch.value("index", 0);
+            QString label = QObject::tr("[%1] %2 — %3 bytes")
+                                .arg(idx)
+                                .arg(tag.isEmpty() ? QString::number(ch.value("type", 0u), 16) : tag)
+                                .arg(ch.value("size", 0));
+            if (ch.contains("shaderName")) {
+                const auto sn = QString::fromStdString(ch.value("shaderName", std::string()));
+                if (!sn.isEmpty()) {
+                    label += QObject::tr(" · %1").arg(sn);
+                }
+            }
+            chunk_list->addItem(label, idx);
+        }
+    }
+    if (chunk_list->count() == 0) {
+        QMessageBox::warning(parent, QObject::tr("SXPE"), QObject::tr("No chunks to replace."));
+        return false;
+    }
+    lay->addWidget(new QLabel(QObject::tr("Chunk")));
+    lay->addWidget(chunk_list);
+    auto* path_row = new QHBoxLayout;
+    auto* path_edit = new QLineEdit;
+    path_edit->setPlaceholderText(QObject::tr("New chunk payload file…"));
+    auto* browse = new QPushButton(QObject::tr("Browse…"));
+    path_row->addWidget(path_edit, 1);
+    path_row->addWidget(browse);
+    lay->addLayout(path_row);
+    QObject::connect(browse, &QPushButton::clicked, &dlg, [&] {
+        const auto p = QFileDialog::getOpenFileName(&dlg, QObject::tr("Chunk payload"), {},
+                                                    QObject::tr("All files (*)"));
+        if (!p.isEmpty()) {
+            path_edit->setText(p);
+        }
+    });
+    auto* backup = new QCheckBox(QObject::tr("Write backup of previous chunk bytes"));
+    backup->setChecked(true);
+    lay->addWidget(backup);
+    auto* backup_path = new QLineEdit;
+    backup_path->setPlaceholderText(QObject::tr("Backup path (optional; defaults next to payload)"));
+    lay->addWidget(backup_path);
+    auto* note = new QLabel(
+        QObject::tr("No in-app 3D viewport. Layout: docs/spec/preview-wave2.md / rcol tooling."));
+    note->setWordWrap(true);
+    lay->addWidget(note);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    lay->addWidget(box);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, [&] {
+        if (path_edit->text().trimmed().isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"), QObject::tr("Choose a payload file."));
+            return;
+        }
+        const int idx = chunk_list->currentData().toInt();
+        nlohmann::json args{{"sessionId", session.toStdString()},
+                            {"resourceId", rid},
+                            {"chunkIndex", idx},
+                            {"path", path_edit->text().trimmed().toStdString()}};
+        if (backup->isChecked()) {
+            QString bp = backup_path->text().trimmed();
+            if (bp.isEmpty()) {
+                bp = path_edit->text().trimmed() + QStringLiteral(".chunk%1.bak").arg(idx);
+            }
+            args["backupPath"] = bp.toStdString();
+        }
+        auto env = bus.execute("rcol.replaceChunk", args);
+        if (!env.value("ok", false)) {
+            QMessageBox::warning(&dlg, QObject::tr("SXPE"),
+                                 QString::fromStdString(env["error"].value("message", "")));
+            return;
+        }
+        dlg.accept();
+    });
+    dlg.resize(560, 320);
     return dlg.exec() == QDialog::Accepted;
 }
 
