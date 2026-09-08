@@ -214,10 +214,11 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           cache: true
+          # icu: official Qt 6.8 gcc_64 needs libicu 73; Ubuntu 24.04 has 74.
           archives: qtbase icu
           install-deps: true
 
-      - name: Install ninja, CMake 3.28, ICU 73
+      - name: Install ninja and CMake 3.28
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build g++ wget
@@ -225,12 +226,12 @@ jobs:
           sudo sh cmake-3.28.6-linux-x86_64.sh --skip-license --prefix=/usr/local
           cmake --version
           g++ --version
-          # Official Qt 6.8 gcc_64 links ICU 73; Ubuntu 24.04 ships ICU 74.
-          if [ ! -e /usr/lib/x86_64-linux-gnu/libicui18n.so.73 ]; then
-            wget -q http://old-releases.ubuntu.com/ubuntu/pool/main/i/icu/libicu73_73.2-1ubuntu2_amd64.deb \
-              || wget -q http://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu73_73.2-1ubuntu2_amd64.deb
-            sudo dpkg -i libicu73_*.deb
-          fi
+
+      - name: Configure, build, test
+        run: |
+          cmake --preset default
+          cmake --build --preset default --parallel
+          ctest --preset default --output-on-failure
 
       - name: Package CLI+MCP+GUI (Qt not vendored)
         run: ./scripts/package-linux.sh --skip-build
