@@ -294,6 +294,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* help = menuBar()->addMenu(tr("&Help"));
     act(help, tr("&Contents"), {}, [this] { show_contents_dialog(this); });
+    act(help, tr("&Welcome…"), {}, [this] {
+        show_welcome_dialog(this, [this] { open_merge_assistant(); });
+    });
     act(help, tr("Common &tasks…"), {}, [this] { show_common_tasks_dialog(this); });
     act(help, tr("Check for &update…"), {}, [this] { show_check_for_update_dialog(this, bus_); });
     act(help, tr("&Feedback…"), {}, [] {
