@@ -2,7 +2,7 @@
 
 **SXPE** is an unofficial editor for *The Sims 3* package files. You can open a `.package` (and related `.world` / `.dbc` / `.nhd` files), look at what is inside, change it, and save — with the goal that the game can still load the result.
 
-It is a **new program**, not a copy of Peter L Jones’s s3pe, and not Electronic Arts software. [GPL-3.0-or-later](LICENSE). The Sims 3 is a trademark of Electronic Arts.
+It is a **new program**, fully reimplemented from scratch in C++23, not a copy of Peter L Jones’s s3pe, and not Electronic Arts software. [GPL-3.0-or-later](LICENSE). The Sims 3 is a trademark of Electronic Arts.
 
 This is an **early version**. Things may still be unfinished or buggy; that is expected while the project is in development. Features can be added, changed, or removed as people actually use the app. **Bug reports, feature requests, and general feedback** are welcome on the [GitHub Issues](https://github.com/tofb15/sxpe/issues) tab.
 
