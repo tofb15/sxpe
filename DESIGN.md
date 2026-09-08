@@ -2,7 +2,7 @@
 
 SXPE is a C++23 reimplementation of a Sims 3 package editor. Specs that codecs follow
 live in [`docs/spec/`](docs/spec/README.md). This file is the in-repo architecture note
-for **0.6.0+**; it is not the workspace-only planning tree.
+for **0.7.0+**; it is not the workspace-only planning tree.
 
 ## Shape
 
@@ -24,8 +24,8 @@ CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_
 
 ## Packaging (honest)
 
-- **v0.6.0 Releases:** Linux CLI+MCP tarball only.
-- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); shipping on Releases is tracked separately (#54).
+- **Current project version:** 0.7.0. Latest *published* GitHub Release may still be **v0.6.0** (Linux CLI+MCP tarball only) until `v0.7.0` is tagged and assets uploaded.
+- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); shipping on the v0.7.0 Release is tracked by (#54).
 - **Linux tarball:** local via `scripts/package-linux.sh` (CLI+MCP; optionally includes `sxpe_gui` when Qt was present — does **not** vendor Qt libs).
 
 ## Extensibility (honest)

@@ -169,7 +169,7 @@ QT_QPA_PLATFORM=offscreen ./build/sxpe_gui --smoke fixtures/synthetic/single-blo
 
 ## Releases / packaging
 
-**Published on v0.6.0:** Linux CLI+MCP tarball only. Windows portable zip is **not** on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)).
+**Current project version:** 0.7.0. **Published on v0.6.0** (latest published Release until `v0.7.0` ships): Linux CLI+MCP tarball only. Windows portable zip is **not** on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54) — retargeted to ship on the v0.7.0 Release).
 
 | Platform | Local packaging | Typical artifact name |
 | --- | --- | --- |

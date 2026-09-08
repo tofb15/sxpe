@@ -20,13 +20,13 @@
 | GUI + CLI + MCP (portable) | Build and package locally: `build.bat`, then `package.bat` (or `scripts/package.ps1`). Unzip `dist/sxpe-*-windows-x64.zip` and run `SXPE.bat`. Details: [docs/building.md](docs/building.md). Shipping the zip on GitHub Releases: [#54](https://github.com/tofb15/sxpe/issues/54) |
 | From a build tree | `build.bat`, then `SXPE.bat` or run `build\sxpe_gui.exe` |
 
-**What is on [GitHub Releases](https://github.com/tofb15/sxpe/releases) today (v0.6.0):** there is **no** Windows portable zip on that release yet — use the local package path above.
+**Project version is 0.7.0.** The latest *published* GitHub Release may still be the **v0.6.0** Linux tarball until a `v0.7.0` tag is published — and there is still **no** Windows portable zip on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)); use the local package path above.
 
 ## Quick start — Linux
 
 | You want | Do this |
 | --- | --- |
-| CLI / MCP (published) | Download `sxpe-*-linux-x64-cli.tar.gz` from [Releases](https://github.com/tofb15/sxpe/releases/tag/v0.6.0), extract, run `./sxpe` / `./sxpe_mcp` |
+| CLI / MCP (published) | Download `sxpe-*-linux-x64-cli.tar.gz` from [Releases](https://github.com/tofb15/sxpe/releases) (latest published may still be [v0.6.0](https://github.com/tofb15/sxpe/releases/tag/v0.6.0) until `v0.7.0` ships), extract, run `./sxpe` / `./sxpe_mcp` |
 | CLI / MCP (local package) | Build, then `./scripts/package-linux.sh --no-gui` → `dist/sxpe-*-linux-x64-cli.tar.gz` |
 | GUI | Build from source with Qt 6 Widgets present, then run `./build/sxpe_gui` (or `./scripts/package-linux.sh` to include GUI in a tarball — Qt libs are **not** vendored). Details: [docs/building.md](docs/building.md) |
 
@@ -121,6 +121,7 @@ Un-merge only works for packages SXPE itself merged (**SXMM** manifest). Mega-pa
 | [docs/building.md](docs/building.md) | Build, package, CI (Windows + Linux) |
 | [docs/testing.md](docs/testing.md) | Optional local FullBuild/CC round-trip |
 | [docs/spec/](docs/spec/README.md) | Format / command catalog |
+| [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md) | M7 / community release notes |
 | [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md) | M6 release notes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | DCO, scope, hygiene |
 
@@ -128,19 +129,19 @@ Do not commit game packages, custom content, or other copyrighted binaries.
 
 ---
 
-## Version & changelog (0.6.0)
+## Version & changelog (0.7.0)
 
-Current project version is **0.6.0** (`CMakeLists.txt` `PROJECT_VERSION` / `vcpkg.json`). Highlights for this cut:
+Current project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` / `vcpkg.json`). Highlights for this cut (M7 / community work on `dev` since 0.6.0):
 
-- M6 daily-driver GUI work (validate report, compare, XML/NMAP editors, find refs, folder scan, neighborhood honesty, S3SA viewer, Sims3Pack inspect, Linux Qt GUI smoke)
-- **Help → Check for update** via GitHub Releases API (no auto-download)
-- Docs overhaul for humans and agents
+- Large-merge resilience, conflict hygiene, huge-package perf, long-op cancel, merge onboarding, file-lock detect
+- Broader DDS; OBJD/CASP editors; REFS editor; Sims3Pack pack; RCOL tooling; CLIP metadata
+- Plugin permanent non-support (#60); Linux packaging/docs parity (#52)
 
-**Published asset:** Linux CLI+MCP tarball on [v0.6.0](https://github.com/tofb15/sxpe/releases/tag/v0.6.0). Windows portable zip is built locally (`package.bat`) until [#54](https://github.com/tofb15/sxpe/issues/54) ships it on Releases. Local Linux packaging: `scripts/package-linux.sh`.
+**Assets:** Project version is 0.7.0; a tagged GitHub Release for 0.7.0 is not necessarily published yet — latest published asset may still be the Linux CLI+MCP tarball on [v0.6.0](https://github.com/tofb15/sxpe/releases/tag/v0.6.0). Windows portable zip is built locally (`package.bat`) until [#54](https://github.com/tofb15/sxpe/issues/54) ships it on the v0.7.0 Release. Local Linux packaging: `scripts/package-linux.sh`.
 
-Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md). Template for future tags: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
+Release notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md) (prior: [v0.6.0](docs/releases/v0.6.0.md)). Template for future tags: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
 
-**Still open:** [#54](https://github.com/tofb15/sxpe/issues/54) (Windows portable zip on Releases / `workflow`-scope CI). Closed after recent work: [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#60](https://github.com/tofb15/sxpe/issues/60) (plugins permanently out of scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7 tracker), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
+**Still open:** [#54](https://github.com/tofb15/sxpe/issues/54) (Windows portable zip on Releases for v0.7.0 / `workflow`-scope CI). Closed after recent work: [#52](https://github.com/tofb15/sxpe/issues/52) (Linux ↔ Windows parity), [#53](https://github.com/tofb15/sxpe/issues/53) (docs wave), [#60](https://github.com/tofb15/sxpe/issues/60) (plugins permanently out of scope), [#62](https://github.com/tofb15/sxpe/issues/62) (M7 tracker), [#69](https://github.com/tofb15/sxpe/issues/69) (community research).
 
 ---
 
