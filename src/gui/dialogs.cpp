@@ -25,7 +25,10 @@
 #include <QFontDatabase>
 #include <QColor>
 #include <QImage>
+#include <QFont>
 #include <QFormLayout>
+#include <QFrame>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -33,6 +36,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -1638,64 +1642,180 @@ void show_external_programs_dialog(QWidget* parent) {
 void show_about_dialog(QWidget* parent) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("About SXPE"));
-    auto* lay = new QVBoxLayout(&dlg);
-    auto* view = new QLabel;
-    view->setWordWrap(true);
-    view->setTextFormat(Qt::RichText);
-    view->setOpenExternalLinks(true);
-    view->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    dlg.setModal(true);
 
-    const QString ver = QStringLiteral(SXPE_VERSION).toHtmlEscaped();
-    const QString branch = QStringLiteral(SXPE_GIT_BRANCH).toHtmlEscaped();
-    const QString commit = QStringLiteral(SXPE_GIT_COMMIT).toHtmlEscaped();
-    const QString compiled = QStringLiteral(SXPE_BUILD_UTC).toHtmlEscaped();
+    const auto wt = dlg.palette().color(QPalette::WindowText);
+    const QString muted_ss = QStringLiteral("color: rgba(%1, %2, %3, 168);")
+                                 .arg(wt.red())
+                                 .arg(wt.green())
+                                 .arg(wt.blue());
+
+    auto* root = new QVBoxLayout(&dlg);
+    root->setContentsMargins(18, 16, 18, 12);
+    root->setSpacing(8);
+
+    auto* header = new QHBoxLayout;
+    header->setSpacing(10);
+    auto* title = new QLabel(QObject::tr("SXPE"));
+    auto title_font = title->font();
+    title_font.setPointSize(title_font.pointSize() + 5);
+    title_font.setBold(true);
+    title->setFont(title_font);
+    auto* ver = new QLabel(QStringLiteral(SXPE_VERSION));
+    ver->setStyleSheet(
+        QStringLiteral("QLabel { padding: 1px 8px; border-radius: 8px; font-weight: 600; "
+                       "background: palette(highlight); color: palette(highlighted-text); }"));
+    header->addWidget(title, 0, Qt::AlignVCenter);
+    header->addWidget(ver, 0, Qt::AlignVCenter);
+    header->addStretch(1);
+    root->addLayout(header);
+
+    auto* tagline = new QLabel(QObject::tr("Unofficial Sims 3 package editor"));
+    tagline->setStyleSheet(muted_ss);
+    root->addWidget(tagline);
+
     const QString lineage = QStringLiteral(SXPE_GIT_LINEAGE);
-    const QString source = QStringLiteral(SXPE_GIT_SOURCE_URL).toHtmlEscaped();
-    const QString canonical = QStringLiteral(SXPE_GIT_CANONICAL_URL).toHtmlEscaped();
-    const QString canonical_href = QStringLiteral(SXPE_GIT_CANONICAL_URL);
     const QString source_href = QStringLiteral(SXPE_GIT_SOURCE_URL);
+    const QString canonical_href = QStringLiteral(SXPE_GIT_CANONICAL_URL);
+    auto repo_label = [](const QString& url) {
+        QString s = url;
+        s.replace(QLatin1String("https://"), QString());
+        s.replace(QLatin1String("http://"), QString());
+        if (s.endsWith(QLatin1Char('/'))) {
+            s.chop(1);
+        }
+        return s;
+    };
+    auto make_link = [](const QString& text, const QString& href) {
+        auto* a = new QLabel(
+            QStringLiteral("<a href=\"%1\">%2</a>").arg(href.toHtmlEscaped(), text.toHtmlEscaped()));
+        a->setOpenExternalLinks(true);
+        a->setTextInteractionFlags(Qt::TextBrowserInteraction);
+        return a;
+    };
 
-    QString dirty;
-    if (SXPE_GIT_DIRTY) {
-        dirty = QObject::tr("<br/>Working tree had uncommitted changes when this was compiled.");
-    }
-
-    QString origin_block;
     if (lineage == QLatin1String("fork")) {
-        origin_block = QObject::tr(
-            "<p><b>This build is from a fork</b>, not the original SXPE repository.</p>"
-            "<p>Fork: <a href=\"%1\">%2</a><br/>"
-            "Original SXPE: <a href=\"%3\">%4</a></p>")
-                           .arg(source_href, source, canonical_href, canonical);
-    } else if (lineage == QLatin1String("official")) {
-        origin_block = QObject::tr(
-            "<p>Built from the original project: <a href=\"%1\">%2</a></p>")
-                           .arg(canonical_href, canonical);
-    } else {
-        origin_block = QObject::tr(
-            "<p>The source repository for this build could not be determined "
-            "(no git checkout, or remotes are not on GitHub).</p>"
-            "<p>Original SXPE: <a href=\"%1\">%2</a></p>")
-                           .arg(canonical_href, canonical);
+        auto* banner = new QFrame;
+        banner->setObjectName(QStringLiteral("forkBanner"));
+        banner->setStyleSheet(
+            QStringLiteral("QFrame#forkBanner { background: palette(base); border-radius: 6px; "
+                           "border-left: 3px solid palette(highlight); padding: 6px 10px; }"));
+        auto* bl = new QVBoxLayout(banner);
+        bl->setContentsMargins(8, 6, 8, 6);
+        bl->setSpacing(2);
+        auto* btitle = new QLabel(QObject::tr("This build is from a fork"));
+        auto bfont = btitle->font();
+        bfont.setBold(true);
+        btitle->setFont(bfont);
+        bl->addWidget(btitle);
+        auto* orig = make_link(
+            QObject::tr("Open original · %1").arg(repo_label(canonical_href)), canonical_href);
+        bl->addWidget(orig);
+        root->addWidget(banner);
     }
 
-    view->setText(QObject::tr(
-                      "<h2>SXPE %1</h2>"
-                      "<p>Unofficial Sims 3 package editor. Not affiliated with Electronic Arts. "
-                      "Not s3pe.<br/>"
-                      "License: GPL-3.0-or-later.<br/>"
-                      "The Sims 3 is a trademark of Electronic Arts.</p>"
-                      "<h3>Build</h3>"
-                      "<p>Branch: %2<br/>"
-                      "Commit: %3%4<br/>"
-                      "Compiled: %5</p>"
-                      "%6")
-                      .arg(ver, branch, commit, dirty, compiled, origin_block));
-    lay->addWidget(view, 1);
+    auto* grid = new QGridLayout;
+    grid->setContentsMargins(0, 4, 0, 0);
+    grid->setHorizontalSpacing(14);
+    grid->setVerticalSpacing(5);
+    grid->setColumnStretch(1, 1);
+    int row = 0;
+    auto add_key = [&](const QString& key) {
+        auto* k = new QLabel(key);
+        k->setStyleSheet(muted_ss);
+        grid->addWidget(k, row, 0, Qt::AlignRight | Qt::AlignVCenter);
+    };
+
+    add_key(QObject::tr("Branch"));
+    auto* branch = new QLabel(QStringLiteral(SXPE_GIT_BRANCH));
+    branch->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    branch->setWordWrap(true);
+    grid->addWidget(branch, row, 1);
+    ++row;
+
+    add_key(QObject::tr("Commit"));
+    auto* commit_row = new QHBoxLayout;
+    commit_row->setSpacing(8);
+    commit_row->setContentsMargins(0, 0, 0, 0);
+    const QString full_commit = QStringLiteral(SXPE_GIT_COMMIT);
+    QString short_commit = full_commit;
+    if (short_commit.size() > 12 &&
+        !short_commit.contains(QLatin1Char(' ')) &&
+        short_commit != QLatin1String("unknown")) {
+        short_commit = short_commit.left(12);
+    }
+    auto* commit = new QLabel(short_commit);
+    auto cfont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    cfont.setPointSize(commit->font().pointSize());
+    commit->setFont(cfont);
+    commit->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    commit->setToolTip(full_commit);
+    commit_row->addWidget(commit, 0, Qt::AlignVCenter);
+    if (SXPE_GIT_DIRTY) {
+        auto* dirty = new QLabel(QObject::tr("modified"));
+        dirty->setStyleSheet(
+            QStringLiteral("QLabel { padding: 0px 6px; border-radius: 6px; %1 }").arg(muted_ss));
+        dirty->setToolTip(
+            QObject::tr("Working tree had uncommitted changes when this was compiled."));
+        commit_row->addWidget(dirty, 0, Qt::AlignVCenter);
+    }
+    if (full_commit != QLatin1String("unknown") && !full_commit.isEmpty()) {
+        auto* copy = new QPushButton(QObject::tr("Copy"));
+        copy->setFlat(true);
+        copy->setCursor(Qt::PointingHandCursor);
+        copy->setToolTip(QObject::tr("Copy full commit hash"));
+        QObject::connect(copy, &QPushButton::clicked, &dlg, [full_commit] {
+            if (auto* cb = QGuiApplication::clipboard()) {
+                cb->setText(full_commit);
+            }
+        });
+        commit_row->addWidget(copy, 0, Qt::AlignVCenter);
+    }
+    commit_row->addStretch(1);
+    grid->addLayout(commit_row, row, 1);
+    ++row;
+
+    add_key(QObject::tr("Built"));
+    auto* built = new QLabel(QStringLiteral(SXPE_BUILD_UTC));
+    built->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    grid->addWidget(built, row, 1);
+    ++row;
+
+    add_key(QObject::tr("Source"));
+    auto* source_row = new QHBoxLayout;
+    source_row->setSpacing(10);
+    source_row->setContentsMargins(0, 0, 0, 0);
+    if (lineage == QLatin1String("official")) {
+        source_row->addWidget(make_link(repo_label(canonical_href), canonical_href));
+    } else if (lineage == QLatin1String("fork") && !source_href.isEmpty()) {
+        source_row->addWidget(make_link(repo_label(source_href), source_href));
+    } else {
+        auto* unk = new QLabel(QObject::tr("Unknown"));
+        unk->setStyleSheet(muted_ss);
+        source_row->addWidget(unk);
+        source_row->addWidget(make_link(QObject::tr("Original"), canonical_href));
+    }
+    source_row->addStretch(1);
+    grid->addLayout(source_row, row, 1);
+    root->addLayout(grid);
+
+    auto* legal = new QLabel(
+        QObject::tr("GPL-3.0-or-later. Unofficial. Not Electronic Arts. Not s3pe."));
+    legal->setWordWrap(true);
+    legal->setStyleSheet(muted_ss);
+    auto lfont = legal->font();
+    if (lfont.pointSize() > 8) {
+        lfont.setPointSize(lfont.pointSize() - 1);
+    }
+    legal->setFont(lfont);
+    root->addWidget(legal);
+
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    lay->addWidget(box);
-    dlg.resize(520, 420);
+    root->addWidget(box);
+
+    dlg.setFixedWidth(420);
+    dlg.adjustSize();
     dlg.exec();
 }
 
