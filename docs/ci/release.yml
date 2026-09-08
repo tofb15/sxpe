@@ -47,12 +47,24 @@ jobs:
           ./scripts/package.ps1 -BuildDir build -SkipBuild
           Get-ChildItem dist -Filter "*.zip" | ForEach-Object { $_.FullName }
 
+      - name: Resolve release notes path
+        id: notes
+        shell: bash
+        run: |
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes_path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload Release asset
         uses: softprops/action-gh-release@v2
         with:
           files: dist/sxpe-*-windows-x64.zip
           fail_on_unmatched_files: true
-          body_path: docs/releases/v0.7.0.md
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -80,10 +92,23 @@ jobs:
       - name: Package CLI+MCP
         run: ./scripts/package-linux.sh --skip-build --no-gui
 
+      - name: Resolve release notes path
+        id: notes
+        shell: bash
+        run: |
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes_path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload Release asset
         uses: softprops/action-gh-release@v2
         with:
           files: dist/sxpe-*-linux-x64-cli.tar.gz
           fail_on_unmatched_files: true
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
