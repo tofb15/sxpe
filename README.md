@@ -132,7 +132,7 @@ GUI needs Qt 6.5+ Widgets. Without Qt, CLI and MCP still build. Wayland, packagi
 
 ## Version
 
-Project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` and `vcpkg.json`). Notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md). Template for the next tag: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
+Project version is **0.7.0** (`CMakeLists.txt` `PROJECT_VERSION` and `vcpkg.json`). Notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md). When to bump: [docs/versioning.md](docs/versioning.md). Template for the next tag: [docs/releases/TEMPLATE.md](docs/releases/TEMPLATE.md).
 
 ---
 

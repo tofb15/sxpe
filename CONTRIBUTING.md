@@ -51,6 +51,7 @@ Do **not** copy install steps, limit lists, or merge recipes into extra files. C
 | Task recipes | `docs/workflows.md` |
 | CLI / MCP | `docs/cli-mcp.md` |
 | Build / package / CI | `docs/building.md` |
+| Version bump (when / how much) | `docs/versioning.md` |
 | Command table | `docs/spec/catalog.md` |
 | Codecs | `docs/spec/*.md` |
 
@@ -72,6 +73,9 @@ See [DESIGN.md](DESIGN.md).
 `project(sxpe VERSION …)` in `CMakeLists.txt` is the single source of truth. CMake generates
 `sxpe/version.hpp` (`SXPE_VERSION`) for CLI `--version`, GUI About, and MCP `serverInfo.version`.
 Keep `vcpkg.json` `"version-string"` equal to that same `PROJECT_VERSION` when bumping.
+
+**When** to change the number and **by how much:** [docs/versioning.md](docs/versioning.md).
+Ordinary PRs do **not** bump; the number changes in the release-prep change for a new GitHub tag.
 
 ## Safety
 

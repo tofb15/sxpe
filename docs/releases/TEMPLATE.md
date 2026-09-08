@@ -2,6 +2,8 @@
 
 **Tag:** `vX.Y.Z`
 
+Pick `X.Y.Z` with [docs/versioning.md](../versioning.md) (one bump per Release; highest match since the last tag). `PROJECT_VERSION` and this tag must be the same number.
+
 ## Published assets
 
 List every artifact that ships on this tag (or say honestly when one is local-only):
