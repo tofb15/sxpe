@@ -621,6 +621,9 @@ bool MainWindow::save_tab(PackageTab* t, bool as_copy, bool save_as) {
     if (!t) {
         return false;
     }
+    if (!save_as && !as_copy && package_path(t).isEmpty()) {
+        save_as = true;
+    }
     QString dest;
     if (save_as || as_copy) {
         dest = QFileDialog::getSaveFileName(this, tr("Save package"), package_path(t), filters());
