@@ -53,6 +53,29 @@ int main() {
         CHECK(r->indices.size() == 1);
         CHECK(r->indices[0] == 7);
         CHECK(!r->partial);
+
+        auto ser = sxpe::resources::serialize_refs(*r);
+        CHECK(ser.has_value());
+        CHECK(*ser == bytes);
+        auto again = sxpe::resources::parse_refs(*ser);
+        CHECK(again.has_value());
+        CHECK(again->entries.size() == 2);
+        CHECK(again->indices[0] == 7);
+
+        sxpe::resources::RefsPatch patch;
+        std::vector<sxpe::resources::RefsEntry> ne = r->entries;
+        ne[0].tgi.instance = 0x99;
+        ne[0].aux = 3;
+        patch.entries = ne;
+        patch.indices = std::vector<std::uint16_t>{1, 2};
+        auto applied = sxpe::resources::apply_refs(bytes, patch);
+        CHECK(applied.has_value());
+        auto edited = sxpe::resources::parse_refs(*applied);
+        CHECK(edited.has_value());
+        CHECK(edited->entries[0].tgi.instance == 0x99);
+        CHECK(edited->entries[0].aux == 3);
+        CHECK(edited->indices.size() == 2);
+        CHECK(edited->indices[1] == 2);
     }
 
     {

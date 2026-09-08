@@ -12,7 +12,8 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [refpack.md](refpack.md) | RefPack/QFS compression |
 | [stbl.md](stbl.md) | String tables |
 | [xml.md](xml.md) | `_XML` / ITUN editor |
-| [nmap.md](nmap.md) | Name map |
+| [nmap.md
+- [refs.md](refs.md) — REFS reference table](nmap.md) | Name map |
 | [s3sa.md](s3sa.md) | S3SA `073FAA07` (format + wrap/import gap vs s3pe) |
 | [merge-manifest.md](merge-manifest.md) | SXPE merge manifest (`SXMM`) |
 | [hashing.md](hashing.md) | FNV-1 and CLIP instance |

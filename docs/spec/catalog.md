@@ -28,6 +28,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `sims3pack.info` / `sims3pack.list` / `sims3pack.extract` | y / y / y* | n | Read-only TS3Pack inspect; extract writes files (`openWorld`); no Store/DRM |
 | `resource.list` | y | n | `limit` default 100, `cursor` |
 | `resource.read` | y | n | metadata default; `maxBytes` |
+| `resource.findRefs` | y | n | Inbound TGI refs (REFS/OBJK/VPXY/CASP + optional byteScan) |
 | `resource.export` | y | n | write path; openWorld |
 | `resource.importFiles` | n | y | `--force` / dryRun |
 | `resource.delete` | n | y | |
@@ -39,6 +40,8 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `vpxy.get` | y | n | VPXY version / entries / bbox |
 | `objd.get` / `objd.set` | y / n | n / y | OBJD Common fields; set preserves trailing + TGI off |
 | `casp.get` / `casp.set` | y / n | n / y | CASP clothing/flags/TGIs; set preserves presets/mid |
+| `refs.get` / `refs.set` | y / n | n / y | REFS TGI+aux table + indices; dryRun + undo |
+| `resource.listRefs` | y | n | Outbound TGIs from REFS/OBJK/VPXY/CASP |
 | `clip.info` | y | n | CLIP duration + track hashes (no playback) |
 | `rcol.summary` | y | n | MODL/MLOD/GEOM chunk and mesh counts |
 | `undo` / `redo` | n | y | Session mutation stack (50) |

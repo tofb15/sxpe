@@ -879,9 +879,9 @@ std::vector<Tool> make_catalog() {
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"resource.findRefs", "Find references",
-         "Scan REFS + OBJK/VPXY TGI lists for resources that point at a target TGI. "
+         "Scan REFS + OBJK/VPXY/CASP TGI lists for resources that point at a target TGI (inbound). "
          "Optional byteScan:true does a capped uncompressed payload scan (slow). "
-         "CLI: sxpe resource find-refs --package X --type --group --instance.",
+         "Outbound: resource.listRefs. CLI: sxpe resource find-refs / list-refs.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"limit", {{"type", "integer"}, {"default", 200}}},
@@ -1226,6 +1226,28 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, false, true, false, false});
+    add({"refs.get", "REFS get",
+         "Parse REFS (0x05ED1226) TGI+aux table and trailing WORD indices.",
+         obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
+    add({"refs.set", "REFS set",
+         "Replace REFS entries[] and/or indices[]; preserves version/thingy/aux width. dryRun + undo.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"entries", {{"type", "array"}}},
+                     {"indices", {{"type", "array"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, false, true, false, false});
+    add({"resource.listRefs", "List outbound references",
+         "List TGIs this resource points at (REFS entries, OBJK/VPXY/CASP key tables). "
+         "Companion to resource.findRefs (inbound).",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"limit", {{"type", "integer"}, {"default", 500}}}},
+                    json::array({"sessionId", "resourceId"})),
+         env_out, true, false, true, false});
     add({"clip.info", "CLIP info",
          "CLIP duration and track/hash names (wiki 0x6B20C4F3). No playback.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
@@ -4272,8 +4294,96 @@ json Bus::Impl::exec(std::string_view id, json args) {
                             {"clothingCategory", parsed->clothing_category},
                             {"tgis", tgi_rows}});
     }
+    if (cmd == "refs.set") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const bool compress = s.pkg.entry(*i).compressed == 0xFFFF;
+        if (type != sxpe::resources::kRefs) {
+            return envelope_err(err(ErrorCode::invalid_argument, "resourceId is not a REFS"));
+        }
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        if (!args.contains("entries") && !args.contains("indices")) {
+            return envelope_err(err(ErrorCode::invalid_argument, "entries or indices required"));
+        }
+        sxpe::resources::RefsPatch patch;
+        if (args.contains("entries")) {
+            if (!args["entries"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "entries must be an array"));
+            }
+            if (args["entries"].size() > sxpe::core::caps::kMaxTableEntries) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "refs entry count"));
+            }
+            std::vector<sxpe::resources::RefsEntry> rows;
+            rows.reserve(args["entries"].size());
+            for (const auto& row : args["entries"]) {
+                sxpe::resources::RefsEntry e;
+                e.tgi = tgi_from(row);
+                if (row.contains("aux")) {
+                    e.aux = static_cast<std::uint32_t>(as_u64(row.at("aux")));
+                }
+                rows.push_back(e);
+            }
+            patch.entries = std::move(rows);
+        }
+        if (args.contains("indices")) {
+            if (!args["indices"].is_array()) {
+                return envelope_err(err(ErrorCode::invalid_argument, "indices must be an array"));
+            }
+            if (args["indices"].size() > sxpe::core::caps::kMaxTableEntries) {
+                return envelope_err(err(ErrorCode::cap_exceeded, "refs index count"));
+            }
+            std::vector<std::uint16_t> idxs;
+            idxs.reserve(args["indices"].size());
+            for (const auto& v : args["indices"]) {
+                idxs.push_back(static_cast<std::uint16_t>(as_u64(v)));
+            }
+            patch.indices = std::move(idxs);
+        }
+        auto out = sxpe::resources::apply_refs(*body, patch);
+        if (!out) {
+            return envelope_err(out.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true}, {"bytes", out->size()}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        auto r = s.pkg.set_uncompressed(*i, *out, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        auto parsed = sxpe::resources::parse_refs(*out);
+        if (!parsed) {
+            return envelope_err(parsed.error());
+        }
+        json entries = json::array();
+        for (const auto& e : parsed->entries) {
+            auto row = tgi_json(e.tgi);
+            row["aux"] = e.aux;
+            entries.push_back(std::move(row));
+        }
+        json indices = json::array();
+        for (auto ix : parsed->indices) {
+            indices.push_back(ix);
+        }
+        return envelope_ok({{"bytes", out->size()},
+                            {"version", parsed->version},
+                            {"entryCount", parsed->entries.size()},
+                            {"entries", entries},
+                            {"indices", indices},
+                            {"auxIsDword", parsed->aux_is_dword},
+                            {"hasThingy", parsed->has_thingy},
+                            {"thingy", parsed->thingy}});
+    }
     if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "objd.get" || cmd == "casp.get" ||
-        cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {
+        cmd == "refs.get" || cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {
         auto i = need_idx();
         if (!i) {
             return envelope_err(i.error());
@@ -4459,6 +4569,48 @@ json Bus::Impl::exec(std::string_view id, json args) {
                                     {"tgiCount", c->tgis.size()},
                                     {"tgis", tgi_rows},
                                     {"partial", c->partial},
+                                    {"rawSize", body->size()},
+                                    {"nodes", nodes}});
+            }
+        }
+                if (cmd == "refs.get" || (cmd == "graph.get" && type == sxpe::resources::kRefs)) {
+            auto rr = sxpe::resources::parse_refs(*body);
+            if (!rr) {
+                if (cmd == "refs.get") {
+                    return envelope_err(rr.error());
+                }
+            } else {
+                json entries = json::array();
+                json nodes = json::array();
+                nodes.push_back({{"id", "version"},
+                                 {"label", "version"},
+                                 {"valueKind", "u16"},
+                                 {"value", rr->version},
+                                 {"children", json::array()}});
+                for (std::size_t ei = 0; ei < rr->entries.size(); ++ei) {
+                    const auto& e = rr->entries[ei];
+                    auto row = tgi_json(e.tgi);
+                    row["aux"] = e.aux;
+                    entries.push_back(row);
+                    nodes.push_back({{"id", "entry/" + std::to_string(ei)},
+                                     {"label", "entry"},
+                                     {"valueKind", "tgi"},
+                                     {"value", row},
+                                     {"children", json::array()}});
+                }
+                json indices = json::array();
+                for (auto ix : rr->indices) {
+                    indices.push_back(ix);
+                }
+                return envelope_ok({{"type", "REFS"},
+                                    {"version", rr->version},
+                                    {"hasThingy", rr->has_thingy},
+                                    {"thingy", rr->thingy},
+                                    {"auxIsDword", rr->aux_is_dword},
+                                    {"entryCount", rr->entries.size()},
+                                    {"entries", entries},
+                                    {"indices", indices},
+                                    {"partial", rr->partial},
                                     {"rawSize", body->size()},
                                     {"nodes", nodes}});
             }
@@ -4948,6 +5100,105 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
         std::string t(reinterpret_cast<const char*>(body->data()), body->size());
         return envelope_ok({{"text", t}, {"bytes", body->size()}});
+    }
+
+    if (cmd == "resource.listRefs") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        const auto limit = static_cast<std::size_t>(args.value("limit", 500));
+        auto body = s.pkg.uncompressed(*i);
+        if (!body) {
+            return envelope_err(body.error());
+        }
+        const auto type = s.pkg.entry(*i).tgi.type;
+        const auto& names = name_index(s);
+        json refs = json::array();
+        std::string kind;
+        auto push_tgi = [&](const Tgi& t, const char* reason, std::int64_t index,
+                            std::optional<std::uint32_t> aux = std::nullopt) {
+            if (refs.size() >= limit) {
+                return;
+            }
+            json h = tgi_json(t);
+            h["reason"] = reason;
+            if (index >= 0) {
+                h["index"] = index;
+            }
+            if (aux) {
+                h["aux"] = *aux;
+            }
+            refs.push_back(std::move(h));
+        };
+        if (type == sxpe::resources::kRefs) {
+            kind = "REFS";
+            auto parsed = sxpe::resources::parse_refs(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->entries.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->entries[ei].tgi, "refs.entry", static_cast<std::int64_t>(ei),
+                         parsed->entries[ei].aux);
+            }
+        } else if (type == sxpe::resources::kObjk) {
+            kind = "OBJK";
+            auto parsed = sxpe::resources::parse_objk(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->tgis.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->tgis[ei], "objk.tgi", static_cast<std::int64_t>(ei));
+            }
+        } else if (type == sxpe::resources::kVpxy) {
+            kind = "VPXY";
+            auto parsed = sxpe::resources::parse_vpxy(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->tgis.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->tgis[ei], "vpxy.tgi", static_cast<std::int64_t>(ei));
+            }
+        } else if (type == sxpe::resources::kCasp) {
+            kind = "CASP";
+            auto parsed = sxpe::resources::parse_casp(*body);
+            if (!parsed) {
+                return envelope_err(parsed.error());
+            }
+            for (std::size_t ei = 0; ei < parsed->tgis.size() && refs.size() < limit; ++ei) {
+                push_tgi(parsed->tgis[ei], "casp.tgi", static_cast<std::int64_t>(ei));
+            }
+        } else {
+            return envelope_err(err(ErrorCode::invalid_argument,
+                                    "resourceId type has no known outbound TGI table "
+                                    "(supported: REFS, OBJK, VPXY, CASP)"));
+        }
+        const bool truncated = refs.size() >= limit;
+        json data{{"source", item_meta(s.pkg, *i, names)},
+                  {"kind", kind},
+                  {"refs", refs},
+                  {"count", refs.size()},
+                  {"truncated", truncated}};
+        json summary = json::array();
+        summary.push_back("Outbound from " + kind + ": " + std::to_string(refs.size()) +
+                          (truncated ? " (truncated)" : ""));
+        if (refs.empty()) {
+            summary.push_back("No outbound TGI entries.");
+        } else {
+            for (const auto& h : refs) {
+                std::string line = "  ";
+                if (h.contains("typeHex")) {
+                    line += h.value("typeHex", "") + " " + h.value("groupHex", "") + " " +
+                            h.value("instanceHex", "");
+                }
+                if (h.contains("reason")) {
+                    line += "  (" + h.value("reason", std::string{}) + ")";
+                }
+                summary.push_back(std::move(line));
+            }
+        }
+        data["summary"] = std::move(summary);
+        return envelope_ok(std::move(data));
     }
 
     if (cmd == "resource.findRefs") {

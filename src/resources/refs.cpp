@@ -91,6 +91,20 @@ bool try_parse_body(std::span<const std::byte> bytes, std::size_t p, bool aux_dw
     return true;
 }
 
+void wu8(std::vector<std::byte>& o, std::uint8_t v) { o.push_back(std::byte{v}); }
+void wu16(std::vector<std::byte>& o, std::uint16_t v) {
+    const auto* p = reinterpret_cast<const std::byte*>(&v);
+    o.insert(o.end(), p, p + 2);
+}
+void wu32(std::vector<std::byte>& o, std::uint32_t v) {
+    const auto* p = reinterpret_cast<const std::byte*>(&v);
+    o.insert(o.end(), p, p + 4);
+}
+void wu64(std::vector<std::byte>& o, std::uint64_t v) {
+    const auto* p = reinterpret_cast<const std::byte*>(&v);
+    o.insert(o.end(), p, p + 8);
+}
+
 }  // namespace
 
 Result<Refs> parse_refs(std::span<const std::byte> bytes) {
@@ -149,6 +163,66 @@ Result<Refs> parse_refs(std::span<const std::byte> bytes) {
         r.entries.push_back(e);
     }
     return r;
+}
+
+Result<std::vector<std::byte>> serialize_refs(const Refs& r) {
+    if (r.partial) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "cannot serialize partial refs"));
+    }
+    if (r.entries.size() > sxpe::core::caps::kMaxTableEntries ||
+        r.indices.size() > sxpe::core::caps::kMaxTableEntries) {
+        return std::unexpected(err(ErrorCode::cap_exceeded, "refs count"));
+    }
+    if (!r.aux_is_dword) {
+        for (const auto& e : r.entries) {
+            if (e.aux > 0xFFFFu) {
+                return std::unexpected(
+                    err(ErrorCode::invalid_argument, "refs aux exceeds WORD width"));
+            }
+        }
+    }
+    std::vector<std::byte> out;
+    const std::size_t aux_sz = r.aux_is_dword ? 4u : 2u;
+    out.reserve(2 + (r.has_thingy ? 1u : 0u) + 4 +
+                r.entries.size() * (16 + aux_sz) + 4 + r.indices.size() * 2);
+    wu16(out, r.version);
+    if (r.has_thingy) {
+        wu8(out, r.thingy);
+    }
+    wu32(out, static_cast<std::uint32_t>(r.entries.size()));
+    for (const auto& e : r.entries) {
+        wu32(out, e.tgi.type);
+        wu32(out, e.tgi.group);
+        wu64(out, e.tgi.instance);
+        if (r.aux_is_dword) {
+            wu32(out, e.aux);
+        } else {
+            wu16(out, static_cast<std::uint16_t>(e.aux));
+        }
+    }
+    wu32(out, static_cast<std::uint32_t>(r.indices.size()));
+    for (auto ix : r.indices) {
+        wu16(out, ix);
+    }
+    return out;
+}
+
+Result<std::vector<std::byte>> apply_refs(std::span<const std::byte> bytes, const RefsPatch& patch) {
+    auto parsed = parse_refs(bytes);
+    if (!parsed) {
+        return std::unexpected(parsed.error());
+    }
+    if (parsed->partial) {
+        return std::unexpected(err(ErrorCode::invalid_argument, "cannot edit partial refs"));
+    }
+    Refs next = *parsed;
+    if (patch.entries) {
+        next.entries = *patch.entries;
+    }
+    if (patch.indices) {
+        next.indices = *patch.indices;
+    }
+    return serialize_refs(next);
 }
 
 }  // namespace sxpe::resources

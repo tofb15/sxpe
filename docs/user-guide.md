@@ -100,6 +100,7 @@ First launch shows a one-time tip pointing at **Help → Common tasks** and the 
 | XML / ITUN | Resource → Editors → XML | UTF-8 / UTF-16; size capped |
 | OBJD | Resource → Editors → Catalog object | Name/desc GUIDs, price, thumb IID |
 | CASP | Resource → Editors → CAS part | Clothing type, age/gender, TGI refs |
+| REFS | Resource → Editors → Reference table | TGI+aux entries and WORD indices |
 | S3SA | Export / Import DLL / View | Never `LoadLibrary`s game code; View uses your configured external program |
 | CLIP | Export as new name | Hash helpers; no animation playback |
 | DDS / SNAP / VID | Replace / export | Image / video payload helpers |
@@ -108,7 +109,7 @@ First launch shows a one-time tip pointing at **Help → Common tasks** and the 
 
 - **Validate** — Tools → Validate. Report includes DIR / layout-lock notes and **conflict hotspots** (leftover manifests / duplicate TGIs). Prefer fixing issues before sharing a mod.
 - **Compare** — Tools → Compare packages…. Diff by TGI+ordinal and payload hash.
-- **Find references** — Tools → Find references…. Search for TGI references inside the open package.
+- **Find references** — Tools → Find references…. Inbound (who points at the selection) or outbound (what this REFS/OBJK/VPXY/CASP points at).
 - **Scan folder** — Tools → Scan folder…. Read-only hygiene over a Downloads-style tree (empty / corrupt / wrong-game / duplicate TGI sample). Does **not** auto-delete.
 - **Sims3Pack** — list embedded packages and extract; no Store/DRM handling.
 

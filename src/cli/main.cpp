@@ -230,6 +230,9 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe objd set --package mod.package --type 0x319E4F1D --group 0 --instance 0x1 --price 250 --force\n";
     std::cout << "  sxpe casp get --package mod.package --type 0x034AEECB --group 0 --instance 0x1\n";
     std::cout << "  sxpe casp set --package mod.package --type 0x034AEECB --group 0 --instance 0x1 --clothing-type 5 --force\n";
+    std::cout << "  sxpe refs get --package mod.package --type 0x05ED1226 --group 0 --instance 0x1\n";
+    std::cout << "  sxpe refs set --package mod.package --type 0x05ED1226 --group 0 --instance 0x1 --entries '[{\"type\":0x0333406C,\"group\":0,\"instance\":1,\"aux\":0}]' --force\n";
+    std::cout << "  sxpe resource list-refs --package mod.package --type 0x05ED1226 --group 0 --instance 0x1 --format text\n";
     std::cout << "  sxpe package new --package new.package --force\n";
     std::cout << "  sxpe help resource\n";
     std::cout << "  sxpe resource rename --help\n\n";
@@ -477,6 +480,11 @@ void print_object_text(const json& data) {
         print_find_refs_text(data);
         return;
     }
+    if (data.contains("refs") && data.contains("kind") && data.contains("source") &&
+        data.contains("summary")) {
+        print_find_refs_text(data);  // summary[] already human lines
+        return;
+    }
     if (data.contains("duplicates") && data.contains("filesScanned") && data.contains("readOnly") &&
         data.value("readOnly", false)) {
         print_folder_scan_text(data);
@@ -610,7 +618,7 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" || id == "objd.get" || id == "casp.get" ||
+           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" || id == "objd.get" || id == "casp.get" || id == "refs.get" || id == "resource.listRefs" ||
            id == "sims3pack.list";
 }
 
