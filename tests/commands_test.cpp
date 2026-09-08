@@ -1,5 +1,6 @@
 #include "check.hpp"
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/names.hpp"
 #include "sxpe/resources/dds.hpp"
 #include "sxpe/resources/dir.hpp"
 #include "sxpe/resources/nmap.hpp"
@@ -59,9 +60,41 @@ int main() {
     CHECK(sxpe::resources::tag_for(0x00B2D882) == "_IMG");
     CHECK(sxpe::resources::tag_for(0xFFFFFFFFu).empty());
 
+    CHECK(sxpe::commands::mcp_tool_name("resource.findRefs") == "resource_find-refs");
+    CHECK(sxpe::commands::mcp_tool_name("resource.listRefs") == "resource_list-refs");
+    CHECK(sxpe::commands::mcp_tool_name("app.checkUpdate") == "app_check-update");
+    CHECK(sxpe::commands::mcp_tool_name("package.diff") == "package_diff");
+    CHECK(sxpe::commands::mcp_tool_name("hash.fnv") == "hash_fnv");
+    CHECK(sxpe::commands::mcp_tool_name("manifest") == "manifest");
+    CHECK(sxpe::commands::bus_id_from_mcp_name("resource_find-refs") == "resource.findRefs");
+    CHECK(sxpe::commands::bus_id_from_mcp_name("resource_findRefs") == "resource.findRefs");
+    CHECK(sxpe::commands::bus_id_from_mcp_name("app_check-update") == "app.checkUpdate");
+    CHECK(sxpe::commands::bus_id_from_mcp_name("app_checkUpdate") == "app.checkUpdate");
+    CHECK(sxpe::commands::kebab_from_camel("findRefs") == "find-refs");
+    CHECK(sxpe::commands::camel_from_kebab("find-refs") == "findRefs");
+    {
+        const auto framed = sxpe::commands::mcp_frame("{}");
+        CHECK(framed == "Content-Length: 2\r\n\r\n{}");
+        CHECK(framed.find("\r\n\r\n\r\n") == std::string::npos);
+    }
+
     auto unknown = bus.execute("bogus.thing", json::object());
     CHECK(unknown["ok"] == false);
     CHECK(unknown["error"]["message"].get<std::string>().find("unknown command") != std::string::npos);
+
+    auto unknown_search = bus.execute("resource.search", json::object());
+    CHECK(unknown_search["ok"] == false);
+    {
+        const auto msg = unknown_search["error"]["message"].get<std::string>();
+        CHECK(msg.find("unknown command") != std::string::npos);
+        CHECK(msg.find("Search:") != std::string::npos);
+        CHECK(msg.find("nameContains") != std::string::npos);
+        CHECK(msg.find("search.bytes") != std::string::npos);
+    }
+    auto unknown_typo = bus.execute("resource.lst", json::object());
+    CHECK(unknown_typo["ok"] == false);
+    CHECK(unknown_typo["error"]["message"].get<std::string>().find("Did you mean 'resource.list'") !=
+          std::string::npos);
 
     auto man = bus.execute("manifest", json::object());
     CHECK(man["ok"] == true);
@@ -204,6 +237,9 @@ int main() {
     auto listed = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 10}});
     CHECK(listed["ok"] == true);
     CHECK(listed["data"]["items"].size() == 1);
+    CHECK(listed["data"].value("returned", 0u) == 1);
+    CHECK(listed["data"].value("total", 0u) == 1);
+    CHECK(listed["data"].value("truncated", true) == false);
     CHECK(listed["data"]["items"][0].contains("instanceHex"));
     CHECK(listed["data"]["items"][0]["instanceHex"].get<std::string>().rfind("0x", 0) == 0);
     CHECK(listed["data"]["items"][0].contains("chunkOffset"));
@@ -218,6 +254,15 @@ int main() {
     auto img_add = bus.execute(
         "resource.add", json{{"sessionId", sid}, {"resourceId", img_rid}, {"payloadB64", b64(*dds)}});
     CHECK(img_add["ok"] == true);
+    {
+        auto page = bus.execute("resource.list", json{{"sessionId", sid}, {"limit", 1}});
+        CHECK(page["ok"] == true);
+        CHECK(page["data"]["items"].size() == 1);
+        CHECK(page["data"].value("returned", 0u) == 1);
+        CHECK(page["data"].value("total", 0u) >= 2);
+        CHECK(page["data"].value("truncated", false) == true);
+        CHECK(!page["data"].value("nextCursor", "").empty());
+    }
     auto dinfo = bus.execute("dds.info", json{{"sessionId", sid}, {"resourceId", img_rid}});
     CHECK(dinfo["ok"] == true);
     CHECK(dinfo["data"].value("width", 0) == 4);
@@ -340,6 +385,23 @@ int main() {
     const auto fsid = fresh["data"]["sessionId"].get<std::string>();
     auto named = bus.execute("nmap.set", json{{"sessionId", fsid}, {"instance", 99}, {"name", "Door"}});
     CHECK(named["ok"] == true);
+    CHECK(named["data"].value("compressed", true) == false);
+    auto named_c = bus.execute(
+        "nmap.set",
+        json{{"sessionId", fsid}, {"instance", 99}, {"name", "DoorCompressed"}, {"compress", true}});
+    CHECK(named_c["ok"] == true);
+    CHECK(named_c["data"].value("compressed", false) == true);
+    {
+        auto nlist = bus.execute("resource.list", json{{"sessionId", fsid}, {"filter", json{{"tag", "NMAP"}}}});
+        CHECK(nlist["ok"] == true);
+        bool saw_compressed_nmap = false;
+        for (const auto& it : nlist["data"]["items"]) {
+            if (it.value("compressed", false)) {
+                saw_compressed_nmap = true;
+            }
+        }
+        CHECK(saw_compressed_nmap);
+    }
     auto xml_rid = json{{"type", sxpe::resources::kXml}, {"group", 0}, {"instance", 99}};
     auto xml_add = bus.execute("resource.add",
                                json{{"sessionId", fsid}, {"resourceId", xml_rid}, {"payloadB64", b64(*raw)}});
@@ -1649,7 +1711,7 @@ int main() {
             if (tool["name"] == "resource.findRefs") {
                 saw = true;
                 CHECK(tool["annotations"]["readOnlyHint"] == true);
-                CHECK(tool["mcpName"] == "resource_findRefs");
+                CHECK(tool["mcpName"] == "resource_find-refs");
             }
         }
         CHECK(saw);
@@ -2682,6 +2744,8 @@ int main() {
                     .count());
             CHECK(page1["ok"] == true);
             CHECK(page1["data"]["items"].size() == 100);
+            CHECK(page1["data"].value("returned", 0u) == 100);
+            CHECK(page1["data"].value("total", 0u) == n_entries);
             CHECK(page1["data"].value("truncated", false) == true);
             CHECK(page2["ok"] == true);
             CHECK(page2["data"]["items"].size() == 100);
@@ -3124,7 +3188,7 @@ int main() {
             }
             if (tool["name"] == "resource.listRefs") {
                 saw_list = true;
-                CHECK(tool["mcpName"] == "resource_listRefs");
+                CHECK(tool["mcpName"] == "resource_list-refs");
             }
         }
         CHECK(saw_refs_set);
