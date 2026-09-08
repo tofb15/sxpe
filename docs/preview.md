@@ -118,7 +118,7 @@ A real mesh preview (Qt + GL, skinning, materials) is a product of its own. Do n
 
 | Tag | Preview | Difficulty | Priority |
 | --- | --- | --- | --- |
-| `CLIP` | Duration, track names, hashed names (`clip.info`; no player) | M | **done** |
+| `CLIP` | Full `clip.info` + metadata editor (`clip.set`); exportAs helpers; no player | M | **done** (#61) |
 | `JAZZ` | State-machine / clip name list | M | P2 |
 | `TKMK` | Track-mask bit count | M | P2 |
 | `_AUD` | Fourcc / sample rate if we parse SNR; optional PCM play | M / L (playback) | P2 metadata, P3 play |

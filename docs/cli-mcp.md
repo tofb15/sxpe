@@ -129,3 +129,9 @@ MCP: start `sxpe_mcp`, then call tools with the same arguments as bus JSON (see 
 - Respect `layoutLocked` on neighborhood / world / DBC paths.
 - Destructive ops need explicit flags (`--force`) where required; prefer dry-run when offered.
 - `s3sa.*` decrypts/wraps PE bytes for export/import/view — never execute package code in-process.
+
+## CLIP metadata (#61)
+
+- `sxpe clip info` -- full summary (no playback).
+- `sxpe clip set --anim-name ... --source-file ... --actor-name ...` -- safe fields only ([clip.md](spec/clip.md)).
+- `sxpe clip export-as --name ...` / `sxpe clip export-as-batch --items '[...]'` -- copy with `fnv64_clip` instance.

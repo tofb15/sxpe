@@ -211,6 +211,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     act(editors, tr("Export S3SA as &DLL…"), {}, [this] { export_s3sa(); });
     act(editors, tr("Import &DLL into S3SA…"), {}, [this] { import_s3sa(); });
     act(editors, tr("&View S3SA…"), {}, [this] { view_s3sa(); });
+    act(editors, tr("C&LIP metadata…"), {}, [this] { open_clip(); });
     act(editors, tr("&CLIP export as new name…"), {}, [this] { clip_export(); });
     act(editors, tr("Replace &DDS…"), {}, [this] { replace_dds(); });
     act(editors, tr("Replace SNAP PNG…"), {}, [this] { replace_snap(); });
@@ -1500,6 +1501,17 @@ void MainWindow::view_s3sa() {
     }
 }
 
+void MainWindow::open_clip() {
+    auto* t = current_tab();
+    const auto* r = t ? t->current() : nullptr;
+    if (!t || !r) {
+        return;
+    }
+    if (show_clip_editor(this, bus_, t->session_id(), r->type, r->group, r->instance, r->ordinal)) {
+        t->reload();
+    }
+}
+
 void MainWindow::clip_export() {
     auto* t = current_tab();
     const auto* r = t ? t->current() : nullptr;
@@ -1788,6 +1800,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
     auto* s3sa = editors->addAction(tr("Export S3SA as &DLL…"), this, [this] { export_s3sa(); });
     auto* s3sa_in = editors->addAction(tr("Import &DLL into S3SA…"), this, [this] { import_s3sa(); });
     auto* s3sa_view = editors->addAction(tr("&View S3SA…"), this, [this] { view_s3sa(); });
+    auto* clip_meta = editors->addAction(tr("C&LIP metadata…"), this, [this] { open_clip(); });
     auto* clip = editors->addAction(tr("&CLIP export as new name…"), this, [this] { clip_export(); });
     auto* dds = editors->addAction(tr("Replace &DDS…"), this, [this] { replace_dds(); });
     auto* snap = editors->addAction(tr("Replace SNAP PNG…"), this, [this] { replace_snap(); });
@@ -1840,6 +1853,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         s3sa->setEnabled(r->type == sxpe::resources::kS3sa);
         s3sa_in->setEnabled(true);
         s3sa_view->setEnabled(r->type == sxpe::resources::kS3sa);
+        clip_meta->setEnabled(r->type == sxpe::resources::kClip);
         clip->setEnabled(r->type == sxpe::resources::kClip);
         dds->setEnabled(r->type == sxpe::resources::kImg || r->type == sxpe::resources::kImgAlt);
         snap->setEnabled(sxpe::resources::is_png_image(r->type));
@@ -1848,6 +1862,7 @@ void MainWindow::show_resource_context(const QPoint& global) {
         xml->setEnabled(false);
         s3sa->setEnabled(false);
         s3sa_view->setEnabled(false);
+        clip_meta->setEnabled(false);
         clip->setEnabled(false);
         dds->setEnabled(false);
         snap->setEnabled(false);

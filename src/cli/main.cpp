@@ -202,7 +202,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --id JSON          resourceId {type,group,instance,ordinal}\n";
     std::cout << "  --type --group --instance --ordinal\n";
     std::cout << "                     Alternative to --id (hex 0xAABB is ok); do not mix with --id\n";
-    std::cout << "  --name TEXT        NMAP display name (resource.rename / nmap.set)\n";
+    std::cout << "  --name TEXT        NMAP display name / CLIP exportAs name\n";
     std::cout << "  --text TEXT        hash.fnv / search.bytes / xml.set\n";
     std::cout << "  --force --dry-run --writable --force-writable --include-payload --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
@@ -234,6 +234,11 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe refs get --package mod.package --type 0x05ED1226 --group 0 --instance 0x1\n";
     std::cout << "  sxpe refs set --package mod.package --type 0x05ED1226 --group 0 --instance 0x1 --entries '[{\"type\":0x0333406C,\"group\":0,\"instance\":1,\"aux\":0}]' --force\n";
     std::cout << "  sxpe resource list-refs --package mod.package --type 0x05ED1226 --group 0 --instance 0x1 --format text\n";
+
+    std::cout << "  sxpe clip info --package mod.package --type 0x6B20C4F3 --group 0 --instance 0x1\n";
+    std::cout << "  sxpe clip set --package mod.package --type 0x6B20C4F3 --group 0 --instance 0x1 --anim-name a_walk --force\n";
+    std::cout << "  sxpe clip export-as --package mod.package --type 0x6B20C4F3 --group 0 --instance 0x1 --name t_walk --force\n";
+    std::cout << "  sxpe clip export-as-batch --package mod.package --items '[{\"resourceId\":{\"type\":0x6B20C4F3,\"group\":0,\"instance\":1},\"name\":\"a_walk\"}]' --force\n";
     std::cout << "  sxpe package new --package new.package --force\n";
     std::cout << "  sxpe help resource\n";
     std::cout << "  sxpe resource rename --help\n\n";
@@ -698,7 +703,7 @@ int main(int argc, char** argv) {
     app.add_option("--id", id_json, "resourceId JSON {type,group,instance,ordinal}");
     app.add_option("--path", path, "File path (export dest, add/replace bytes, save-as dest)");
     app.add_option("--file", file, "Alias of --path for payload files");
-    app.add_option("--name", name, "NMAP display name or CLIP name");
+    app.add_option("--name", name, "NMAP display name / CLIP exportAs name");
     app.add_option("--text", text, "Text for hash.fnv / search.bytes");
     app.add_option("--type", type_s, "Resource type (decimal or 0x hex)");
     app.add_option("--group", group_s, "Resource group (decimal or 0x hex)");
@@ -737,7 +742,15 @@ int main(int argc, char** argv) {
         if (noun == "help") {
             filter = verb;
         } else if (want_help && !noun.empty()) {
-            filter = verb.empty() ? noun : noun + "." + verb;
+            if (verb.empty()) {
+                filter = noun;
+            } else {
+                auto v = camel(verb);
+                if (!v.empty()) {
+                    v[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(v[0])));
+                }
+                filter = noun + "." + v;
+            }
         }
         if (filter.find('.') != std::string::npos) {
             print_command_help(bus, filter);

@@ -17,6 +17,7 @@ Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/
 | [s3sa.md](s3sa.md) | S3SA `073FAA07` (format + wrap/import gap vs s3pe) |
 | [merge-manifest.md](merge-manifest.md) | SXPE merge manifest (`SXMM`) |
 | [hashing.md](hashing.md) | FNV-1 and CLIP instance |
+| [clip.md](clip.md) | CLIP metadata / safe fields / exportAs (#61) |
 | [catalog.md](catalog.md) | Command catalog (CLI/MCP) sketch |
 | [sims3pack.md](sims3pack.md) | `.sims3pack` TS3Pack inspect (list/extract; no DRM) |
 | [preview.md](../preview.md) | Inspector preview inventory (what can be shown, difficulty, priority) |

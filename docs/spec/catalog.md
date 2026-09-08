@@ -42,7 +42,7 @@ Error: `{ "schemaVersion": 1, "ok": false, "error": { "code", "message", "retrya
 | `casp.get` / `casp.set` | y / n | n / y | CASP clothing/flags/TGIs; set preserves presets/mid |
 | `refs.get` / `refs.set` | y / n | n / y | REFS TGI+aux table + indices; dryRun + undo |
 | `resource.listRefs` | y | n | Outbound TGIs from REFS/OBJK/VPXY/CASP |
-| `clip.info` | y | n | CLIP duration + track hashes (no playback) |
+| `clip.info` / `clip.set` / `clip.exportAs` / `clip.exportAsBatch` | y / n / n / n | n / y / n* / n* | CLIP metadata + exportAs helpers (no playback); *adds copies |
 | `rcol.summary` | y | n | MODL/MLOD/GEOM/MATD chunks, mesh counts, MATD textures |
 | `rcol.replaceChunk` | n | y | Replace one RCOL chunk by index; backupPath + undo |
 | `undo` / `redo` | n | y | Session mutation stack (50) |

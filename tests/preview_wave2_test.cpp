@@ -346,6 +346,23 @@ int main() {
         CHECK(p->source_file == "walk.mb");
         CHECK(p->track_hashes.size() == 2);
         CHECK(p->duration_seconds > 1.9f && p->duration_seconds < 2.1f);
+
+        sxpe::resources::ClipPatch patch;
+        patch.anim_name = "t_walk_long_name";
+        patch.source_file = "new_src.mb";
+        patch.actor_name = "x";
+        patch.track_hashes.push_back({0, 0xDEADBEEFu});
+        auto edited = sxpe::resources::apply_clip(bytes, patch);
+        CHECK(edited.has_value());
+        auto p2 = sxpe::resources::parse_clip(*edited);
+        CHECK(p2.has_value());
+        CHECK(p2->anim_name == "t_walk_long_name");
+        CHECK(p2->source_file == "new_src.mb");
+        CHECK(p2->actor_name == "x");
+        CHECK(p2->track_hashes.size() >= 1);
+        CHECK(p2->track_hashes[0] == 0xDEADBEEFu);
+        CHECK(p2->track_hashes[1] == 0x11110001u);
+        CHECK(p2->frame_count == 60);
     }
 
     {
