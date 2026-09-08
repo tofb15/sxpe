@@ -859,6 +859,29 @@ std::vector<Tool> make_catalog() {
                     json::array({"path", "outDir", "index"})),
          env_out, true, false, false, true});
 
+    add({"sims3pack.pack", "Sims3Pack pack",
+         "Limited TS3Pack authoring: pack non-recursive *.package files from sourceDir into path "
+         "(.sims3pack). Optional metaXml subset and/or displayName/description/packageId/"
+         "packageType/packageSubType/archiveVersion. CRC left as zeros (unknown algorithm). "
+         "No Store upload / DRM / DBPP. Pass force to overwrite. openWorld write. "
+         "Example: {\"path\":\"out.sims3pack\",\"sourceDir\":\"/tmp/pkgs\",\"displayName\":\"My Mod\","
+         "\"force\":true}.",
+         obj_schema({{"path", {{"type", "string"}}},
+                     {"sourceDir", {{"type", "string"}}},
+                     {"metaXml", {{"type", "string"}}},
+                     {"displayName", {{"type", "string"}}},
+                     {"description", {{"type", "string"}}},
+                     {"packageId", {{"type", "string"}}},
+                     {"packageType", {{"type", "string"}}},
+                     {"packageSubType", {{"type", "string"}}},
+                     {"archiveVersion", {{"type", "string"}}},
+                     {"name", {{"type", "string"}}},
+                     {"force", force_prop()},
+                     {"dryRun", dry_prop()}},
+                    json::array({"path", "sourceDir"})),
+         env_out, false, false, false, true});
+
+
     add({"package.compact", "Compact", "Save dropping session-deleted resources.",
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
@@ -2074,6 +2097,96 @@ json Bus::Impl::exec(std::string_view id, json args) {
         data["outDir"] = out_dir->string();
         data["writtenPath"] = written->string();
         data["written"] = json::array({written->string()});
+        data["summary"] = sims3pack_summary_json(data);
+        return envelope_ok(std::move(data));
+    }
+
+
+    if (cmd == "sims3pack.pack") {
+        auto out_path = check_path(args.at("path").get<std::string>());
+        if (!out_path) {
+            return envelope_err(out_path.error());
+        }
+        auto source_dir = check_path(args.at("sourceDir").get<std::string>());
+        if (!source_dir) {
+            return envelope_err(source_dir.error());
+        }
+        sxpe::games::sims3::Sims3PackCreateOptions opts;
+        if (args.contains("metaXml") && args["metaXml"].is_string() &&
+            !args["metaXml"].get<std::string>().empty()) {
+            auto meta_path = check_path(args["metaXml"].get<std::string>());
+            if (!meta_path) {
+                return envelope_err(meta_path.error());
+            }
+            auto loaded = sxpe::games::sims3::load_sims3pack_meta_subset(*meta_path);
+            if (!loaded) {
+                return envelope_err(loaded.error());
+            }
+            opts = *loaded;
+        }
+        auto override_str = [&](const char* key, std::string& dest) {
+            if (args.contains(key) && args[key].is_string()) {
+                auto s = args[key].get<std::string>();
+                if (!s.empty()) {
+                    dest = std::move(s);
+                }
+            }
+        };
+        override_str("displayName", opts.display_name);
+        override_str("description", opts.description);
+        override_str("packageId", opts.package_id);
+        override_str("packageType", opts.package_type);
+        override_str("packageSubType", opts.package_subtype);
+        override_str("archiveVersion", opts.archive_version);
+        // Convenience: CLI --name maps to top-level name
+        if (opts.display_name.empty() && args.contains("name") && args["name"].is_string()) {
+            opts.display_name = args["name"].get<std::string>();
+        }
+
+        auto items = sxpe::games::sims3::collect_sims3pack_packages(*source_dir);
+        if (!items) {
+            return envelope_err(items.error());
+        }
+        if (dry(args)) {
+            json data{{"path", out_path->string()},
+                      {"sourceDir", source_dir->string()},
+                      {"dryRun", true},
+                      {"authored", true},
+                      {"entryCount", static_cast<std::uint32_t>(items->size())},
+                      {"displayName", opts.display_name},
+                      {"description", opts.description},
+                      {"packageId", opts.package_id},
+                      {"packageType", opts.package_type},
+                      {"packageSubType", opts.package_subtype},
+                      {"archiveVersion", opts.archive_version},
+                      {"wouldWrite", out_path->string()},
+                      {"limitations",
+                       json::array({"Limited TS3Pack authoring only",
+                                    "Non-recursive *.package from sourceDir",
+                                    "CRC placeholder zeros (algorithm unknown)",
+                                    "No Store upload / DRM / DBPP"})}};
+            json names = json::array();
+            for (const auto& it : *items) {
+                names.push_back(it.name.empty() ? it.source_path.filename().string() : it.name);
+            }
+            data["packageNames"] = std::move(names);
+            data["summary"] = sims3pack_summary_json(data);
+            return envelope_ok(std::move(data));
+        }
+        auto packed =
+            sxpe::games::sims3::pack_sims3pack(*out_path, *items, opts, force(args));
+        if (!packed) {
+            return envelope_err(packed.error());
+        }
+        json data = sims3pack_meta_json(*packed, true);
+        data["authored"] = true;
+        data["readOnly"] = false;
+        data["sourceDir"] = source_dir->string();
+        data["writtenPath"] = out_path->string();
+        data["limitations"] = json::array(
+            {"Limited TS3Pack authoring only", "Non-recursive *.package from sourceDir",
+             "CRC placeholder zeros (algorithm unknown)", "No Store upload / DRM / DBPP",
+             "PackagedFile XML scrape on re-open is best-effort"});
         data["summary"] = sims3pack_summary_json(data);
         return envelope_ok(std::move(data));
     }

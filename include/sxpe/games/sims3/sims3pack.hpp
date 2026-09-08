@@ -54,4 +54,39 @@ Result<std::filesystem::path> extract_sims3pack_entry(const Sims3PackMeta& meta,
                                                       const std::filesystem::path& out_dir,
                                                       bool force);
 
+/// Metadata subset written into the Sims3Pack XML (limited authoring).
+struct Sims3PackCreateOptions {
+    std::string package_type{"Object"};
+    std::string package_subtype{"0x00000000"};
+    std::string archive_version{"1.4"};
+    std::string display_name;
+    std::string description;
+    std::string package_id;
+};
+
+/// One source file to embed in the archive section.
+struct Sims3PackPackItem {
+    std::filesystem::path source_path;
+    std::string name;          // empty => basename of source_path
+    std::string guid;          // empty => placeholder from index
+    std::string content_type;  // empty => infer (.package -> package)
+    std::string crc;           // empty => "00000000" (algorithm unknown)
+};
+
+/// Non-recursive collect of *.package under source_dir (sorted by filename).
+Result<std::vector<Sims3PackPackItem>> collect_sims3pack_packages(
+    const std::filesystem::path& source_dir);
+
+/// Best-effort load of DisplayName / Description / PackageId / Type / SubType /
+/// ArchiveVersion from a metadata XML subset (Sims3Package root or fragment).
+Result<Sims3PackCreateOptions> load_sims3pack_meta_subset(const std::filesystem::path& xml_path);
+
+/// Limited TS3Pack authoring: write header + XML + concatenated payloads.
+/// No Store upload, no DRM/DBPP, CRC left as placeholder zeros. Overwrite needs force.
+/// On success returns meta as if re-opened (path = out_path).
+Result<Sims3PackMeta> pack_sims3pack(const std::filesystem::path& out_path,
+                                     const std::vector<Sims3PackPackItem>& items,
+                                     const Sims3PackCreateOptions& opts,
+                                     bool force);
+
 }  // namespace sxpe::games::sims3

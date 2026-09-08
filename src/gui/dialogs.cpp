@@ -2182,6 +2182,113 @@ void show_sims3pack_dialog(
 
 
 
+
+void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(QObject::tr("Create Sims3Pack"));
+    dlg.resize(640, 420);
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* form = new QFormLayout;
+    auto* source_edit = new QLineEdit;
+    auto* source_browse = new QPushButton(QObject::tr("Browse…"));
+    auto* source_row = new QHBoxLayout;
+    source_row->addWidget(source_edit, 1);
+    source_row->addWidget(source_browse);
+    form->addRow(QObject::tr("Source folder"), source_row);
+
+    auto* out_edit = new QLineEdit;
+    auto* out_browse = new QPushButton(QObject::tr("Browse…"));
+    auto* out_row = new QHBoxLayout;
+    out_row->addWidget(out_edit, 1);
+    out_row->addWidget(out_browse);
+    form->addRow(QObject::tr("Output .sims3pack"), out_row);
+
+    auto* display = new QLineEdit;
+    form->addRow(QObject::tr("Display name"), display);
+    auto* description = new QLineEdit;
+    form->addRow(QObject::tr("Description"), description);
+    auto* package_id = new QLineEdit;
+    form->addRow(QObject::tr("Package id"), package_id);
+    auto* package_type = new QLineEdit(QStringLiteral("Object"));
+    form->addRow(QObject::tr("Type"), package_type);
+    auto* package_subtype = new QLineEdit(QStringLiteral("0x00000000"));
+    form->addRow(QObject::tr("SubType"), package_subtype);
+    lay->addLayout(form);
+
+    auto* hint = new QLabel(
+        QObject::tr("Limited TS3Pack authoring: packs non-recursive *.package files from the "
+                    "source folder. No Store upload, DRM, or DBPP. CRC values are placeholder "
+                    "zeros (algorithm unknown)."));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    auto* create = box->addButton(QObject::tr("Create"), QDialogButtonBox::AcceptRole);
+    lay->addWidget(box);
+
+    QObject::connect(source_browse, &QPushButton::clicked, &dlg, [&] {
+        const auto d = QFileDialog::getExistingDirectory(&dlg, QObject::tr("Choose package folder"));
+        if (!d.isEmpty()) {
+            source_edit->setText(d);
+        }
+    });
+    QObject::connect(out_browse, &QPushButton::clicked, &dlg, [&] {
+        const auto p = QFileDialog::getSaveFileName(
+            &dlg, QObject::tr("Save Sims3Pack"), {},
+            QObject::tr("Sims3Pack (*.sims3pack);;All files (*)"));
+        if (!p.isEmpty()) {
+            out_edit->setText(p);
+        }
+    });
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(create, &QPushButton::clicked, &dlg, [&] {
+        const auto src = source_edit->text().trimmed();
+        const auto out = out_edit->text().trimmed();
+        if (src.isEmpty() || out.isEmpty()) {
+            QMessageBox::warning(&dlg, QObject::tr("Create Sims3Pack"),
+                                 QObject::tr("Choose a source folder and output path."));
+            return;
+        }
+        nlohmann::json args{{"path", out.toStdString()},
+                            {"sourceDir", src.toStdString()},
+                            {"force", true}};
+        if (!display->text().trimmed().isEmpty()) {
+            args["displayName"] = display->text().trimmed().toStdString();
+        }
+        if (!description->text().trimmed().isEmpty()) {
+            args["description"] = description->text().trimmed().toStdString();
+        }
+        if (!package_id->text().trimmed().isEmpty()) {
+            args["packageId"] = package_id->text().trimmed().toStdString();
+        }
+        if (!package_type->text().trimmed().isEmpty()) {
+            args["packageType"] = package_type->text().trimmed().toStdString();
+        }
+        if (!package_subtype->text().trimmed().isEmpty()) {
+            args["packageSubType"] = package_subtype->text().trimmed().toStdString();
+        }
+        auto env = bus.execute("sims3pack.pack", args);
+        if (!env.value("ok", false)) {
+            QString msg = QObject::tr("Pack failed.");
+            if (env.contains("error") && env["error"].is_object()) {
+                msg = QString::fromStdString(env["error"].value("message", msg.toStdString()));
+            }
+            QMessageBox::warning(&dlg, QObject::tr("Create Sims3Pack"), msg);
+            return;
+        }
+        const auto written =
+            QString::fromStdString(env["data"].value("writtenPath", out.toStdString()));
+        const auto count = env["data"].value("entryCount", 0u);
+        QMessageBox::information(
+            &dlg, QObject::tr("Create Sims3Pack"),
+            QObject::tr("Wrote %1 entry(ies) to:\n%2").arg(count).arg(written));
+        dlg.accept();
+    });
+
+    dlg.exec();
+}
+
 void show_check_for_update_dialog(QWidget* parent) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QObject::tr("Check for update"));

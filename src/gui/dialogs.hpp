@@ -84,5 +84,7 @@ void show_folder_scan_dialog(
 void show_sims3pack_dialog(
     QWidget* parent, sxpe::commands::Bus& bus,
     const std::function<void(const QString& path)>& open_package);
+/// Limited Sims3Pack authoring (sims3pack.pack) from a folder of .package files.
+void show_create_sims3pack_dialog(QWidget* parent, sxpe::commands::Bus& bus);
 
 }  // namespace sxpe::gui

@@ -230,6 +230,11 @@ add_test(NAME cli_sims3pack_extract COMMAND sxpe sims3pack extract --path
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/minimal.sims3pack"
     --out-dir "${CMAKE_BINARY_DIR}/sims3pack-extract-cli" --index 0 --force --format json)
 set_tests_properties(cli_sims3pack_extract PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_sims3pack_pack COMMAND ${CMAKE_COMMAND}
+    -DSXPE_BIN=$<TARGET_FILE:sxpe>
+    -DSYN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic
+    -DWORK_DIR=${CMAKE_BINARY_DIR}/sims3pack-pack-cli
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cli_sims3pack_pack_test.cmake)
 if(TARGET sxpe_gui)
     add_test(NAME gui_smoke COMMAND sxpe_gui --smoke
         "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin")
