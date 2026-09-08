@@ -122,6 +122,27 @@ int main() {
     CHECK(upd_drafts["ok"] == true);
     CHECK(upd_drafts["data"]["status"] == "notFound");
 
+    // /releases/latest returns older stable while list has newer Beta prerelease.
+    const auto synth = std::filesystem::path(SXPE_SYNTHETIC_DIR);
+    auto upd_prefer_pre = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.6.0"},
+             {"latestJsonPath", (synth / "github-latest-stable-older.json").string()},
+             {"releasesJsonPath", (synth / "github-releases-prerelease.json").string()}});
+    CHECK(upd_prefer_pre["ok"] == true);
+    CHECK(upd_prefer_pre["data"]["status"] == "newerAvailable");
+    CHECK(upd_prefer_pre["data"]["tagName"] == "v0.7.0");
+    CHECK(upd_prefer_pre["data"]["downloads"] == false);
+
+    auto upd_prefer_pre_current = bus.execute(
+        "app.checkUpdate",
+        json{{"currentVersion", "0.7.0"},
+             {"latestJsonPath", (synth / "github-latest-stable-older.json").string()},
+             {"releasesJsonPath", (synth / "github-releases-prerelease.json").string()}});
+    CHECK(upd_prefer_pre_current["ok"] == true);
+    CHECK(upd_prefer_pre_current["data"]["status"] == "upToDate");
+    CHECK(upd_prefer_pre_current["data"]["tagName"] == "v0.7.0");
+
     auto np = bus.execute("package.new", json::object());
     CHECK(np["ok"] == true);
     const auto sid = np["data"]["sessionId"].get<std::string>();

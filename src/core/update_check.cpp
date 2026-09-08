@@ -492,13 +492,16 @@ std::string github_token() {
 
 
 GithubReleaseInfo pick_newest_published_release(const std::vector<GithubReleaseInfo>& releases) {
+    GithubReleaseInfo best;
     for (const auto& r : releases) {
-        if (r.draft) {
+        if (r.draft || r.tag_name.empty()) {
             continue;
         }
-        return r;
+        if (best.tag_name.empty() || compare_versions(r.tag_name, best.tag_name) > 0) {
+            best = r;
+        }
     }
-    return {};
+    return best;
 }
 
 const char* update_status_id(UpdateStatus s) {

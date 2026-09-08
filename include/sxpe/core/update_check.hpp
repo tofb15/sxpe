@@ -66,7 +66,7 @@ struct GithubReleaseInfo {
     bool prerelease{false};
 };
 
-/// GitHub `/releases` lists newest first. Skip drafts; allow prereleases (Beta).
+/// Newest non-draft release by version compare (prereleases / Beta included).
 /// Returns empty `tag_name` when none qualify.
 [[nodiscard]] GithubReleaseInfo pick_newest_published_release(
     const std::vector<GithubReleaseInfo>& releases);
