@@ -32,6 +32,7 @@ Start at the **[repository README](../README.md)** for what SXPE is, why it exis
 
 ## Specialist (not the landing path)
 
+- [images/](images/) — README screenshots only (no `.package` / CC / personal paths)
 - [tags.md](tags.md) — what each resource Tag stores
 - [preview.md](preview.md) — inspector preview inventory
 - [neighborhood-layout.md](neighborhood-layout.md) — `.nhd` / `.world` / `.dbc`
