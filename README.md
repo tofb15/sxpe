@@ -1,8 +1,10 @@
 # SXPE
 
-**SXPE** is an unofficial editor for *The Sims 3* package files. It opens, inspects, and edits `.package` files (and related `.world` / `.dbc` / `.nhd`) so the game can still load them.
+**SXPE** is an unofficial editor for *The Sims 3* package files. You can open a `.package` (and related `.world` / `.dbc` / `.nhd` files), look at what is inside, change it, and save — with the goal that the game can still load the result.
 
-It is a **new C++23 program**, not a fork of Peter L Jones’s s3pe / sims3tools, and not Electronic Arts software. GPL-3.0-or-later. The Sims 3 is a trademark of Electronic Arts.
+It is a **new program**, not a copy of Peter L Jones’s s3pe, and not Electronic Arts software. [GPL-3.0-or-later](LICENSE). The Sims 3 is a trademark of Electronic Arts.
+
+This is an **early version**. Things may still be unfinished or buggy; that is expected while the project is in development. Features can be added, changed, or removed as people actually use the app. **Bug reports, feature requests, and general feedback** are welcome on the [GitHub Issues](https://github.com/tofb15/sxpe/issues) tab.
 
 [![CI](https://github.com/tofb15/sxpe/actions/workflows/ci.yml/badge.svg)](https://github.com/tofb15/sxpe/actions/workflows/ci.yml)
 
@@ -12,73 +14,67 @@ Current release: **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)*
 
 ## What SXPE is
 
-Three surfaces, **one command bus** (same operations, same JSON envelopes):
+A desktop app for everyday mod work on **Windows and Linux**, plus optional tools for people who like to script or automate:
 
-| Surface | Binary | Who it is for |
-| --- | --- | --- |
-| Desktop GUI | `sxpe_gui` | Everyday mod work on **Windows and Linux** |
-| CLI | `sxpe` | Scripts and terminals (Qt-free) |
-| MCP | `sxpe_mcp` | Agents over stdio (Qt-free) |
+| You want | Use |
+| --- | --- |
+| Click and edit, like a normal Windows program | The **SXPE** app (`SXPE.bat` on Windows) |
+| Scripts or a terminal | the `sxpe` command |
+| An assistant / agent that talks to SXPE | `sxpe_mcp` |
 
 ![SXPE main window: resource grid and XML inspector](docs/images/sxpe-gui.png)
 
-Typical work: open a package, browse resources by TGI and name, edit STBL / NMAP / XML / catalog / CAS / CLIP metadata, merge or un-merge packages, validate, compare, scan a Downloads folder, inspect Sims3Packs, import/export S3SA DLLs (never loaded in-process).
+You can open a package, browse the resources inside, edit names and text, work with catalog / CAS / animation metadata, merge packages together (and split an SXPE merge back apart), check a package before you share it, compare two files, scan a Downloads folder, look inside Sims3Packs, and import or export script DLLs.
 
 ## Why it exists
 
-s3pe is a 2010s Windows-only WinForms .NET editor. It is still useful, but it is a poor fit for 2026:
+Many people still use **s3pe**. It works, but it is an older Windows-only editor and is often **very slow**, especially on large packages or when combining a lot of custom content. Big merges can also run out of memory or leave huge temporary files.
 
-- Windows GUI only — no first-class Linux app
-- No JSON CLI or agent protocol
-- Large custom-content merges often ran out of memory or left huge temps
-- Optional “Handlers” loaded arbitrary DLLs into the process
-
-SXPE reimplements the **daily-driver featureset** on a modern stack (C++23, mmap I/O, virtualized lists, Qt 6 Widgets when present) so humans and agents share the same tools, and so large jobs **fail with a clear cap** instead of a mystery crash.
+SXPE is a from-scratch editor for the same kind of daily work, with a focus on **opening and browsing faster**, surviving large merges more gracefully, and running on Linux as well as Windows. The window, the command line, and automation all drive the same features.
 
 ## SXPE vs s3pe
 
-SXPE is **not** “s3pe 2.0” and does **not** contain s3pe/s3pi source. Familiar jobs have equivalents; the [user guide](docs/user-guide.md#if-you-used-s3pe-before) maps menus.
+SXPE is **not** “s3pe 2.0” and does not use s3pe’s source code. If you already know s3pe, the [user guide](docs/user-guide.md#if-you-used-s3pe-before) maps familiar menus.
 
-| | s3pe | SXPE |
+| | s3pe | SXPE (today) |
 | --- | --- | --- |
-| Code | C# / WinForms | New C++23 (not a paste-fork) |
-| GUI | Windows | Windows **and** Linux |
-| Automation | Limited | JSON CLI + MCP, same bus as the GUI |
-| Large merges | Often OOM | Caps, progress, cancel + rollback |
-| Un-merge | No | SXPE merges only, via **SXMM** manifest |
-| Plugins | DLL Handlers | **Permanently unsupported** (no `LoadLibrary` of random DLLs) |
-| Neighborhood files | Easy to compact-corrupt | **Layout-locked** `.nhd` / `.world` / `.dbc` (in-place replace only) |
+| Speed | Often slow on large packages | Built to open and scroll large lists more quickly |
+| Computer | Windows | Windows and Linux |
+| Combining many packages | Can run out of memory | Size limits, progress, and cancel instead of a mystery crash |
+| Split a merge back apart | No | Yes, for packages **SXPE** merged |
+| Extra editor plugins | Optional DLL “Handlers” | Not in this version |
+| Neighborhood / world files | Easy to save in a way the game hates | Safer: replace in place only, for now |
 
-**Prefer SXPE** when you want Linux, scripts/agents, safer merges, or an editor that refuses dangerous neighborhood rebuilds. **s3pe** may still match a workflow that depends on a third-party Handler DLL — SXPE will not load those.
+Use **SXPE** if you want something snappier, Linux, or safer big merges. Stick with **s3pe** if you rely on an add-on Handler that SXPE does not have yet.
 
-## Vision
+## Where the project is headed
 
-Stay the editor you reach for on Sims 3 packages: game-loadable output, honest limits, and one catalog for GUI, CLI, and agents. Extra *Sims*-family games can plug in later as `GameProfile`s; **this version does not implement The Sims 4**. SXPE will not become a plugin host.
+The aim is a Sims 3 package editor you actually want to use every day: files the game can load, clear limits, and the same features in the window and in scripts. Other *Sims* games might come later; **this version is Sims 3 only**. What ships will follow feedback — nothing here is frozen forever.
 
-## Honest limits
+## What this version does not do yet
 
-- Sims 3 DBPF only. Unknown / other-game files are refused.
-- No full 3D mesh or CLIP playback (inspector shows summaries and images, not a viewport).
-- No Store/DRM Sims3Pack unpacking.
-- `.nhd` / `.world` / `.dbc` are layout-locked — see [neighborhood layout](docs/neighborhood-layout.md).
-- Third-party GUI plugins / DLL Handlers will not return ([#60](https://github.com/tofb15/sxpe/issues/60)).
-- Help → Check for update **never downloads** a zip; it only compares versions. On a **private** GitHub repo the public API returns 404 unless you set a token — see the [user guide](docs/user-guide.md#check-for-update).
+- No Sims 4 packages.
+- No spinning 3D meshes or playing animations in the preview (you still get pictures and summaries).
+- No Store / DRM Sims3Pack unpacking.
+- Neighborhood, world, and `.dbc` files are treated carefully so SXPE does not rebuild them into something the game will not load — see [neighborhood layout](docs/neighborhood-layout.md).
+- Extra third-party editor plugins are not included right now.
+- **Help → Check for update** only tells you if a newer release exists; it never downloads a zip for you.
 
-Keep backups. Compact/save rewrites packages; test in a copy first.
+Keep backups. Saving can rewrite a package; try changes on a **copy** first.
 
 ---
 
 ## Get SXPE
 
-You do **not** need to compile if a Release asset matches your OS.
+You do **not** need to compile if a download matches your computer.
 
 | You want | Do this |
 | --- | --- |
-| **Windows GUI + CLI + MCP** | Download `sxpe-0.7.0-windows-x64.zip` from **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip somewhere writable. Keep DLLs and `platforms/` next to the exes. Double-click **`SXPE.bat`**. Same folder: `sxpe-cli.bat`, `sxpe-mcp.bat`. |
-| **Linux CLI + MCP** | Download `sxpe-0.7.0-linux-x64-cli.tar.gz` from the same Release, extract, run `./sxpe` / `./sxpe_mcp`. |
-| **Linux GUI** | Build with Qt 6.5+ Widgets ([building.md](docs/building.md)). A tarball from `scripts/package-linux.sh` can include `sxpe_gui` but **does not vendor Qt** — the machine that runs it still needs Qt. |
+| **Windows app** | Download `sxpe-0.7.0-windows-x64.zip` from **[v0.7.0](https://github.com/tofb15/sxpe/releases/tag/v0.7.0)**. Unzip the **whole folder** somewhere you can write (leave the extra files next to the program). Double-click **`SXPE.bat`**. |
+| **Linux command-line tools** | Download `sxpe-0.7.0-linux-x64-cli.tar.gz` from the same Release, extract, run `./sxpe`. |
+| **Linux windowed app** | Build from source with Qt 6 ([building.md](docs/building.md)). A Linux pack can include the GUI program but still needs Qt installed on that machine. |
 
-Drop one `.package` on the GUI to open it. Drop several to merge (SXPE writes an SXMM manifest so **un-merge works only for SXPE merges**).
+Drop one `.package` on the window to open it. Drop several to merge them (you can un-merge later only if SXPE did the merge).
 
 ## First steps
 
