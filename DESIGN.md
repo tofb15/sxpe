@@ -25,7 +25,8 @@ CLI stdout is data (JSON/JSONL). MCP tools match bus ids (`noun.verb` → `noun_
 ## Packaging (honest)
 
 - **v0.6.0 Releases:** Linux CLI+MCP tarball only.
-- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); shipping on Releases is tracked separately.
+- **Windows portable zip:** local via `package.bat` / `scripts/package.ps1` ([docs/building.md](docs/building.md)); shipping on Releases is tracked separately (#54).
+- **Linux tarball:** local via `scripts/package-linux.sh` (CLI+MCP; optionally includes `sxpe_gui` when Qt was present — does **not** vendor Qt libs).
 
 ## Extensibility (honest)
 

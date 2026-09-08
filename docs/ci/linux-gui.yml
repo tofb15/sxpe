@@ -1,0 +1,41 @@
+# MAINTAINER-ONLY — not end-user documentation.
+# Paste-ready GitHub Actions job: Linux Qt GUI build + gui_smoke (offscreen).
+# Promote into .github/workflows/ci.yml (next to linux-cli / windows-gui) when the
+# pushing token has the GitHub `workflow` scope. OAuth apps without that scope
+# cannot update .github/workflows/* — see docs/building.md and issue #52 / #54.
+#
+# Indent this job under `jobs:` in ci.yml (two spaces before linux-gui:).
+
+  linux-gui:
+    name: Linux GUI smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: "6.8.2"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+          archives: qtbase
+          install-deps: true
+
+      - name: Install ninja and CMake 3.28
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++ wget
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.sh
+          sudo sh cmake-3.28.6-linux-x86_64.sh --skip-license --prefix=/usr/local
+          cmake --version
+          g++ --version
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build --preset default --parallel
+
+      - name: Test
+        run: ctest --preset default --output-on-failure

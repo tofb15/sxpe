@@ -110,5 +110,5 @@ Community guides (and the Sims Wiki) warn that editing a `.package` while The Si
 ## Check for a new SXPE build
 
 1. Help → **Check for update…**, or open [Releases](https://github.com/tofb15/sxpe/releases).
-2. If newer: open the release page and install the asset that matches your platform (v0.6.0 publishes a Linux CLI+MCP tarball; Windows portable zip is local-build until [#54](https://github.com/tofb15/sxpe/issues/54)). Keep backups of your work files.
+2. If newer: open the release page and install the asset that matches your platform (v0.6.0 publishes a Linux CLI+MCP tarball; Windows portable zip is local-build via `package.bat` until [#54](https://github.com/tofb15/sxpe/issues/54); Linux local packaging is `scripts/package-linux.sh`). Keep backups of your work files.
 3. SXPE never auto-downloads updates.

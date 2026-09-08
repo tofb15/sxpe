@@ -4,6 +4,10 @@
 # .github/workflows/release.yml when the token has `workflow` scope.
 # See docs/ci/README.md and docs/building.md.
 #
+# Optional later: add a linux-cli (or linux-gui) job that runs
+#   ./scripts/package-linux.sh --skip-build
+# and uploads dist/sxpe-*-linux-x64*.tar.gz alongside the Windows zip.
+# Same workflow-scope constraint as promoting this file into .github/workflows/.
 name: release
 
 on:
