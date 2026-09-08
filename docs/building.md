@@ -36,6 +36,14 @@ package.bat
 
 Same as `scripts/package.ps1`. Output: `dist/sxpe/` and `dist/sxpe-<version>-windows-x64.zip` (`SXPE.bat`, `sxpe-cli.bat`, `sxpe-mcp.bat`). `-SkipBuild` packages the current `build/` tree (including VS `RelWithDebInfo` / `Release` output dirs).
 
+CLI-only zip (no Qt / no `sxpe_gui`):
+
+```text
+powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -NoGui
+```
+
+Alias: `-CliOnly`. Output: `dist/sxpe-<version>-windows-x64-cli.zip` (`sxpe-cli.bat`, `sxpe-mcp.bat`, MSVC CRT when available).
+
 ## Linux (Ubuntu 24.04 / Debian)
 
 Install a C++ toolchain, Ninja, CMake 3.28+, then the three steps above.
@@ -82,7 +90,7 @@ Live `.github/workflows/ci.yml`:
 
 **Linux GUI CI is not in `ci.yml` yet.** Paste-ready job: [`docs/ci/linux-gui.yml`](ci/linux-gui.yml) (canonical YAML - do not copy it into this page). Promoting it needs a GitHub token with **`workflow` scope**; OAuth apps without that scope cannot push `.github/workflows/*`.
 
-Tag `v*` runs live [`.github/workflows/release.yml`](../.github/workflows/release.yml) (Windows zip + Linux CLI tarball). Maintainer copy: [`docs/ci/release.yml`](ci/release.yml). See [`docs/ci/README.md`](ci/README.md).
+Tag `v*` runs [`.github/workflows/release.yml`](../.github/workflows/release.yml). The four-artifact matrix (Windows GUI zip, Windows CLI zip, Linux CLI tarball, Linux GUI tarball — Qt not vendored; plus `workflow_dispatch`) lives in [`docs/ci/release.yml`](ci/release.yml) until a `workflow`-scoped push or UI paste updates the live file. See [`docs/ci/README.md`](ci/README.md).
 
 ## Releases
 
@@ -90,5 +98,7 @@ Version source: `CMakeLists.txt` `PROJECT_VERSION` (keep `vcpkg.json` in sync). 
 
 | Platform | Local packaging | Artifact |
 | --- | --- | --- |
-| Windows | `package.bat` | `sxpe-<ver>-windows-x64.zip` |
-| Linux | `scripts/package-linux.sh` | `sxpe-<ver>-linux-x64-cli.tar.gz` or `sxpe-<ver>-linux-x64.tar.gz` |
+| Windows GUI | `package.bat` / `scripts/package.ps1` | `sxpe-<ver>-windows-x64.zip` |
+| Windows CLI | `scripts/package.ps1 -NoGui` | `sxpe-<ver>-windows-x64-cli.zip` |
+| Linux CLI | `scripts/package-linux.sh --no-gui` | `sxpe-<ver>-linux-x64-cli.tar.gz` |
+| Linux GUI | `scripts/package-linux.sh` (Qt present; **not** vendored) | `sxpe-<ver>-linux-x64.tar.gz` |
