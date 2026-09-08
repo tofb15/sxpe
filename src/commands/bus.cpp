@@ -1140,13 +1140,16 @@ std::vector<Tool> make_catalog() {
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "name"})),
          env_out, false, true, false, false});
-    add({"dds.info", "DDS info", "Width/height/format from a DDS resource.",
+    add({"dds.info", "DDS info",
+         "Width/height/format/cubemap/volume/decodeSupported from a DDS resource. "
+         "See docs/spec/dds.md for the format matrix.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
     add({"dds.decode", "DDS decode",
-         "Decode DXT1, DXT5, or 24/32-bit RGB(A) to RGBA byte count. Other DDS formats "
-         "return unsupported. Does not embed pixels in MCP (use dds.export for the file).",
+         "Decode DXT1/DXT3/DXT5 or 16/24/32-bit RGB(A) mask layouts to RGBA byte count. "
+         "Cubemaps, volumes, BC7/DX10, and other FourCCs return unsupported with a clear "
+         "message. Does not embed pixels in MCP (use dds.export for the file).",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
                     json::array({"sessionId", "resourceId"})),
          env_out, true, false, true, false});
@@ -1158,6 +1161,17 @@ std::vector<Tool> make_catalog() {
                      {"force", force_prop()}},
                     json::array({"sessionId", "resourceId", "path"})),
          env_out, true, false, true, true});
+    add({"dds.replace", "Replace DDS",
+         "Validate a filesystem DDS (2D, within kMaxDdsEdge, decode-supported formats only) "
+         "and replace the resource payload. Refuses cubemaps/volumes/BC7/DX10 with a clear "
+         "error. Pass path; optional compress/dryRun.",
+         obj_schema({{"sessionId", sess_prop()},
+                     {"resourceId", rid_schema()},
+                     {"path", {{"type", "string"}}},
+                     {"compress", {{"type", "boolean"}}},
+                     {"dryRun", dry_prop()}},
+                    json::array({"sessionId", "resourceId", "path"})),
+         env_out, false, true, false, true});
     add({"objk.get", "OBJK get",
          "Parse OBJK version, component IDs, and data keys (wiki 0x02DC343F). Not a full object editor.",
          obj_schema({{"sessionId", sess_prop()}, {"resourceId", rid_schema()}},
@@ -2535,6 +2549,7 @@ json Bus::Impl::exec(std::string_view id, json args) {
                               {"directXTex", false},
                               {"ddsDecode", true},
                               {"ddsExport", true},
+                              {"ddsReplace", true},
                               {"mcpHttp", false}}},
                             {"mruMax", 12}});
     }
@@ -4015,7 +4030,11 @@ json Bus::Impl::exec(std::string_view id, json args) {
         json data{{"width", inf->width},
                   {"height", inf->height},
                   {"format", inf->format},
-                  {"compressed", inf->compressed}};
+                  {"compressed", inf->compressed},
+                  {"cubemap", inf->cubemap},
+                  {"volume", inf->volume},
+                  {"mipmapCount", inf->mipmap_count},
+                  {"decodeSupported", inf->decode_supported}};
         if (cmd == "dds.decode") {
             auto pix = sxpe::resources::decode_dds_rgba(*body);
             if (!pix) {
@@ -4024,6 +4043,43 @@ json Bus::Impl::exec(std::string_view id, json args) {
             data["rgbaBytes"] = pix->size();
         }
         return envelope_ok(data);
+    }
+    if (cmd == "dds.replace") {
+        auto i = need_idx();
+        if (!i) {
+            return envelope_err(i.error());
+        }
+        auto path = check_path(args.at("path").get<std::string>());
+        if (!path) {
+            return envelope_err(path.error());
+        }
+        auto bytes = read_file(*path);
+        if (!bytes) {
+            return envelope_err(bytes.error());
+        }
+        auto inf = sxpe::resources::validate_dds_replace(*bytes);
+        if (!inf) {
+            return envelope_err(inf.error());
+        }
+        if (dry(args)) {
+            return envelope_ok({{"dryRun", true},
+                                {"bytes", bytes->size()},
+                                {"width", inf->width},
+                                {"height", inf->height},
+                                {"format", inf->format}});
+        }
+        if (auto u = snapshot(s, *i); !u) {
+            return envelope_err(u.error());
+        }
+        bool compress = args.value("compress", s.pkg.entry(*i).compressed == 0xFFFF);
+        auto r = s.pkg.set_uncompressed(*i, *bytes, compress);
+        if (!r) {
+            return envelope_err(r.error());
+        }
+        return envelope_ok({{"bytes", bytes->size()},
+                            {"width", inf->width},
+                            {"height", inf->height},
+                            {"format", inf->format}});
     }
     if (cmd == "objk.get" || cmd == "vpxy.get" || cmd == "objd.get" || cmd == "casp.get" ||
         cmd == "clip.info" || cmd == "rcol.summary" || cmd == "graph.get") {

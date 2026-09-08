@@ -1464,10 +1464,27 @@ void MainWindow::replace_dds() {
     if (!t || !r) {
         return;
     }
-    if (show_add_resource_dialog(this, bus_, t->session_id(), true, r->type, r->group, r->instance,
-                                 r->ordinal, tr("DDS (*.dds);;All files (*.*)"))) {
-        t->reload();
+    const auto path = QFileDialog::getOpenFileName(this, tr("Replace DDS"), {},
+                                                   tr("DDS (*.dds);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
     }
+    nlohmann::json rid{{"type", r->type},
+                       {"group", r->group},
+                       {"instance", r->instance},
+                       {"ordinal", r->ordinal}};
+    auto env = bus_.execute("dds.replace", {{"sessionId", t->session_id().toStdString()},
+                                            {"resourceId", rid},
+                                            {"path", path.toStdString()}});
+    if (!env.value("ok", false)) {
+        QString msg = tr("Could not replace DDS.");
+        if (env.contains("error") && env["error"].contains("message")) {
+            msg = QString::fromStdString(env["error"]["message"].get<std::string>());
+        }
+        QMessageBox::warning(this, tr("SXPE"), msg);
+        return;
+    }
+    t->reload();
 }
 
 void MainWindow::replace_snap() {

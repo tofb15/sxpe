@@ -28,7 +28,7 @@ These are the only types s3pe draws as pictures in Preview.
 
 | Tag | Types (hex) | Payload | Difficulty | Priority | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `_IMG` | `00B2D882`, `8FFB80F6` | DDS | S (done) | P0 | Decode DXT1/DXT5/24/32. No BC7 / DirectXTex. |
+| `_IMG` | `00B2D882`, `8FFB80F6` | DDS | S (done) | P0 | Decode DXT1/DXT3/DXT5 + A8R8G8B8/RGB mask variants; cubemap/volume refused. Matrix: [spec/dds.md](spec/dds.md). No BC7 / DirectXTex. |
 | `THUM` | `0580A2B4–B6`, `0589DC44–47`, `05B17698–9A`, `05B1B524–26`, `2653E3C8–CA`, `2D4284F0–F2`, `5DE9DBA0–A2`, **`626F60CC–CE` (CAS)** | PNG | S (done for listed IDs) | P0 | Catalog / CAS / fence thumbs. More IDs may appear; magic sniff covers unlisted PNGs. |
 | `SNAP` | `0580A2CD–CF`, `6B6D837D–7F` | PNG | S (done) | P0 | Sim / family snapshots. Neighbourhood SNAPs are game-picky on encode, not on preview. |
 | `ICON` | `2E75C764–767` | PNG | S (done) | P0 | Object icons. |

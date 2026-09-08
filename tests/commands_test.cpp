@@ -167,6 +167,58 @@ int main() {
     char mag[4]{};
     df.read(mag, 4);
     CHECK(df.gcount() == 4 && mag[0] == 'D' && mag[1] == 'D' && mag[2] == 'S');
+    CHECK(dinfo["data"].value("decodeSupported", false) == true);
+
+    // dds.replace round-trip from exported path
+    auto drep = bus.execute("dds.replace", json{{"sessionId", sid},
+                                                {"resourceId", img_rid},
+                                                {"path", dds_out}});
+    CHECK(drep["ok"] == true);
+    CHECK(drep["data"].value("width", 0) == 4);
+    CHECK(drep["data"].value("format", "") == "A8R8G8B8");
+
+    // Cubemap refused by dds.replace (synthetic header + one DXT1 block)
+    {
+        std::vector<std::byte> cube;
+        auto put = [&](std::uint32_t v) {
+            const auto* p = reinterpret_cast<const std::byte*>(&v);
+            cube.insert(cube.end(), p, p + 4);
+        };
+        put(0x20534444);
+        put(124);
+        put(0x1007);
+        put(4);
+        put(4);
+        put(8);
+        put(0);
+        put(1);
+        cube.insert(cube.end(), 44, std::byte{0});
+        put(32);
+        put(0x4);
+        put(0x31545844);
+        put(0);
+        put(0);
+        put(0);
+        put(0);
+        put(0);
+        put(0x1000);
+        put(0x200);  // cubemap
+        put(0);
+        put(0);
+        put(0);
+        cube.insert(cube.end(), 8, std::byte{0});
+        auto cube_path = (tmp / "cube.dds").string();
+        {
+            std::ofstream cf(cube_path, std::ios::binary);
+            cf.write(reinterpret_cast<const char*>(cube.data()),
+                     static_cast<std::streamsize>(cube.size()));
+        }
+        auto crep = bus.execute("dds.replace", json{{"sessionId", sid},
+                                                    {"resourceId", img_rid},
+                                                    {"path", cube_path}});
+        CHECK(crep["ok"] == false);
+        CHECK(crep["error"].value("message", "").find("cubemap") != std::string::npos);
+    }
 
     auto got = bus.execute("stbl.get", json{{"sessionId", sid}, {"resourceId", rid}});
     CHECK(got["ok"] == true);
