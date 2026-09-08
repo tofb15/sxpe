@@ -101,6 +101,13 @@ json parse_rest(const std::vector<std::string>& extra, json args) {
                 } catch (...) {
                     args[key] = v;
                 }
+            } else if (!v.empty() && (std::isdigit(static_cast<unsigned char>(v.front())) || v.front() == '-' || v.front() == '+') &&
+                       v.find('.') != std::string::npos) {
+                try {
+                    args[key] = std::stod(v);
+                } catch (...) {
+                    args[key] = v;
+                }
             } else if (!v.empty() && (v.front() == '{' || v.front() == '[')) {
                 try {
                     args[key] = json::parse(v);
@@ -219,6 +226,10 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe nmap replace --package mod.package --entries '[{\"instance\":1,\"name\":\"Door\"}]' --force\n";
     std::cout << "  sxpe xml get --package mod.package --type 0x0333406C --group 0 --instance 0x1\n";
     std::cout << "  sxpe xml set --package mod.package --type 0x0333406C --group 0 --instance 0x1 --text '<root/>' --force\n";
+    std::cout << "  sxpe objd get --package mod.package --type 0x319E4F1D --group 0 --instance 0x1\n";
+    std::cout << "  sxpe objd set --package mod.package --type 0x319E4F1D --group 0 --instance 0x1 --price 250 --force\n";
+    std::cout << "  sxpe casp get --package mod.package --type 0x034AEECB --group 0 --instance 0x1\n";
+    std::cout << "  sxpe casp set --package mod.package --type 0x034AEECB --group 0 --instance 0x1 --clothing-type 5 --force\n";
     std::cout << "  sxpe package new --package new.package --force\n";
     std::cout << "  sxpe help resource\n";
     std::cout << "  sxpe resource rename --help\n\n";
@@ -599,7 +610,7 @@ bool is_mutating(Bus& bus, const std::string& id) {
 
 bool is_list(const std::string& id) {
     return id == "resource.list" || id == "manifest" || id == "handler.list" || id == "editor.list" ||
-           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" ||
+           id == "search.bytes" || id == "resource.findRefs" || id == "stbl.get" || id == "nmap.get" || id == "nmap.list" || id == "xml.get" || id == "objd.get" || id == "casp.get" ||
            id == "sims3pack.list";
 }
 

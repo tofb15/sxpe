@@ -7,6 +7,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sxpe::resources::bin {
@@ -151,6 +152,82 @@ inline bool take_cstr(std::span<const std::byte> s, std::size_t& o, std::string&
         out.push_back(c);
     }
     return !out.empty() || (o > 0 && o <= s.size());
+}
+
+
+inline void put_u8(std::vector<std::byte>& o, std::uint8_t v) { o.push_back(std::byte{v}); }
+
+inline void put_u32(std::vector<std::byte>& o, std::uint32_t v) {
+    const auto* p = reinterpret_cast<const std::byte*>(&v);
+    o.insert(o.end(), p, p + 4);
+}
+
+inline void put_u64(std::vector<std::byte>& o, std::uint64_t v) {
+    const auto* p = reinterpret_cast<const std::byte*>(&v);
+    o.insert(o.end(), p, p + 8);
+}
+
+inline void put_f32(std::vector<std::byte>& o, float v) {
+    const auto* p = reinterpret_cast<const std::byte*>(&v);
+    o.insert(o.end(), p, p + 4);
+}
+
+/// .NET-style 7-bit encoded length (matches take_7bit_len).
+inline void put_7bit_len(std::vector<std::byte>& o, std::uint32_t len) {
+    do {
+        std::uint8_t b = static_cast<std::uint8_t>(len & 0x7F);
+        len >>= 7;
+        if (len != 0) {
+            b |= 0x80;
+        }
+        put_u8(o, b);
+    } while (len != 0);
+}
+
+inline void put_7bit_ascii(std::vector<std::byte>& o, std::string_view s) {
+    put_7bit_len(o, static_cast<std::uint32_t>(s.size()));
+    const auto* p = reinterpret_cast<const std::byte*>(s.data());
+    o.insert(o.end(), p, p + s.size());
+}
+
+/// Encode UTF-8 (BMP) as CASP 7STRING Unicode BE.
+inline bool put_7bit_utf16be(std::vector<std::byte>& o, std::string_view utf8) {
+    std::u16string units;
+    units.reserve(utf8.size());
+    for (std::size_t i = 0; i < utf8.size();) {
+        const auto c = static_cast<unsigned char>(utf8[i]);
+        std::uint32_t cp = 0;
+        std::size_t n = 1;
+        if (c < 0x80) {
+            cp = c;
+        } else if ((c >> 5) == 0x6 && i + 1 < utf8.size()) {
+            cp = ((c & 0x1F) << 6) | (static_cast<unsigned char>(utf8[i + 1]) & 0x3F);
+            n = 2;
+        } else if ((c >> 4) == 0xE && i + 2 < utf8.size()) {
+            cp = ((c & 0x0F) << 12) | ((static_cast<unsigned char>(utf8[i + 1]) & 0x3F) << 6) |
+                 (static_cast<unsigned char>(utf8[i + 2]) & 0x3F);
+            n = 3;
+        } else if ((c >> 3) == 0x1E && i + 3 < utf8.size()) {
+            // Supplementary planes need surrogates; refuse for editor simplicity.
+            return false;
+        } else {
+            return false;
+        }
+        i += n;
+        if (cp > 0xFFFF) {
+            return false;
+        }
+        units.push_back(static_cast<char16_t>(cp));
+    }
+    if (units.size() > sxpe::core::caps::kMaxNameBytes / 2) {
+        return false;
+    }
+    put_7bit_len(o, static_cast<std::uint32_t>(units.size()));
+    for (char16_t u : units) {
+        put_u8(o, static_cast<std::uint8_t>((u >> 8) & 0xFF));
+        put_u8(o, static_cast<std::uint8_t>(u & 0xFF));
+    }
+    return true;
 }
 
 }  // namespace sxpe::resources::bin

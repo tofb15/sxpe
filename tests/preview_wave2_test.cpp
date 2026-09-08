@@ -137,6 +137,126 @@ int main() {
     }
 
     {
+        // OBJD apply: change price + internal name length; preserve trailing marker bytes
+        std::vector<std::byte> body;
+        wu32(body, 0);  // materials
+        w7str(body, "Inst");
+        wu32(body, 0x0C);
+        wu64(body, 0x1111ull);
+        wu64(body, 0x2222ull);
+        w7str(body, "A");
+        w7str(body, "B");
+        wf32(body, 10.0f);
+        wf32(body, 1.0f);
+        wf32(body, 0.0f);
+        wu8(body, 1);
+        wu64(body, 0x3333ull);
+        // unknown mid
+        wu32(body, 0xDEADBEEFu);
+        const auto tgi_off = static_cast<std::uint32_t>(body.size());
+        wu8(body, 0xAB);  // tgi stub
+        wu8(body, 0xCD);  // trailing after tgi
+
+        std::vector<std::byte> bytes;
+        wu32(bytes, 0x16);
+        wu32(bytes, tgi_off);
+        wu32(bytes, 1);
+        bytes.insert(bytes.end(), body.begin(), body.end());
+
+        sxpe::resources::ObjdPatch patch;
+        patch.price = 99.5f;
+        patch.internal_name = std::string("ChairX");
+        patch.name_guid = 0xAAAAull;
+        auto out = sxpe::resources::apply_objd(bytes, patch);
+        CHECK(out.has_value());
+        auto p2 = sxpe::resources::parse_objd(*out);
+        CHECK(p2.has_value());
+        CHECK(p2->price == 99.5f);
+        CHECK(p2->internal_name == "ChairX");
+        CHECK(p2->name_guid == 0xAAAAull);
+        CHECK(p2->desc_guid == 0x2222ull);
+        CHECK(p2->instance_name == "Inst");
+        // trailing marker after tgi stub still present
+        CHECK(out->size() >= 2);
+        CHECK(static_cast<unsigned>(*out->rbegin()) == 0xCD);
+        CHECK(static_cast<unsigned>(*(out->rbegin() + 1)) == 0xAB);
+        // DEADBEEF mid preserved: search for it
+        bool found = false;
+        for (std::size_t i = 0; i + 4 <= out->size(); ++i) {
+            std::uint32_t v = 0;
+            std::memcpy(&v, out->data() + i, 4);
+            if (v == 0xDEADBEEFu) {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found);
+    }
+
+    {
+        // CASP apply: rename + clothing + TGI replace; preserve mid padding
+        std::vector<std::byte> bytes;
+        wu32(bytes, 0x12);
+        const auto ref_at = bytes.size();
+        wu32(bytes, 0);
+        wu32(bytes, 0);
+        w7utf16be(bytes, "Top_Shirt");
+        wf32(bytes, 10.0f);
+        wu8(bytes, 0x7E);  // unused
+        wu32(bytes, 5);
+        wu32(bytes, 0);
+        const std::uint32_t age_gender = 0x30u | (0x31u << 8);
+        wu32(bytes, age_gender);
+        wu32(bytes, 0x2);
+        for (int i = 0; i < 8; ++i) {
+            wu8(bytes, static_cast<std::uint8_t>(0xA0 + i));
+        }
+        const auto tgi_at = bytes.size();
+        const auto ref_off = static_cast<std::uint32_t>(tgi_at - 8);
+        std::memcpy(bytes.data() + ref_at, &ref_off, 4);
+        wu8(bytes, 1);
+        wu64(bytes, 0xABCDull);
+        wu32(bytes, 0x11);
+        wu32(bytes, 0x0333406Cu);
+        wu8(bytes, 0xEE);  // trailing
+
+        sxpe::resources::CaspPatch patch;
+        patch.name = std::string("Top_New");
+        patch.clothing_type = 6u;
+        patch.age_flags = 0x20;
+        patch.species = 1;
+        patch.gender_flags = 2;
+        std::vector<sxpe::games::sims3::Tgi> rows;
+        sxpe::games::sims3::Tgi t{};
+        t.type = 0x00B2D882u;
+        t.group = 0x22;
+        t.instance = 0x1234ull;
+        rows.push_back(t);
+        patch.tgis = rows;
+        auto out = sxpe::resources::apply_casp(bytes, patch);
+        CHECK(out.has_value());
+        auto p2 = sxpe::resources::parse_casp(*out);
+        CHECK(p2.has_value());
+        CHECK(p2->name == "Top_New");
+        CHECK(p2->clothing_type == 6);
+        CHECK(p2->age_flags == 0x20);
+        CHECK(p2->species == 1);
+        CHECK(p2->gender_flags == 2);
+        CHECK(p2->tgis.size() == 1);
+        CHECK(p2->tgis[0].type == 0x00B2D882u);
+        CHECK(static_cast<unsigned>(out->back()) == 0xEE);
+        // unused byte preserved
+        bool unused_ok = false;
+        for (std::size_t i = 0; i < out->size(); ++i) {
+            if (static_cast<unsigned>((*out)[i]) == 0x7E) {
+                unused_ok = true;
+                break;
+            }
+        }
+        CHECK(unused_ok);
+    }
+
+    {
         // CLIP synthetic
         std::vector<std::byte> s3;
         // magic _S3Clip_
