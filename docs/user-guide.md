@@ -1,12 +1,12 @@
 # SXPE user guide (GUI)
 
-For builders running `sxpe_gui` on **Windows or Linux**, or anyone who packaged a local portable folder. v0.6.0 Releases ship a **Linux CLI+MCP** tarball only — not a Windows portable zip yet. GUI menus/workflows are the same on both OSes; OS-specific notes appear only where needed below.
+For builders running `sxpe_gui` on **Windows or Linux**, or anyone who packaged a local portable folder. Project version is **0.7.0**; the latest published Release may still be **v0.6.0** (Linux CLI+MCP tarball only) — not a Windows portable zip yet ([#54](https://github.com/tofb15/sxpe/issues/54)). GUI menus/workflows are the same on both OSes; OS-specific notes appear only where needed below.
 
 **Related:** [workflows](workflows.md) · [building](building.md) · [CLI/MCP](cli-mcp.md) · [format specs](spec/README.md)
 
 ## Install / run
 
-1. **Linux CLI/MCP (published):** download `sxpe-*-linux-x64-cli.tar.gz` from **[Releases](https://github.com/tofb15/sxpe/releases)** (v0.6.0+), or build locally with `./scripts/package-linux.sh --no-gui`.
+1. **Linux CLI/MCP (published):** download `sxpe-*-linux-x64-cli.tar.gz` from **[Releases](https://github.com/tofb15/sxpe/releases)** (latest published may still be v0.6.0 until `v0.7.0` ships), or build locally with `./scripts/package-linux.sh --no-gui`.
 2. **Windows GUI:** there is no portable zip on Releases yet ([#54](https://github.com/tofb15/sxpe/issues/54)). Build with `build.bat`, then `package.bat` / `scripts/package.ps1` ([building.md](building.md)). Unzip the local `dist/` zip; keep folder layout intact; run **`SXPE.bat`**.
 3. **Linux GUI:** build with Qt 6 present ([building.md](building.md)), run `./build/sxpe_gui`, or `./scripts/package-linux.sh` (includes GUI in the tarball; **does not** vendor Qt libs — install Qt on the machine that runs it).
 4. **From a build tree (either OS):** run `sxpe_gui` when Qt was found at configure time.
