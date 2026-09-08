@@ -1,5 +1,6 @@
 # MAINTAINER-ONLY — not end-user documentation.
-# Paste-ready GitHub Actions job: Linux Qt GUI build + gui_smoke (offscreen).
+# Canonical paste-ready job: Linux Qt GUI build + gui_smoke (offscreen).
+# docs/building.md links here; do not duplicate this YAML in markdown.
 # Promote into .github/workflows/ci.yml (next to linux-cli / windows-gui) when the
 # pushing token has the GitHub `workflow` scope. OAuth apps without that scope
 # cannot update .github/workflows/* — see docs/building.md.

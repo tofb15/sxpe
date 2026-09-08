@@ -1,6 +1,6 @@
 # SXPE format specs
 
-Agent/CLI overview: [cli-mcp.md](../cli-mcp.md). Human GUI: [user-guide.md](../user-guide.md).
+Project landing: [README](../../README.md). Doc map: [docs/README.md](../README.md). Agent/CLI: [cli-mcp.md](../cli-mcp.md). GUI: [user-guide.md](../user-guide.md).
 
 Implement codecs from these files plus cited public URLs. Do **not** treat s3pi/s3pe C# as the spec.
 

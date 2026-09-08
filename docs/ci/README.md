@@ -5,7 +5,7 @@ Files here are **paste-ready workflows for maintainers**, not end-user docs.
 | File | Purpose |
 | --- | --- |
 | [linux-gui.yml](linux-gui.yml) | Linux Qt GUI build + `gui_smoke` (offscreen) — paste under `jobs:` in `.github/workflows/ci.yml` |
-| [release.yml](release.yml) | Build Windows portable zip on `v*` tags and attach to the GitHub Release |
+| [release.yml](release.yml) | Synced copy of live `.github/workflows/release.yml` (Windows zip + Linux CLI tarball on `v*` tags) |
 
 Do **not** treat these as something a modder runs. Preferred live path is `.github/workflows/` when the pushing token has `workflow` scope; otherwise paste from here in the GitHub UI.
 
