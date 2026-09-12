@@ -32,7 +32,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
+#include <QPixmap>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QSplitter>
@@ -1736,6 +1738,9 @@ void show_about_dialog(QWidget* parent) {
 
     auto* header = new QHBoxLayout;
     header->setSpacing(10);
+    auto* logo = new QLabel;
+    logo->setPixmap(QIcon(QStringLiteral(":/sxpe/sxpe.png")).pixmap(64, 64));
+    header->addWidget(logo, 0, Qt::AlignVCenter);
     auto* title = new QLabel(QObject::tr("SXPE"));
     auto title_font = title->font();
     title_font.setPointSize(title_font.pointSize() + 5);

@@ -1,4 +1,5 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/names.hpp"
 #include "sxpe/commands/validate_report.hpp"
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
@@ -890,7 +891,8 @@ std::vector<Tool> make_catalog() {
          obj_schema({{"sessionId", sess_prop()}, {"dryRun", dry_prop()}}, json::array({"sessionId"})),
          env_out, false, true, false, true});
     add({"resource.list", "List resources",
-         "Metadata only; paginate with limit/cursor (default 100, max 500). Never dumps payloads. Filter: type, group, tag, nameContains, compressed.",
+         "Metadata only; paginate with limit/cursor (default 100, max 500). data.total is the matching count. "
+         "Never dumps payloads. Filter: type, group, tag, nameContains, compressed. CLI --all walks pages.",
          obj_schema({{"sessionId", sess_prop()},
                      {"limit", {{"type", "integer"}, {"default", 100}}},
                      {"cursor", {{"type", "string"}}},
@@ -1126,25 +1128,29 @@ std::vector<Tool> make_catalog() {
     add({"nmap.set", "NMAP set",
          "Set the display name for an instance (the Name column). Creates a name map "
          "if the package has none. Prefer resource.rename when you have a resourceId. "
-         "Updates the last matching row when duplicates exist (last-wins).",
+         "Updates the last matching row when duplicates exist (last-wins). "
+         "Optional compress (default false) writes RefPack like many stock NMAPs.",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"instance", {{"type", "integer"}}},
                      {"name", {{"type", "string"}}},
+                     {"compress", {{"type", "boolean"}, {"default", false}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "instance", "name"})),
          env_out, false, true, false, false});
     add({"nmap.delete", "NMAP delete",
-         "Remove all name-map rows for an instance id. dryRun available.",
+         "Remove all name-map rows for an instance id. dryRun available. Optional compress (default false).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"instance", {{"type", "integer"}}},
+                     {"compress", {{"type", "boolean"}, {"default", false}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "instance"})),
          env_out, false, true, false, false});
     add({"nmap.replace", "NMAP replace",
          "Replace the entire name map in one write (one undo). Pass entries as "
-         "[{instance,name},…]. Creates a name map if needed. Prefer this for batch edits.",
+         "[{instance,name},…]. Creates a name map if needed. Prefer this for batch edits. "
+         "Optional compress (default false).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"entries",
@@ -1155,15 +1161,17 @@ std::vector<Tool> make_catalog() {
                           {{"instance", {{"type", "integer"}}},
                            {"name", {{"type", "string"}}}}},
                          {"required", json::array({"instance", "name"})}}}}},
+                     {"compress", {{"type", "boolean"}, {"default", false}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "entries"})),
          env_out, false, true, false, false});
     add({"resource.rename", "Rename resource",
          "Set the NMAP display name for a resource (creates a name map if needed). "
-         "This is the Name the game and the resource list show.",
+         "This is the Name the game and the resource list show. Optional compress (default false).",
          obj_schema({{"sessionId", sess_prop()},
                      {"resourceId", rid_schema()},
                      {"name", {{"type", "string"}}},
+                     {"compress", {{"type", "boolean"}, {"default", false}}},
                      {"dryRun", dry_prop()}},
                     json::array({"sessionId", "resourceId", "name"})),
          env_out, false, true, false, false});
@@ -1835,11 +1843,7 @@ nlohmann::json Bus::manifest() const {
     json tools = json::array();
     for (const auto& t : impl_->catalog) {
         tools.push_back({{"name", t.id},
-                         {"mcpName", [&] {
-                              std::string m = t.id;
-                              std::replace(m.begin(), m.end(), '.', '_');
-                              return m;
-                          }()},
+                         {"mcpName", mcp_tool_name(t.id)},
                          {"title", t.title},
                          {"description", t.description},
                          {"inputSchema", t.input_schema},
@@ -1920,10 +1924,8 @@ json Bus::Impl::exec(std::string_view id, json args) {
     if (cmd == "manifest") {
         json tools = json::array();
         for (const auto& t : catalog) {
-            std::string mcp = t.id;
-            std::replace(mcp.begin(), mcp.end(), '.', '_');
             tools.push_back({{"name", t.id},
-                             {"mcpName", mcp},
+                             {"mcpName", mcp_tool_name(t.id)},
                              {"title", t.title},
                              {"description", t.description},
                              {"inputSchema", t.input_schema},
@@ -3155,7 +3157,12 @@ json Bus::Impl::exec(std::string_view id, json args) {
         }
     }
     if (!known) {
-        return envelope_err(err(ErrorCode::invalid_argument, "unknown command: '" + cmd + "'"));
+        std::vector<std::string> ids;
+        ids.reserve(catalog.size());
+        for (const auto& t : catalog) {
+            ids.push_back(t.id);
+        }
+        return envelope_err(err(ErrorCode::invalid_argument, unknown_command_message(cmd, ids)));
     }
 
     auto sr = require(args);
@@ -3370,11 +3377,13 @@ json Bus::Impl::exec(std::string_view id, json args) {
             }
             if (items.size() >= limit) {
                 more = true;
-                break;
+                continue;
             }
             items.push_back(item_meta(s.pkg, i, names));
         }
         json data{{"items", items},
+                  {"returned", items.size()},
+                  {"total", match},
                   {"truncated", more},
                   {"nextCursor", more ? std::to_string(start + static_cast<std::uint32_t>(items.size()))
                                       : ""}};
@@ -4395,13 +4404,14 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!out) {
             return envelope_err(out.error());
         }
-        auto r = s.pkg.set_uncompressed(*ni, *out, false);
+        auto r = s.pkg.set_uncompressed(*ni, *out, args.value("compress", false));
         if (!r) {
             return envelope_err(r.error());
         }
         return envelope_ok({{"count", n.entries.size()},
                             {"duplicates", dups},
-                            {"duplicatePolicy", "last-wins"}});
+                            {"duplicatePolicy", "last-wins"},
+                            {"compressed", args.value("compress", false)}});
     }
     if (cmd == "nmap.delete") {
         const auto inst = as_u64(args.at("instance"));
@@ -4455,11 +4465,13 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!out) {
             return envelope_err(out.error());
         }
-        auto r = s.pkg.set_uncompressed(*ni, *out, false);
+        auto r = s.pkg.set_uncompressed(*ni, *out, args.value("compress", false));
         if (!r) {
             return envelope_err(r.error());
         }
-        return envelope_ok({{"instance", inst}, {"removed", removed}});
+        return envelope_ok({{"instance", inst},
+                            {"removed", removed},
+                            {"compressed", args.value("compress", false)}});
     }
     if (cmd == "nmap.set" || cmd == "resource.rename") {
         std::uint64_t inst = 0;
@@ -4528,11 +4540,13 @@ json Bus::Impl::exec(std::string_view id, json args) {
         if (!out) {
             return envelope_err(out.error());
         }
-        auto r = s.pkg.set_uncompressed(*ni, *out, false);
+        auto r = s.pkg.set_uncompressed(*ni, *out, args.value("compress", false));
         if (!r) {
             return envelope_err(r.error());
         }
-        return envelope_ok({{"instance", inst}, {"name", name}});
+        return envelope_ok({{"instance", inst},
+                            {"name", name},
+                            {"compressed", args.value("compress", false)}});
     }
     if (cmd == "dds.info" || cmd == "dds.decode") {
         auto i = need_idx();

@@ -1,4 +1,5 @@
 #include "sxpe/commands/bus.hpp"
+#include "sxpe/commands/names.hpp"
 #include "sxpe/commands/validate_report.hpp"
 #include "sxpe/commands/package_diff_report.hpp"
 #include "sxpe/commands/find_refs_report.hpp"
@@ -50,18 +51,20 @@ bool stdout_tty() {
 #endif
 }
 
-std::string camel(std::string k) {
-    std::string o;
-    bool up = false;
-    for (char c : k) {
-        if (c == '-' || c == '_') {
-            up = true;
-            continue;
-        }
-        o.push_back(up ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c);
-        up = false;
+std::string camel(std::string_view k) { return sxpe::commands::camel_from_kebab(k); }
+
+std::vector<std::string> tool_ids(const Bus& bus) {
+    const auto tools = bus.tools();
+    std::vector<std::string> ids;
+    ids.reserve(tools.size());
+    for (const auto& t : tools) {
+        ids.push_back(t.id);
     }
-    return o;
+    return ids;
+}
+
+void print_unknown_command(const Bus& bus, std::string_view id) {
+    std::cerr << sxpe::commands::unknown_command_message(id, tool_ids(bus)) << "\nTry: sxpe help\n";
 }
 
 bool plain_int(std::string_view v) {
@@ -204,8 +207,8 @@ void print_global_help(const Bus& bus) {
     std::cout << "  --type --group --instance --ordinal\n";
     std::cout << "                     Alternative to --id (hex 0xAABB is ok); do not mix with --id\n";
     std::cout << "  --name TEXT        NMAP display name / CLIP exportAs name\n";
-    std::cout << "  --text TEXT        hash.fnv / search.bytes / xml.set\n";
-    std::cout << "  --force --dry-run --writable --force-writable --include-payload --limit N\n";
+    std::cout << "  --text TEXT        String payload/needle (hash.fnv, search.bytes, xml.set)\n";
+    std::cout << "  --force --dry-run --writable --force-writable --include-payload --compress --all --limit N\n";
     std::cout << "  --format json|jsonl|text|table\n\n";
     std::cout << "Examples:\n";
     std::cout << "  sxpe app checkUpdate\n";
@@ -217,6 +220,7 @@ void print_global_help(const Bus& bus) {
     std::cout << "  sxpe sims3pack pack --source-dir /tmp/pkgs --path out.sims3pack --display-name MyMod --force\n";
     std::cout << "  sxpe resource find-refs --package mod.package --type 0x0333406C --group 0 --instance 0x1 --format text\n";
     std::cout << "  sxpe resource list --package mod.package --limit 20\n";
+    std::cout << "  sxpe resource list --package mod.package --format table --all\n";
     std::cout << "  sxpe resource export --package mod.package --type 0x0333406C --group 0 "
                  "--instance 0x1 --path out.xml --force\n";
     std::cout << "  sxpe resource add --package mod.package --type 0x0166038C --group 0 "
@@ -250,7 +254,8 @@ void print_global_help(const Bus& bus) {
 void print_command_help(const Bus& bus, std::string_view id) {
     const auto t = find_tool(bus, id);
     if (!t) {
-        std::cout << "unknown command: '" << id << "'\nTry: sxpe help\n";
+        std::cout << sxpe::commands::unknown_command_message(id, tool_ids(bus))
+                  << "\nTry: sxpe help\n";
         return;
     }
     std::cout << t->id << " — " << t->title << '\n';
@@ -261,7 +266,7 @@ void print_command_help(const Bus& bus, std::string_view id) {
     std::string verb;
     if (const auto dot = t->id.find('.'); dot != std::string::npos) {
         noun = t->id.substr(0, dot);
-        verb = t->id.substr(dot + 1);
+        verb = sxpe::commands::kebab_from_camel(t->id.substr(dot + 1));
     }
     std::cout << "usage: sxpe " << noun;
     if (!verb.empty()) {
@@ -310,7 +315,13 @@ void print_command_help(const Bus& bus, std::string_view id) {
     if (needs_rid) {
         std::cout << "TGI: pass --id JSON or --type/--group/--instance, not both.\n";
     }
-    std::cout << "Also: --force --dry-run --format json|jsonl|text|table\n";
+    if (t->id == "resource.read") {
+        std::cout << "Payload: --include-payload embeds base64 up to 1 MiB; use resource export for files.\n";
+    }
+    if (t->id == "resource.list") {
+        std::cout << "Table view prints Showing N of total. CLI --all walks every page.\n";
+    }
+    std::cout << "Also: --force --dry-run --compress --all --format json|jsonl|text|table\n";
 }
 
 std::string cell(const json& j, const char* key, const char* alt = nullptr) {
@@ -556,7 +567,9 @@ int print_result(const json& env, const std::string& format, bool list_like) {
             }
             if (data.value("truncated", false)) {
                 std::cout << json({{"nextCursor", data.value("nextCursor", "")},
-                                   {"truncated", true}})
+                                   {"truncated", true},
+                                   {"returned", data.value("returned", data["items"].size())},
+                                   {"total", data.value("total", data["items"].size())}})
                                  .dump()
                           << '\n';
             }
@@ -580,8 +593,13 @@ int print_result(const json& env, const std::string& format, bool list_like) {
             const auto& data = env["data"];
             if (data.contains("items") && data["items"].is_array()) {
                 print_rows_table(data["items"]);
+                const auto returned = data.value("returned", data["items"].size());
+                const auto total = data.value("total", returned);
                 if (data.value("truncated", false)) {
-                    std::cout << "(truncated; nextCursor " << data.value("nextCursor", "") << ")\n";
+                    std::cout << "Showing " << returned << " of " << total
+                              << " — more exist; use --all or --limit/--cursor\n";
+                } else if (data.contains("total")) {
+                    std::cout << "Showing " << returned << " of " << total << "\n";
                 }
                 return 0;
             }
@@ -727,6 +745,8 @@ int main(int argc, char** argv) {
     bool force_writable = false;
     bool include_payload = false;
     bool want_progress = false;
+    bool compress = false;
+    bool all_pages = false;
     int limit = 0;
     app.add_option("--format", format, "json | jsonl | text | table");
     app.add_flag("--dry-run", dry);
@@ -739,7 +759,7 @@ int main(int argc, char** argv) {
     app.add_option("--path", path, "File path (export dest, add/replace bytes, save-as dest)");
     app.add_option("--file", file, "Alias of --path for payload files");
     app.add_option("--name", name, "NMAP display name / CLIP exportAs name");
-    app.add_option("--text", text, "Text for hash.fnv / search.bytes");
+    app.add_option("--text", text, "String payload/needle (hash.fnv, search.bytes, xml.set)");
     app.add_option("--type", type_s, "Resource type (decimal or 0x hex)");
     app.add_option("--group", group_s, "Resource group (decimal or 0x hex)");
     app.add_option("--instance", inst_s, "Resource instance (decimal or 0x hex)");
@@ -748,6 +768,8 @@ int main(int argc, char** argv) {
     app.add_flag("--force-writable", force_writable,
                  "Allow writable open above the large-package read-only threshold");
     app.add_flag("--include-payload", include_payload);
+    app.add_flag("--compress", compress, "Write RefPack when the command supports compress");
+    app.add_flag("--all", all_pages, "resource.list: walk every page (CLI table/JSON)");
     app.add_flag("--progress", want_progress,
                  "Emit merge/import/scan progress JSON lines on stderr; SIGINT cancels");
     app.add_option("--limit", limit);
@@ -826,6 +848,9 @@ int main(int argc, char** argv) {
     if (include_payload) {
         args["includePayload"] = true;
     }
+    if (compress) {
+        args["compress"] = true;
+    }
     if (limit > 0) {
         args["limit"] = limit;
     }
@@ -880,15 +905,16 @@ int main(int argc, char** argv) {
         id = noun + "." + v;
     }
     if (!find_tool(bus, id)) {
+        const auto msg = sxpe::commands::unknown_command_message(id, tool_ids(bus));
         const json env = {{"ok", false},
                           {"schemaVersion", 1},
                           {"error",
                            {{"code", "invalid_argument"},
-                            {"message", "unknown command: '" + id + "'"},
+                            {"message", msg},
                             {"retryable", false},
                             {"side_effects", "none"}}}};
         if (format == "text" || format == "table") {
-            std::cerr << "unknown command: '" << id << "'\nTry: sxpe help\n";
+            print_unknown_command(bus, id);
             return 2;
         }
         return print_result(env, format, false);
@@ -969,7 +995,36 @@ int main(int argc, char** argv) {
         return print_result(env, format, false);
     }
 
+    if (all_pages && id == "resource.list") {
+        args["limit"] = 500;
+    }
     auto env = bus.execute(id, args);
+    if (all_pages && id == "resource.list" && env.value("ok", false)) {
+        json items = env["data"].value("items", json::array());
+        int pages = 0;
+        while (env["data"].value("truncated", false) && pages < 10'000) {
+            ++pages;
+            const auto next = env["data"].value("nextCursor", std::string{});
+            if (next.empty()) {
+                break;
+            }
+            args["cursor"] = next;
+            args["limit"] = 500;
+            env = bus.execute(id, args);
+            if (!env.value("ok", false) || !env["data"].contains("items")) {
+                break;
+            }
+            for (const auto& it : env["data"]["items"]) {
+                items.push_back(it);
+            }
+        }
+        if (env.value("ok", false)) {
+            env["data"]["items"] = items;
+            env["data"]["returned"] = items.size();
+            env["data"]["truncated"] = false;
+            env["data"]["nextCursor"] = "";
+        }
+    }
     if (oneshot && env.value("ok", false) && is_mutating(bus, id) && !dry) {
         auto sv = bus.execute("package.save", json{{"sessionId", opened}});
         if (!sv.value("ok", false)) {

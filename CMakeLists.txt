@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(sxpe VERSION 0.7.1 LANGUAGES CXX)
+project(sxpe VERSION 0.7.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -102,12 +102,18 @@ add_library(sxpe_commands
 target_include_directories(sxpe_commands PUBLIC "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_commands PUBLIC sxpe_resources)
 
-add_executable(sxpe src/cli/main.cpp)
+if(WIN32)
+    set(SXPE_WIN_RC src/gui/resources/sxpe.rc)
+else()
+    set(SXPE_WIN_RC)
+endif()
+
+add_executable(sxpe src/cli/main.cpp ${SXPE_WIN_RC})
 target_include_directories(sxpe PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe PRIVATE sxpe_commands)
 add_dependencies(sxpe sxpe_build_info)
 
-add_executable(sxpe_mcp src/mcp/main.cpp)
+add_executable(sxpe_mcp src/mcp/main.cpp ${SXPE_WIN_RC})
 target_include_directories(sxpe_mcp PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_mcp PRIVATE sxpe_commands)
 add_dependencies(sxpe_mcp sxpe_build_info)
@@ -183,6 +189,8 @@ if(Qt6_FOUND)
         src/gui/palette.cpp
         src/gui/dialogs.cpp
         src/gui/plugin_host.cpp
+        src/gui/resources/sxpe.qrc
+        ${SXPE_WIN_RC}
     )
     target_include_directories(sxpe_gui PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/gui"
@@ -190,7 +198,7 @@ if(Qt6_FOUND)
         "${SXPE_GENERATED_INCLUDE_DIR}")
     target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
     add_dependencies(sxpe_gui sxpe_build_info)
-    set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
+    set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON AUTORCC ON)
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
     find_program(SXPE_WINDEPLOYQT windeployqt HINTS "${_qt_prefix}/bin")
     if(SXPE_WINDEPLOYQT)
@@ -233,10 +241,23 @@ add_test(NAME cli_check_update_newer COMMAND sxpe app checkUpdate
 set_tests_properties(cli_check_update_newer PROPERTIES PASS_REGULAR_EXPRESSION "newerAvailable")
 add_test(NAME cli_list COMMAND sxpe resource list --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin" --format json --limit 10)
+set_tests_properties(cli_list PROPERTIES PASS_REGULAR_EXPRESSION "\"total\":")
+add_test(NAME cli_list_table COMMAND sxpe resource list --package
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin" --format table --limit 1)
+set_tests_properties(cli_list_table PROPERTIES PASS_REGULAR_EXPRESSION "Showing")
+add_test(NAME cli_list_all COMMAND sxpe resource list --package
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin" --format json --all)
+set_tests_properties(cli_list_all PROPERTIES PASS_REGULAR_EXPRESSION "\"truncated\":false")
 add_test(NAME cli_info COMMAND sxpe package info --package
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/empty.bin" --format json)
 add_test(NAME cli_help COMMAND sxpe --help)
-set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "resource.rename")
+set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "String payload/needle")
+add_test(NAME cli_unknown_search COMMAND sxpe resource search --format json)
+set_tests_properties(cli_unknown_search PROPERTIES PASS_REGULAR_EXPRESSION "nameContains")
+add_test(NAME cli_help_read COMMAND sxpe resource read --help)
+set_tests_properties(cli_help_read PROPERTIES PASS_REGULAR_EXPRESSION "1 MiB")
+add_test(NAME cli_help_find_refs COMMAND sxpe resource find-refs --help)
+set_tests_properties(cli_help_find_refs PROPERTIES PASS_REGULAR_EXPRESSION "usage: sxpe resource find-refs")
 add_test(NAME cli_version COMMAND sxpe --version)
 set_tests_properties(cli_version PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}")
 add_test(NAME cli_help_command COMMAND sxpe resource rename --help)
@@ -257,9 +278,13 @@ set_tests_properties(cli_nmap_pkg PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":tru
 add_test(NAME cli_nmap_set COMMAND sxpe nmap set --package
     "${CMAKE_BINARY_DIR}/cli-nmap.package" --instance 0x1 --name Foo --force --format json)
 set_tests_properties(cli_nmap_set PROPERTIES DEPENDS cli_nmap_pkg PASS_REGULAR_EXPRESSION "\"ok\":true")
+add_test(NAME cli_nmap_set_compress COMMAND sxpe nmap set --package
+    "${CMAKE_BINARY_DIR}/cli-nmap.package" --instance 0x2 --name Bar --compress --force --format json)
+set_tests_properties(cli_nmap_set_compress PROPERTIES DEPENDS cli_nmap_set PASS_REGULAR_EXPRESSION
+    "\"compressed\":true")
 add_test(NAME cli_nmap_delete COMMAND sxpe nmap delete --package
     "${CMAKE_BINARY_DIR}/cli-nmap.package" --instance 0x1 --force --format json)
-set_tests_properties(cli_nmap_delete PROPERTIES DEPENDS cli_nmap_set PASS_REGULAR_EXPRESSION "\"ok\":true")
+set_tests_properties(cli_nmap_delete PROPERTIES DEPENDS cli_nmap_set_compress PASS_REGULAR_EXPRESSION "\"ok\":true")
 add_test(NAME cli_folder_scan COMMAND sxpe folder scan --path
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic" --format json)
 set_tests_properties(cli_folder_scan PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
@@ -275,6 +300,10 @@ add_test(NAME cli_sims3pack_pack COMMAND ${CMAKE_COMMAND}
     -DSYN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic
     -DWORK_DIR=${CMAKE_BINARY_DIR}/sims3pack-pack-cli
     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cli_sims3pack_pack_test.cmake)
+add_test(NAME mcp_initialize COMMAND ${CMAKE_COMMAND}
+    -DSXPE_MCP=$<TARGET_FILE:sxpe_mcp>
+    -DWORK_DIR=${CMAKE_BINARY_DIR}/mcp-init-cli
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/mcp_initialize_test.cmake)
 if(TARGET sxpe_gui)
     add_test(NAME gui_smoke COMMAND sxpe_gui --smoke
         "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/synthetic/single-blob.bin")
