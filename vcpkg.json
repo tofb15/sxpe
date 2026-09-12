@@ -1,6 +1,6 @@
 {
   "name": "sxpe",
-  "version-string": "0.7.2",
+  "version-string": "0.7.3",
   "dependencies": [
     "nlohmann-json",
     "cli11"

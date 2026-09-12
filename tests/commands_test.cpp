@@ -1094,6 +1094,115 @@ int main() {
         check_child("nmap-b.package", 0x222, "BetaMesh", 0x111);
     }
 
+    // Hashed NMAP instances (typical s3pe-exported CC) still coalesce to 0166038C:0:0.
+    {
+        auto make_hashed = [&](const std::string& sid, std::uint64_t nmap_inst, std::uint32_t type,
+                               std::uint64_t inst, const std::string& name, const std::string& path) {
+            json rid{{"type", type}, {"group", 0}, {"instance", inst}};
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId", rid},
+                                   {"payloadB64", b64(*raw)}})["ok"] == true);
+            sxpe::resources::Nmap nm;
+            nm.version = 1;
+            nm.entries.push_back({inst, name});
+            auto body = sxpe::resources::write_nmap(nm);
+            CHECK(body.has_value());
+            json nmap_tgi{{"type", sxpe::resources::kNmap}, {"group", 0}, {"instance", nmap_inst}};
+            CHECK(bus.execute("resource.add",
+                              json{{"sessionId", sid},
+                                   {"resourceId", nmap_tgi},
+                                   {"payloadB64", b64(*body)}})["ok"] == true);
+            CHECK(bus.execute("package.saveAs",
+                              json{{"sessionId", sid}, {"path", path}, {"force", true}})["ok"] ==
+                  true);
+        };
+        auto pa = bus.execute("package.new", json::object());
+        auto pb = bus.execute("package.new", json::object());
+        CHECK(pa["ok"] == true && pb["ok"] == true);
+        const auto paid = pa["data"]["sessionId"].get<std::string>();
+        const auto pbid = pb["data"]["sessionId"].get<std::string>();
+        auto ha_path = (tmp / "nmap-hash-a.package").string();
+        auto hb_path = (tmp / "nmap-hash-b.package").string();
+        make_hashed(paid, 0xC2044F3F88B1A3F8ull, 1, 0x111, "AlphaMesh", ha_path);
+        make_hashed(pbid, 0x127CCEE56B982288ull, 2, 0x222, "BetaMesh", hb_path);
+        bus.execute("package.close", json{{"sessionId", paid}});
+        bus.execute("package.close", json{{"sessionId", pbid}});
+
+        auto mg = bus.execute("package.new", json::object());
+        CHECK(mg["ok"] == true);
+        const auto mgid = mg["data"]["sessionId"].get<std::string>();
+        auto nimp = bus.execute("resource.importPackage",
+                                json{{"sessionId", mgid},
+                                     {"paths", json::array({ha_path, hb_path})},
+                                     {"writeMergeManifest", true}});
+        CHECK(nimp["ok"] == true);
+        auto nlist = bus.execute("resource.list", json{{"sessionId", mgid}, {"limit", 20}});
+        CHECK(nlist["ok"] == true);
+        std::uint32_t nmap_rows = 0;
+        bool nmap_canonical = false;
+        bool saw_sxmm = false;
+        bool saw_alpha = false;
+        bool saw_beta = false;
+        for (const auto& it : nlist["data"]["items"]) {
+            if (it.value("type", 0u) == sxpe::resources::kNmap) {
+                ++nmap_rows;
+                nmap_canonical = it.value("group", 1u) == 0 && it.value("instance", 1ull) == 0;
+            }
+            if (it.value("type", 0u) == sxpe::resources::kSxmm) {
+                saw_sxmm = true;
+            }
+            if (it.value("instance", 0ull) == 0x111 && it.value("name", "") == "AlphaMesh") {
+                saw_alpha = true;
+            }
+            if (it.value("instance", 0ull) == 0x222 && it.value("name", "") == "BetaMesh") {
+                saw_beta = true;
+            }
+        }
+        CHECK(nmap_rows == 1);
+        CHECK(nmap_canonical);
+        CHECK(saw_sxmm);
+        CHECK(saw_alpha);
+        CHECK(saw_beta);
+        CHECK(nlist["data"]["items"][0].value("type", 0u) == sxpe::resources::kNmap);
+        CHECK(nlist["data"]["items"][0].value("instance", 1ull) == 0);
+        auto hashed_merged = (tmp / "nmap-hash-merged.package").string();
+        CHECK(bus.execute("package.saveAs",
+                          json{{"sessionId", mgid}, {"path", hashed_merged}, {"force", true}})["ok"] ==
+              true);
+        bus.execute("package.close", json{{"sessionId", mgid}});
+        auto hout = (tmp / "nmap-hash-unmerged").string();
+        std::filesystem::create_directories(hout);
+        auto umn = bus.execute(
+            "package.unmerge", json{{"path", hashed_merged}, {"outDir", hout}, {"force", true}});
+        CHECK(umn["ok"] == true);
+        CHECK(umn["data"].value("packagesWritten", 0) == 2);
+        auto check_hashed_child = [&](const std::string& fname, std::uint64_t nmap_inst,
+                                      std::uint64_t inst, const std::string& name) {
+            auto op = bus.execute("package.open", json{{"path", (tmp / "nmap-hash-unmerged" / fname).string()}});
+            CHECK(op["ok"] == true);
+            const auto cid = op["data"]["sessionId"].get<std::string>();
+            auto lst = bus.execute("resource.list", json{{"sessionId", cid}, {"limit", 20}});
+            CHECK(lst["ok"] == true);
+            bool saw_nmap = false;
+            for (const auto& it : lst["data"]["items"]) {
+                if (it.value("type", 0u) == sxpe::resources::kNmap) {
+                    saw_nmap = true;
+                    CHECK(it.value("instance", 0ull) == nmap_inst);
+                }
+            }
+            CHECK(saw_nmap);
+            auto ng = bus.execute("nmap.get", json{{"sessionId", cid}});
+            CHECK(ng["ok"] == true);
+            CHECK(ng["data"]["entries"].size() == 1);
+            CHECK(ng["data"]["entries"][0].value("instance", 0ull) == inst);
+            CHECK(ng["data"]["entries"][0].value("name", "") == name);
+            bus.execute("package.close", json{{"sessionId", cid}});
+        };
+        check_hashed_child("nmap-hash-a.package", 0xC2044F3F88B1A3F8ull, 0x111, "AlphaMesh");
+        check_hashed_child("nmap-hash-b.package", 0x127CCEE56B982288ull, 0x222, "BetaMesh");
+    }
+
     // Issue #21: validate summary + dirPolicy strip / copy-through (no DIR invent on new).
     {
         auto empty = bus.execute("package.new", json::object());

@@ -21,13 +21,13 @@ Read for display; rewrite when renaming resources if we own the NMAP. Do not inv
 
 ## Merge
 
-`resource.importPackage` concatenates NMAP records when source and dest share a TGI (community packages all use `0166038C` group 0 instance 0). That is a table union, not last-wins blob replace: dropping the earlier map blanks the Name column for those resources.
+`resource.importPackage` concatenates **every** source NMAP into one dest NameMap at the canonical TGI `0166038C:0:0`, matching s3pe (`Import.cs` skips copying NMAP rows and `MergeNamemap`s into `0:0:0`). Community CC often hashes the NMAP instance (same FNV as the CASP); those are still one table, not extra resources. That is a table union, not last-wins blob replace: dropping the earlier map blanks the Name column for those resources.
 
-- First NMAP is copy-through (keeps on-disk RefPack if present).
-- Later NMAPs with the same TGI are decompressed, appended in import order, and written uncompressed (same as `nmap.set`).
-- Duplicate instance ids are kept as extra rows; the Name column uses last-wins (`name_index`).
-- After import the (single) NMAP row is moved to package index 0, matching s3pe merge order. SXMM stays at the end.
-- SXMM stores each source's original name table (`nameMap`). `package.unmerge` writes that table back into the child; it does not copy the concatenated merge NMAP.
+- First NMAP is copy-through onto `0166038C:0:0` (keeps on-disk RefPack if present).
+- Later NMAPs (any instance) are decompressed, appended in import order, and written uncompressed (same as `nmap.set`).
+- After import, leftover NameMaps are folded into that one row, it is rekeyed to `0:0:0` if needed, and moved to index 0. SXMM stays at the end.
+- Duplicate instance ids in the table are kept as extra rows; the Name column uses last-wins (`name_index`).
+- SXMM stores each source's original name table (`nameMap`, including the source TGI). `package.unmerge` writes that table back into the child; it does not copy the concatenated merge NMAP.
 
 ## Editor (CLI / MCP / GUI)
 

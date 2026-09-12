@@ -44,7 +44,7 @@ GUI drop-merge and `resource.importPackage --writeMergeManifest` write this afte
 | `copy-through` | Default without a merge manifest. Copy source DIR bytes into the dest when present. |
 | `rebuild` | Not yet implemented; `resource.importPackage` refuses with a clear error. |
 
-Duplicate NMAP TGIs concatenate name records instead of last-wins replace, and the name map is moved to index 0 (see [nmap.md](nmap.md)). Each source records its original `nameMap` so un-merge can restore that table instead of copying the concatenated NMAP.
+All source NMAPs concatenate into one canonical `0166038C:0:0` (see [nmap.md](nmap.md)), even when instances differ. The name map is moved to index 0. Each source records its original `nameMap` so un-merge can restore that table (and TGI) instead of copying the concatenated merge NMAP. SXMM stays in-package (`53584D4D:0:1`) so un-merge needs no sidecar file; it uses the same TS3 index flags as other resources (`unknown2=1`, filesize high bit).
 
 ## Un-merge
 
