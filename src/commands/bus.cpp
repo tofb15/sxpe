@@ -48,6 +48,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <tuple>
 #include <unordered_map>
 
@@ -529,8 +530,22 @@ VoidResult replace_resource_through(Package& dest, std::uint32_t dest_i, const P
     return dest.set_raw(dest_i, *disk, e.mem_size, e.compressed, e.unknown2, e.file_size_high_bit);
 }
 
+std::optional<std::uint32_t> first_nmap_index(const Package& pkg) {
+    for (std::uint32_t i = 0; i < pkg.count(); ++i) {
+        if (pkg.deleted(i)) {
+            continue;
+        }
+        if (pkg.entry(i).tgi.type == kNmap) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
 // s3pe concatenates NameMap records on merge. Duplicate TGI 0166038C:0:0 is a table
 // union, not last-wins payload replace — otherwise later packages wipe earlier names.
+// Community CC often hashes the NMAP *instance* (same as the CASP); match by type only
+// and keep a single canonical 0166038C:0:0 so the game does not see extra NameMaps.
 VoidResult merge_nmap_from(Package& dest, std::uint32_t dest_i, const Package& src,
                            std::uint32_t src_i) {
     auto a = dest.uncompressed(dest_i);
@@ -567,13 +582,36 @@ VoidResult pin_nmap_front(Package& pkg) {
     if (pkg.layout_locked()) {
         return ok();
     }
+    std::vector<std::uint32_t> nmaps;
     for (std::uint32_t i = 0; i < pkg.count(); ++i) {
-        if (pkg.entry(i).tgi.type == kNmap) {
-            if (i == 0) {
-                return ok();
-            }
-            return pkg.move(i, 0);
+        if (pkg.deleted(i)) {
+            continue;
         }
+        if (pkg.entry(i).tgi.type == kNmap) {
+            nmaps.push_back(i);
+        }
+    }
+    if (nmaps.empty()) {
+        return ok();
+    }
+    const auto keep = nmaps.front();
+    for (std::size_t k = nmaps.size(); k-- > 1;) {
+        if (auto wr = merge_nmap_from(pkg, keep, pkg, nmaps[k]); !wr) {
+            return wr;
+        }
+        if (auto rm = pkg.remove(nmaps[k]); !rm) {
+            return rm;
+        }
+    }
+    Tgi canon{};
+    canon.type = kNmap;
+    if (pkg.entry(keep).tgi != canon) {
+        if (auto rk = pkg.rekey(keep, canon); !rk) {
+            return rk;
+        }
+    }
+    if (keep != 0) {
+        return pkg.move(keep, 0);
     }
     return ok();
 }
@@ -989,8 +1027,9 @@ std::vector<Tool> make_catalog() {
          env_out, false, true, false, true});
     add({"resource.importPackage", "Import package",
          "Copy resources from one or more TS3 packages. Pass path or paths[]. "
-         "Duplicate NMAP TGIs concatenate name records and the name map is moved to index 0 "
-         "(s3pe merge). writeMergeManifest records SXMM so package.unmerge can reverse an SXPE merge. "
+         "All NMAP resources concatenate into one canonical 0166038C:0:0 at index 0 (s3pe merge), "
+         "even when source NameMaps use hashed instances. writeMergeManifest records SXMM in-package "
+         "so package.unmerge can reverse an SXPE merge. "
          "dirPolicy: strip (default with writeMergeManifest), copy-through, or rebuild (not yet; refused). "
          "Without writeMergeManifest, default dirPolicy is copy-through. Never invents DIR on empty packages. "
          "leftoverManifestPolicy: strip (default; auto-drop documented allowlist TGIs such as "
@@ -3981,25 +4020,49 @@ json Bus::Impl::exec(std::string_view id, json args) {
                 if (cancelled()) {
                     return abort_cancelled("mid_package");
                 }
-                auto ex = s.pkg.find(t, src->entry(i).ordinal);
-                if (ex && t.type == kNmap) {
-                    if (auto cap = capture_mut(s, *ex, mut_snaps, mut_seen); !cap) {
-                        errors.push_back(
-                            {{"path", path->string()}, {"message", cap.error().message}});
-                        file_ok = false;
-                        break;
+                if (t.type == kNmap) {
+                    Tgi canon{};
+                    canon.type = kNmap;
+                    auto dest_i = first_nmap_index(s.pkg);
+                    if (dest_i) {
+                        if (auto cap = capture_mut(s, *dest_i, mut_snaps, mut_seen); !cap) {
+                            errors.push_back(
+                                {{"path", path->string()}, {"message", cap.error().message}});
+                            file_ok = false;
+                            break;
+                        }
+                        auto wr = merge_nmap_from(s.pkg, *dest_i, *src, i);
+                        if (!wr) {
+                            errors.push_back(
+                                {{"path", path->string()}, {"message", wr.error().message}});
+                            file_ok = false;
+                            break;
+                        }
+                        recs.push_back(
+                            rid_json(s.pkg.entry(*dest_i).tgi, s.pkg.entry(*dest_i).ordinal));
+                    } else {
+                        auto disk = src->raw(i);
+                        if (!disk) {
+                            errors.push_back(
+                                {{"path", path->string()}, {"message", disk.error().message}});
+                            file_ok = false;
+                            break;
+                        }
+                        const auto& se = src->entry(i);
+                        auto addn = s.pkg.add_raw(canon, *disk, se.mem_size, se.compressed,
+                                                  se.unknown2, se.file_size_high_bit);
+                        if (!addn) {
+                            errors.push_back(
+                                {{"path", path->string()}, {"message", addn.error().message}});
+                            file_ok = false;
+                            break;
+                        }
+                        recs.push_back(rid_json(s.pkg.entry(*addn).tgi, s.pkg.entry(*addn).ordinal));
                     }
-                    auto wr = merge_nmap_from(s.pkg, *ex, *src, i);
-                    if (!wr) {
-                        errors.push_back(
-                            {{"path", path->string()}, {"message", wr.error().message}});
-                        file_ok = false;
-                        break;
-                    }
-                    recs.push_back(rid_json(s.pkg.entry(*ex).tgi, s.pkg.entry(*ex).ordinal));
                     ++n;
                     continue;
                 }
+                auto ex = s.pkg.find(t, src->entry(i).ordinal);
                 if (ex) {
                     json dup{{"path", path->string()},
                              {"type", t.type},
