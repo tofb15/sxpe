@@ -11,8 +11,8 @@ body:
     id: version
     attributes:
       label: SXPE version
-      description: Help → About, or the release zip name (e.g. 0.7.1).
-      placeholder: "0.7.1"
+      description: Help → About, or the release zip name (e.g. 0.7.2).
+      placeholder: "0.7.2"
     validations:
       required: true
   - type: dropdown
