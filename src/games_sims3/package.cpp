@@ -511,6 +511,8 @@ VoidResult Package::set_uncompressed(std::uint32_t i, std::span<const std::byte>
             entries_[i].compressed = 0xFFFF;
             entries_[i].file_size = static_cast<std::uint32_t>(overrides_[i]->size());
             entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
+            entries_[i].unknown2 = 1;
+            entries_[i].file_size_high_bit = true;
         } else {
             entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
         }
@@ -526,6 +528,8 @@ VoidResult Package::set_uncompressed(std::uint32_t i, std::span<const std::byte>
             entries_[i].compressed = 0;
             entries_[i].file_size = static_cast<std::uint32_t>(data.size());
             entries_[i].mem_size = entries_[i].file_size;
+            entries_[i].unknown2 = 1;
+            entries_[i].file_size_high_bit = true;
         } else {
             entries_[i].mem_size = static_cast<std::uint32_t>(data.size());
         }
