@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/sxpe">
+        <file>sxpe.png</file>
+        <file>sxpe.ico</file>
+    </qresource>
+</RCC>
