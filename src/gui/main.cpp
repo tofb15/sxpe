@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 #include <QPalette>
 #include <QString>
 #include <QStyleHints>
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
     app.setApplicationName("SXPE");
     app.setOrganizationName("SXPE");
     app.setApplicationVersion(QStringLiteral(SXPE_VERSION));
+    app.setWindowIcon(QIcon(QStringLiteral(":/sxpe/sxpe.ico")));
     apply_theme(app);
 
     sxpe::gui::MainWindow w;

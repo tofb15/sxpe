@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(sxpe VERSION 0.7.1 LANGUAGES CXX)
+project(sxpe VERSION 0.7.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -102,12 +102,18 @@ add_library(sxpe_commands
 target_include_directories(sxpe_commands PUBLIC "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_commands PUBLIC sxpe_resources)
 
-add_executable(sxpe src/cli/main.cpp)
+if(WIN32)
+    set(SXPE_WIN_RC src/gui/resources/sxpe.rc)
+else()
+    set(SXPE_WIN_RC)
+endif()
+
+add_executable(sxpe src/cli/main.cpp ${SXPE_WIN_RC})
 target_include_directories(sxpe PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe PRIVATE sxpe_commands)
 add_dependencies(sxpe sxpe_build_info)
 
-add_executable(sxpe_mcp src/mcp/main.cpp)
+add_executable(sxpe_mcp src/mcp/main.cpp ${SXPE_WIN_RC})
 target_include_directories(sxpe_mcp PRIVATE "${SXPE_VENDOR}" "${SXPE_GENERATED_INCLUDE_DIR}")
 target_link_libraries(sxpe_mcp PRIVATE sxpe_commands)
 add_dependencies(sxpe_mcp sxpe_build_info)
@@ -183,6 +189,8 @@ if(Qt6_FOUND)
         src/gui/palette.cpp
         src/gui/dialogs.cpp
         src/gui/plugin_host.cpp
+        src/gui/resources/sxpe.qrc
+        ${SXPE_WIN_RC}
     )
     target_include_directories(sxpe_gui PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/gui"
@@ -190,7 +198,7 @@ if(Qt6_FOUND)
         "${SXPE_GENERATED_INCLUDE_DIR}")
     target_link_libraries(sxpe_gui PRIVATE Qt6::Widgets sxpe_commands)
     add_dependencies(sxpe_gui sxpe_build_info)
-    set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON)
+    set_target_properties(sxpe_gui PROPERTIES AUTOMOC ON AUTORCC ON)
     get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
     find_program(SXPE_WINDEPLOYQT windeployqt HINTS "${_qt_prefix}/bin")
     if(SXPE_WINDEPLOYQT)
